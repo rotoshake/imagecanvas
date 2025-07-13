@@ -1,0 +1,56 @@
+/* Custom application styles */
+body, html { 
+    margin: 0; 
+    padding: 0; 
+    width: 100%; 
+    height: 100%; 
+    overflow: hidden; 
+    font-family: Arial, sans-serif; 
+}
+
+#mycanvas { 
+    width: 100%; 
+    height: 100%; 
+    border: 1px solid #ccc; 
+    display: block; 
+}
+
+/* Override or supplement LiteGraph styles if needed */
+.litegraph {
+    background: #222;
+    color: #999;
+    font-family: Arial;
+    font-size: 12px;
+}
+
+.litenode {
+    background: rgba(0,0,0,0.7);
+    border: 1px solid #555;
+    border-radius: 4px;
+    color: #ccc;
+}
+
+.litenode.selected {
+    border-color: #CCC;
+    background: rgba(255,255,255,0.1);
+}
+
+.litenode-title {
+    background: rgba(0,0,0,0.2);
+    padding: 4px 8px;
+    font-weight: bold;
+    border-radius: 4px 4px 0 0;
+}
+
+.litegraph-canvas {
+    cursor: crosshair;
+}
+
+.resize-handle {
+    position: absolute;
+    width: 12px;
+    height: 12px;
+    background: #fff;
+    border: 1px solid #666;
+    cursor: se-resize;
+}
