@@ -4,6 +4,7 @@ class ImageNode {
         this.type = "media/image";
         this.title = "Image";
         this.properties = { src: null, scale: 1.0, filename: null };
+        this.flags = { hide_title: true };
         this.size = [200, 200];
         this.pos = [0, 0];
         this.resizable = true;
@@ -33,12 +34,12 @@ class ImageNode {
     }
 
     setImage(src, filename = null, hash = null) {
-        console.debug('[ImageNode] setImage called', { src, filename, hash });
         this.properties.src = src;
         this.properties.filename = filename;
         if (hash) this.properties.hash = hash;
         this.img = new Image();
         this.img.onload = () => {
+            if (!this.img) return; // Defensive: image was unloaded or replaced
             this.aspectRatio = this.img.width / this.img.height;
             this.size[0] = this.size[1] * this.aspectRatio;
             this._prev_size = this.size.slice();
@@ -67,7 +68,7 @@ class ImageNode {
     }
 
     generateThumbnails() {
-        if (!this.img) return;
+        if (!(this.img instanceof HTMLImageElement) || !this.img.width || !this.img.height) return;
         
         this.thumbnails = {};
         
@@ -77,6 +78,7 @@ class ImageNode {
             
             // Calculate thumbnail dimensions maintaining aspect ratio
             let tw = this.img.width, th = this.img.height;
+            if (!tw || !th) { tw = th = 1; }
             if (tw > th && tw > thumbSize) {
                 th = Math.round(th * (thumbSize / tw));
                 tw = thumbSize;
@@ -100,7 +102,7 @@ class ImageNode {
     }
 
     getBestThumbnail(targetWidth, targetHeight) {
-        if (!this.img) return null;
+        if (!(this.img instanceof HTMLImageElement) || !this.img.width || !this.img.height) return null;
         
         // Find the smallest thumbnail that's still larger than target
         for (const size of this._thumbnailSizes) {
@@ -132,7 +134,7 @@ class ImageNode {
         if (!Number.isFinite(this.properties.scale)) {
             this.properties.scale = 1.0;
         }
-        if (!this.img) {
+        if (!(this.img instanceof HTMLImageElement) || !this.img.width || !this.img.height) {
             // Draw gray box with loading text
             ctx.save();
             ctx.fillStyle = '#cccccc';
@@ -154,15 +156,27 @@ class ImageNode {
             const targetWidth = Math.round(w * this.properties.scale);
             const targetHeight = Math.round(h * this.properties.scale);
             const thumbnail = this.getBestThumbnail(targetWidth, targetHeight);
-            if (thumbnail) {
+            if (thumbnail instanceof HTMLCanvasElement) {
                 ctx.imageSmoothingEnabled = true;
                 ctx.imageSmoothingQuality = 'high';
                 ctx.drawImage(thumbnail, 5, 5, w * this.properties.scale, h * this.properties.scale);
-            } else {
+            } else if (this.img instanceof HTMLImageElement) {
                 ctx.drawImage(this.img, 5, 5, w * this.properties.scale, h * this.properties.scale);
             }
-        } else {
+        } else if (this.img instanceof HTMLImageElement) {
             ctx.drawImage(this.img, 5, 5, w * this.properties.scale, h * this.properties.scale);
+        }
+        // Draw the title only if not in thumbnail mode and not hidden
+        if (!shouldUseThumbnail && !this.flags.hide_title) {
+            ctx.save();
+            ctx.font = 'bold 15px Arial';
+            ctx.textAlign = 'left';
+            ctx.textBaseline = 'top';
+            ctx.fillStyle = 'rgba(0,0,0,0.7)';
+            ctx.fillRect(5, 5, ctx.measureText(this.title).width + 16, 24);
+            ctx.fillStyle = '#fff';
+            ctx.fillText(this.title, 13, 9);
+            ctx.restore();
         }
     }
 

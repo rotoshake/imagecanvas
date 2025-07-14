@@ -106,9 +106,43 @@ if (!isUsingOfficialLiteGraph) {
             this.canvas_mouse = [x, y];
             this.graph_mouse = graph_mouse;
             this.last_mouse = [x, y];
+            // --- GROUP BOX DRAG ---
+            for (const groupNode of this.graph.nodes) {
+                if (groupNode.type === 'groupbox' && typeof groupNode.isPointInBar === 'function') {
+                    if (groupNode.isPointInBar(graph_mouse[0], graph_mouse[1])) {
+                        groupNode._dragging = true;
+                        groupNode._dragOffset = [graph_mouse[0] - groupNode.pos[0], graph_mouse[1] - groupNode.pos[1]];
+                        this.dragging_groupbox = groupNode;
+                        groupNode._containedNodeOffsets = {};
+                        for (const id of groupNode.containedNodeIds) {
+                            const n = this.graph.getNodeById(id);
+                            if (n) {
+                                groupNode._containedNodeOffsets[id] = [n.pos[0] - groupNode.pos[0], n.pos[1] - groupNode.pos[1]];
+                            }
+                        }
+                        e.preventDefault();
+                        return;
+                    }
+                }
+            }
+            // --- NODE DRAG START ---
+            // Only allow dragging non-groupbox nodes
+            const node = this.getNodeAtPos(graph_mouse[0], graph_mouse[1]);
+            if (node && node.type !== 'groupbox') {
+                this.dragging_node = node;
+                // For multi-select, set up offsets
+                if (Object.keys(this.selected_nodes).length > 1 && this.selected_nodes[node.id]) {
+                    this._multi_drag_offsets = {};
+                    for (const selId in this.selected_nodes) {
+                        const selNode = this.selected_nodes[selId];
+                        this._multi_drag_offsets[selId] = [selNode.pos[0] - graph_mouse[0], selNode.pos[1] - graph_mouse[1]];
+                    }
+                }
+            }
+            // Prevent group boxes from being selected or resized as nodes
+            // Only proceed with node drag/resize if not clicking a group box bar
             // --- AUTO-ALIGN MODE ---
             // If shift+background click and multi-select, do NOT clear selection, and prep for auto-align
-            const node = this.getNodeAtPos(this.graph_mouse[0], this.graph_mouse[1]);
             const resizeNode = this.getNodeResizeHandle(this.graph_mouse[0], this.graph_mouse[1]);
             if (!node && !resizeNode && e.shiftKey && Object.keys(this.selected_nodes).length > 1) {
                 // Do not clear selection, start auto-align mode
@@ -526,6 +560,25 @@ if (!isUsingOfficialLiteGraph) {
             
             this.last_mouse = [x, y];
             
+            // --- GROUP BOX DRAG ---
+            if (this.dragging_groupbox && this.dragging_groupbox._dragging) {
+                const [x, y] = this.convertCanvasToOffset(e.clientX, e.clientY);
+                const graph_mouse = this.convertOffsetToCanvas(x, y);
+                const node = this.dragging_groupbox;
+                node.pos[0] = graph_mouse[0] - node._dragOffset[0];
+                node.pos[1] = graph_mouse[1] - node._dragOffset[1];
+                for (const id of node.containedNodeIds) {
+                    const n = this.graph.getNodeById(id);
+                    if (n && node._containedNodeOffsets && node._containedNodeOffsets[id]) {
+                        n.pos[0] = node.pos[0] + node._containedNodeOffsets[id][0];
+                        n.pos[1] = node.pos[1] + node._containedNodeOffsets[id][1];
+                    }
+                }
+                this.dirty_canvas = true;
+                e.preventDefault();
+                return;
+            }
+            
             // if (this.dirty_canvas) { // Removed direct draw
             //     this.draw();
             // }
@@ -621,6 +674,47 @@ if (!isUsingOfficialLiteGraph) {
             this._multi_resize_shift = false;
             this._multi_resize_mouse_start = null;
             this._multi_resize_bbox_width_start = null;
+            // --- GROUP BOX DRAG END ---
+            if (this.dragging_groupbox) {
+                this.dragging_groupbox._dragging = false;
+                this.dragging_groupbox._containedNodeOffsets = undefined;
+                this.dragging_groupbox = null;
+            }
+            // --- NODE GROUP MEMBERSHIP ON DRAG END ---
+            if (this.dragging_node && this.dragging_node.type !== 'groupbox') {
+                // Check if node is inside any group box
+                let foundGroup = null;
+                for (const groupNode of this.graph.nodes) {
+                    if (groupNode.type === 'groupbox' && typeof groupNode.isPointInBox === 'function') {
+                        const n = this.dragging_node;
+                        // Check if node's center is inside the group box
+                        const centerX = n.pos[0] + n.size[0] / 2;
+                        const centerY = n.pos[1] + n.size[1] / 2;
+                        if (groupNode.isPointInBox(centerX, centerY)) {
+                            foundGroup = groupNode;
+                            break;
+                        }
+                    }
+                }
+                // Remove from all groups first
+                for (const groupNode of this.graph.nodes) {
+                    if (groupNode.type === 'groupbox' && Array.isArray(groupNode.containedNodeIds)) {
+                        const idx = groupNode.containedNodeIds.indexOf(this.dragging_node.id);
+                        if (idx !== -1) groupNode.containedNodeIds.splice(idx, 1);
+                    }
+                }
+                // Add to found group
+                if (foundGroup) {
+                    if (!foundGroup.containedNodeIds.includes(this.dragging_node.id)) {
+                        foundGroup.containedNodeIds.push(this.dragging_node.id);
+                    }
+                }
+                this.dirty_canvas = true;
+                StateManager.saveState(this.graph, this);
+                this.pushUndoState();
+                this.dragging_node = null;
+                this._multi_drag_offsets = null;
+            }
         }
         
         onMouseWheel(e) {
@@ -648,6 +742,37 @@ if (!isUsingOfficialLiteGraph) {
             // Disable shortcuts if editing a title inline
             if (this._editingTitleInput) return;
             // --- Alignment debug keys ---
+            if (e.key === 't' && !e.ctrlKey && !e.metaKey && !e.altKey) {
+                // Toggle title visibility for selected nodes
+                const selectedNodes = Object.values(this.selected_nodes);
+                if (selectedNodes.length > 0) {
+                    // Count how many are hidden
+                    let numHidden = 0, numVisible = 0;
+                    for (const node of selectedNodes) {
+                        if (node.flags && node.flags.hide_title) numHidden++;
+                        else numVisible++;
+                    }
+                    // If mixed, set all to hidden first
+                    if (numHidden > 0 && numVisible > 0) {
+                        for (const node of selectedNodes) {
+                            if (!node.flags) node.flags = {};
+                            node.flags.hide_title = true;
+                        }
+                    } else {
+                        // Otherwise, toggle all
+                        const newState = !(numHidden === 0); // if all visible, hide; else show
+                        for (const node of selectedNodes) {
+                            if (!node.flags) node.flags = {};
+                            node.flags.hide_title = !newState;
+                        }
+                    }
+                    this.dirty_canvas = true;
+                    StateManager.saveState(this.graph, this);
+                    this.pushUndoState();
+                }
+                e.preventDefault();
+                return;
+            }
             if (e.key === '1' || e.key === '2') {
                 const axis = e.key === '1' ? 'horizontal' : 'vertical';
                 this.triggerAutoAlign(axis);
@@ -802,6 +927,19 @@ if (!isUsingOfficialLiteGraph) {
                 }
                 e.preventDefault();
             }
+            // --- Group box shortcut (now using LiteGraph's built-in group) ---
+            if (e.key === 'g' && !e.ctrlKey && !e.metaKey && !e.altKey) {
+                // Create a new group at the mouse position or default
+                const group = new LiteGraph.LGraphGroup('New Group');
+                group.pos = this.graph_mouse ? [...this.graph_mouse] : [100, 100];
+                group.size = [400, 300];
+                this.graph.add(group);
+                this.dirty_canvas = true;
+                StateManager.saveState(this.graph, this);
+                this.pushUndoState();
+                e.preventDefault();
+                return;
+            }
         }
         
         // Track offset for cascading duplicates/copies
@@ -851,15 +989,16 @@ if (!isUsingOfficialLiteGraph) {
                     node.graph = this.graph;
                     // If node has a hash, try to load image from cache
                     if (nodeData.type === "media/image" && nodeData.properties.hash) {
-                        ImageCache.get(nodeData.properties.hash).then(dataURL => {
-                            if (dataURL) {
-                                node.setImage(dataURL, nodeData.properties.filename);
-                                if (window.lcanvas) {
-                                    window.lcanvas.dirty_canvas = true;
-                                    window.lcanvas.draw();
-                                }
+                        const dataURL = InMemoryImageCache.get(nodeData.properties.hash);
+                        if (dataURL) {
+                            node.setImage(dataURL, nodeData.properties.filename);
+                            if (window.lcanvas) {
+                                window.lcanvas.dirty_canvas = true;
+                                window.lcanvas.draw();
                             }
-                        });
+                        } else {
+                            // Optionally: trigger async load from persistent cache or show placeholder
+                        }
                     }
                     this.selectNode(node);
                 }
@@ -887,15 +1026,16 @@ if (!isUsingOfficialLiteGraph) {
                     newNode.graph = this.graph;
                     // If node has a hash, try to load image from cache
                     if (selectedNode.type === "media/image" && selectedNode.properties.hash) {
-                        ImageCache.get(selectedNode.properties.hash).then(dataURL => {
-                            if (dataURL) {
-                                newNode.setImage(dataURL, selectedNode.properties.filename);
-                                if (window.lcanvas) {
-                                    window.lcanvas.dirty_canvas = true;
-                                    window.lcanvas.draw();
-                                }
+                        const dataURL = InMemoryImageCache.get(selectedNode.properties.hash);
+                        if (dataURL) {
+                            newNode.setImage(dataURL, selectedNode.properties.filename);
+                            if (window.lcanvas) {
+                                window.lcanvas.dirty_canvas = true;
+                                window.lcanvas.draw();
                             }
-                        });
+                        } else {
+                            // Optionally: trigger async load from persistent cache or show placeholder
+                        }
                     }
                     duplicatedNodes.push(newNode);
                 }
@@ -950,38 +1090,42 @@ if (!isUsingOfficialLiteGraph) {
         }
         
         getNodeResizeHandle(x, y) {
-            // Make the clickable area always the same size in screen space
-            const dpr = window.devicePixelRatio || 1;
-            for (let i = this.graph.nodes.length - 1; i >= 0; i--) {
-                const node = this.graph.nodes[i];
-                // Only allow resize if the node is selected
-                if (!this.selected_nodes[node.id]) {
-                    continue;
-                }
-                // Node bottom-right corner in graph space
-                const nodeBR = [node.pos[0] + node.size[0], node.pos[1] + node.size[1]];
-                // Convert to screen space
-                const screenX = nodeBR[0] * this.scale + this.offset[0];
-                const screenY = nodeBR[1] * this.scale + this.offset[1];
-                // Clickable area in screen space (16x16 px)
-                const handleScreenSize = 16 * dpr;
-                // Node size in screen space
-                const nodeScreenWidth = node.size[0] * this.scale;
-                const nodeScreenHeight = node.size[1] * this.scale;
-                // Disable handle if it would be too large relative to node size
-                if (
-                    handleScreenSize > nodeScreenWidth / 3 ||
-                    handleScreenSize > nodeScreenHeight / 3
-                ) {
-                    continue;
-                }
-                if (
-                    x * this.scale + this.offset[0] >= screenX - handleScreenSize &&
-                    x * this.scale + this.offset[0] <= screenX &&
-                    y * this.scale + this.offset[1] >= screenY - handleScreenSize &&
-                    y * this.scale + this.offset[1] <= screenY
-                ) {
-                    return node;
+            // Prevent group boxes from being resized
+            for (const node of this.graph.nodes) {
+                if (node.type === 'groupbox') continue;
+                // Make the clickable area always the same size in screen space
+                const dpr = window.devicePixelRatio || 1;
+                for (let i = this.graph.nodes.length - 1; i >= 0; i--) {
+                    const node = this.graph.nodes[i];
+                    // Only allow resize if the node is selected
+                    if (!this.selected_nodes[node.id]) {
+                        continue;
+                    }
+                    // Node bottom-right corner in graph space
+                    const nodeBR = [node.pos[0] + node.size[0], node.pos[1] + node.size[1]];
+                    // Convert to screen space
+                    const screenX = nodeBR[0] * this.scale + this.offset[0];
+                    const screenY = nodeBR[1] * this.scale + this.offset[1];
+                    // Clickable area in screen space (16x16 px)
+                    const handleScreenSize = 16 * dpr;
+                    // Node size in screen space
+                    const nodeScreenWidth = node.size[0] * this.scale;
+                    const nodeScreenHeight = node.size[1] * this.scale;
+                    // Disable handle if it would be too large relative to node size
+                    if (
+                        handleScreenSize > nodeScreenWidth / 3 ||
+                        handleScreenSize > nodeScreenHeight / 3
+                    ) {
+                        continue;
+                    }
+                    if (
+                        x * this.scale + this.offset[0] >= screenX - handleScreenSize &&
+                        x * this.scale + this.offset[0] <= screenX &&
+                        y * this.scale + this.offset[1] >= screenY - handleScreenSize &&
+                        y * this.scale + this.offset[1] <= screenY
+                    ) {
+                        return node;
+                    }
                 }
             }
             return null;
@@ -1041,61 +1185,81 @@ if (!isUsingOfficialLiteGraph) {
         }
         
         draw() {
+            if (!this.ctx) return;
             const ctx = this.ctx;
             const canvas = this.canvas;
-            let drawnNodes = 0; // Declare outside the if block
-            
-            if (this.dirty_canvas) {
-                // Clear canvas
-                ctx.clearRect(0, 0, canvas.width, canvas.height);
-                // Draw background
-                ctx.fillStyle = '#222';
-                ctx.fillRect(0, 0, canvas.width, canvas.height);
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            // Draw background
+            ctx.fillStyle = '#222';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
             // Draw grid
             this.drawGrid(ctx);
+            // Compute viewport in graph coordinates
+            const dpr = window.devicePixelRatio || 1;
+            const viewW = canvas.width / this.scale / dpr;
+            const viewH = canvas.height / this.scale / dpr;
+            const viewport = {
+                x: -this.offset[0] / this.scale,
+                y: -this.offset[1] / this.scale,
+                width: viewW,
+                height: viewH
+            };
+            const margin = 200; // px margin for preloading
+            // Load/unload images based on visibility
+            for (const node of this.graph.nodes) {
+                if (node.type === 'media/image' && node.properties && node.properties.src) {
+                    if (isNodeVisibleWithMargin(node, viewport, margin)) {
+                        loadNodeImage(node);
+                    } else {
+                        unloadNodeImage(node);
+                    }
+                }
+            }
             // Apply transform
             ctx.save();
             ctx.translate(this.offset[0], this.offset[1]);
             ctx.scale(this.scale, this.scale);
-                // Draw nodes (culling)
+            // Draw group boxes first
             for (const node of this.graph.nodes) {
-                    if (this.isNodeVisible(node)) {
-                this.drawNode(ctx, node);
-                drawnNodes++;
-            }
+                if (node.type === 'groupbox') {
+                    this.drawNode(ctx, node);
                 }
+            }
+            // Draw other nodes
+            for (const node of this.graph.nodes) {
+                if (node.type !== 'groupbox') {
+                    this.drawNode(ctx, node);
+                }
+            }
             ctx.restore();
-                // Draw selection rectangle if active (always 1px width, device pixels)
-                if (this.selection_rect) {
-                    ctx.save();
-                    ctx.setTransform(1, 0, 0, 1, 0, 0); // reset transform
-                    ctx.strokeStyle = '#4af';
-                    ctx.lineWidth = 1;
-                    ctx.setLineDash([4, 2]);
-                    const [x, y, w, h] = this.selection_rect;
-                    ctx.strokeRect(x, y, w, h);
-                    ctx.restore();
-                }
-            this.dirty_canvas = false;
+            // Draw selection rectangle if active
+            if (this.selection_rect) {
+                ctx.save();
+                ctx.setTransform(1, 0, 0, 1, 0, 0); // reset transform
+                ctx.strokeStyle = '#4af';
+                ctx.lineWidth = 1;
+                ctx.setLineDash([4, 2]);
+                const [x, y, w, h] = this.selection_rect;
+                ctx.strokeRect(x, y, w, h);
+                ctx.restore();
             }
-            // --- FPS INDICATOR (always draw) ---
-            this._frames_this_second++;
+            // FPS overlay
+            this._frames_this_second = (this._frames_this_second || 0) + 1;
             const now = performance.now();
+            if (!this._last_fps_update) this._last_fps_update = now;
             if (now - this._last_fps_update > 1000) {
                 this.fps = this._frames_this_second;
                 this._frames_this_second = 0;
                 this._last_fps_update = now;
             }
-            
             ctx.save();
             ctx.setTransform(1, 0, 0, 1, 0, 0);
             ctx.fillStyle = '#222';
-            ctx.fillRect(0, 0, 150, 50); // larger overlay area for more info
+            ctx.fillRect(0, 0, 150, 50);
             ctx.font = '14px monospace';
             ctx.fillStyle = '#fff';
             ctx.fillText(`FPS: ${this.fps}`, 10, 20);
             ctx.fillText(`Nodes: ${this.graph.nodes.length}`, 10, 35);
-            ctx.fillText(`Drawn: ${drawnNodes}`, 10, 50);
             ctx.restore();
         }
         
@@ -1129,24 +1293,20 @@ if (!isUsingOfficialLiteGraph) {
                 drawX = node._animPos[0];
                 drawY = node._animPos[1];
             }
-            
             ctx.save();
             ctx.translate(drawX, drawY);
             const isSelected = this.selected_nodes[node.id];
             const size = node.size;
             const titleHeight = 25;
             const borderRadius = 8;
-            
             // Performance optimization: for very small nodes, draw as simple rectangles
             const nodeWidth = node.size[0] * this.scale;
             const nodeHeight = node.size[1] * this.scale;
             const isVerySmall = nodeWidth < 5 || nodeHeight < 5;
-            
             if (isVerySmall) {
                 // Draw small nodes as light grey rectangles
                 ctx.fillStyle = 'rgba(100,100,100,0.6)';
                 ctx.fillRect(5, 5, size[0] - 10, size[1] - 10);
-                
                 // Draw selection border if selected
                 if (isSelected) {
                     ctx.lineWidth = 2 / this.scale;
@@ -1158,46 +1318,111 @@ if (!isUsingOfficialLiteGraph) {
                 ctx.restore();
                 return;
             }
-            
             // Only draw node background if image is missing or failed to load
             if (!node.img && (!node.properties || !node.properties.src)) {
                 ctx.fillStyle = 'rgba(30,30,30,0.95)';
                 ctx.fillRect(5, 5, size[0] - 10, size[1] - 10);
             }
-            // Do not draw any border for unselected nodes
             // Draw image/content (fill node except for small border)
-            if (node.onDrawForeground) {
+            if (node.type === 'media/image' && node.properties && node.properties.src) {
+                // Use thumbnail or grey box if node is small (based on on-screen size)
+                const dpr = window.devicePixelRatio || 1;
+                const screenW = node.size[0] * this.scale * dpr;
+                const screenH = node.size[1] * this.scale * dpr;
+                const drawW = node.size[0];
+                const drawH = node.size[1];
+                if (screenW < 32 || screenH < 32) {
+                    // Draw grey box
+                    ctx.fillStyle = '#888';
+                    ctx.fillRect(5, 5, drawW - 10, drawH - 10);
+                } else if (screenW < 64 || screenH < 64) {
+                    // Use thumbnail, force nearest neighbor
+                    ctx.imageSmoothingEnabled = false;
+                    if (node.thumbnail instanceof HTMLCanvasElement) {
+                        ctx.drawImage(node.thumbnail, 5, 5, drawW - 10, drawH - 10);
+                    } else if (node.img instanceof HTMLImageElement && node.img.complete && node.img.naturalWidth > 0) {
+                        ctx.drawImage(node.img, 5, 5, drawW - 10, drawH - 10);
+                    } else {
+                        ctx.fillStyle = '#888';
+                        ctx.fillRect(5, 5, drawW - 10, drawH - 10);
+                    }
+                    // Debug: overlay red when in thumbnail mode
+                    ctx.save();
+                    ctx.globalAlpha = 0.3;
+                    ctx.fillStyle = 'red';
+                    ctx.fillRect(5, 5, drawW - 10, drawH - 10);
+                    ctx.restore();
+                    ctx.imageSmoothingEnabled = true; // reset for other nodes
+                } else if (node.img instanceof HTMLImageElement && node.img.complete && node.img.naturalWidth > 0) {
+                    ctx.imageSmoothingEnabled = true;
+                    ctx.imageSmoothingQuality = 'high';
+                    ctx.drawImage(node.img, 5, 5, drawW - 10, drawH - 10);
+                }
+            } else if (node.onDrawForeground) {
                 ctx.save();
                 ctx.beginPath();
-                ctx.rect(5, 5, size[0] - 10, size[1] - 10);
+                ctx.rect(5, 5, node.size[0] - 10, node.size[1] - 10);
                 ctx.clip();
                 ctx.translate(0, 0); // already in node space
                 node.onDrawForeground(ctx);
                 ctx.restore();
             }
             // Draw title text floating above (outside) the node, truncating with ellipsis if too wide
-            ctx.save();
-            const fontSize = 14 / this.scale;
-            ctx.font = `${fontSize}px Arial`;
-            ctx.fillStyle = '#fff';
-            ctx.textBaseline = 'top';
-            ctx.shadowColor = 'rgba(0,0,0,0.6)';
-            ctx.shadowBlur = 2 / this.scale;
-            let title = node.title || 'Node';
-            // Calculate available width as the image width (not scaled)
-            const availableWidth = size[0] - 10;
-            let measured = ctx.measureText(title).width;
-            if (measured > availableWidth) {
-                // Truncate and add ellipsis
-                const ellipsis = '...';
-                let maxLen = title.length;
-                while (maxLen > 0 && ctx.measureText(title.substring(0, maxLen) + ellipsis).width > availableWidth) {
-                    maxLen--;
+            if (node.type !== 'media/image') {
+                if (!(node.flags && node.flags.hide_title)) {
+                    ctx.save();
+                    const fontSize = 14 / this.scale;
+                    ctx.font = `${fontSize}px Arial`;
+                    ctx.fillStyle = '#fff';
+                    ctx.textBaseline = 'top';
+                    ctx.shadowColor = 'rgba(0,0,0,0.6)';
+                    ctx.shadowBlur = 2 / this.scale;
+                    let title = node.title || 'Node';
+                    // Calculate available width as the image width (not scaled)
+                    const availableWidth = size[0] - 10;
+                    let measured = ctx.measureText(title).width;
+                    if (measured > availableWidth) {
+                        // Truncate and add ellipsis
+                        const ellipsis = '...';
+                        let maxLen = title.length;
+                        while (maxLen > 0 && ctx.measureText(title.substring(0, maxLen) + ellipsis).width > availableWidth) {
+                            maxLen--;
+                        }
+                        title = title.substring(0, maxLen) + ellipsis;
+                    }
+                    ctx.fillText(title, 10, -fontSize - 4);
+                    ctx.restore();
                 }
-                title = title.substring(0, maxLen) + ellipsis;
+            } else {
+                // For image nodes, only show floating title if not in thumbnail or grey box mode and not hidden
+                if (!(node.flags && node.flags.hide_title)) {
+                    const dpr = window.devicePixelRatio || 1;
+                    const screenW = node.size[0] * this.scale * dpr;
+                    const screenH = node.size[1] * this.scale * dpr;
+                    if (screenW >= 64 && screenH >= 64) {
+                        ctx.save();
+                        const fontSize = 14 / this.scale;
+                        ctx.font = `${fontSize}px Arial`;
+                        ctx.fillStyle = '#fff';
+                        ctx.textBaseline = 'top';
+                        ctx.shadowColor = 'rgba(0,0,0,0.6)';
+                        ctx.shadowBlur = 2 / this.scale;
+                        let title = node.title || 'Node';
+                        const availableWidth = size[0] - 10;
+                        let measured = ctx.measureText(title).width;
+                        if (measured > availableWidth) {
+                            const ellipsis = '...';
+                            let maxLen = title.length;
+                            while (maxLen > 0 && ctx.measureText(title.substring(0, maxLen) + ellipsis).width > availableWidth) {
+                                maxLen--;
+                            }
+                            title = title.substring(0, maxLen) + ellipsis;
+                        }
+                        ctx.fillText(title, 10, -fontSize - 4);
+                        ctx.restore();
+                    }
+                }
             }
-            ctx.fillText(title, 10, -fontSize - 4);
-            ctx.restore();
             // Draw selection border as a blue rectangle exactly matching the image/content area (in node space)
             if (isSelected) {
                 ctx.save();
@@ -1373,14 +1598,14 @@ if (!isUsingOfficialLiteGraph) {
                         type: n.type,
                         pos: [...n.pos],
                         size: [...n.size],
-                        // Always store hash and filename for images
+                        // Only store hash and filename for images
                         properties: n.type === 'media/image'
                             ? { hash: n.properties.hash, filename: n.properties.filename }
                             : { ...n.properties },
+                        flags: n.flags ? { ...n.flags } : undefined,
                         title: n.title
-                    })),
-                    offset: [...this.offset],
-                    scale: this.scale
+                    }))
+                    // Do NOT include offset or scale in undo state
                 });
                 this.undoStack.push(state);
                 if (this.undoStack.length > this.maxUndo) this.undoStack.shift();
@@ -1436,26 +1661,38 @@ if (!isUsingOfficialLiteGraph) {
                         node.pos = [...n.pos];
                         node.size = [...n.size];
                         node.properties = { ...n.properties };
+                        node.flags = n.flags ? { ...n.flags } : {};
                         node.title = n.title;
                         this.graph.add(node);
                         node.graph = this.graph;
                         // Always trigger async image load from cache for image nodes with a hash
                         if (n.type === 'media/image' && n.properties.hash) {
-                            ImageCache.get(n.properties.hash).then(dataURL => {
-                                if (dataURL) {
-                                    node.setImage(dataURL, n.properties.filename);
-                                    if (window.lcanvas) {
-                                        window.lcanvas.dirty_canvas = true;
-                                        window.lcanvas.draw();
-                                    }
+                            const dataURL = InMemoryImageCache.get(n.properties.hash);
+                            if (dataURL) {
+                                node.setImage(dataURL, n.properties.filename);
+                                node.properties.src = dataURL;
+                                InMemoryImageCache.set(n.properties.hash, dataURL);
+                                if (window.lcanvas) {
+                                    window.lcanvas.dirty_canvas = true;
+                                    window.lcanvas.draw();
                                 }
-                            });
+                            } else if (window.ImageCache && typeof window.ImageCache.get === 'function') {
+                                window.ImageCache.get(n.properties.hash).then(dataURL => {
+                                    if (dataURL) {
+                                        node.setImage(dataURL, n.properties.filename);
+                                        node.properties.src = dataURL;
+                                        InMemoryImageCache.set(n.properties.hash, dataURL);
+                                        if (window.lcanvas) {
+                                            window.lcanvas.dirty_canvas = true;
+                                            window.lcanvas.draw();
+                                        }
+                                    }
+                                });
+                            }
                         }
                     }
                 }
-                // Restore offset/scale
-                this.offset = [...data.offset];
-                this.scale = data.scale;
+                // Do NOT restore offset/scale from undo state
                 this.selected_nodes = {};
                 this.dirty_canvas = true;
             } catch (e) {
@@ -1688,9 +1925,19 @@ function initApp() {
     lcanvas.applyDPI();
     graph.start();
     
-    // Load saved state
-    StateManager.loadState(graph, lcanvas, window.LiteGraph);
-    lcanvas.dirty_canvas = true;
+    // Ensure ImageCache is initialized before loading state
+    if (typeof window.ImageCache === 'undefined') {
+        window.ImageCache = ImageCache;
+    }
+    if (window.ImageCache && typeof window.ImageCache.open === 'function') {
+        window.ImageCache.open().then(() => {
+            StateManager.loadState(graph, lcanvas, window.LiteGraph);
+            lcanvas.dirty_canvas = true;
+        });
+    } else {
+        StateManager.loadState(graph, lcanvas, window.LiteGraph);
+        lcanvas.dirty_canvas = true;
+    }
     // No direct draw, handled by animation loop
     
     // Handle window resize and zoom changes
@@ -1845,8 +2092,8 @@ function setupDragAndDrop(canvasElement, graph, lcanvas) {
             reader.onload = async (event) => {
                 const dataURL = event.target.result;
                 const hash = await hashImageData(dataURL);
-                if (!(await ImageCache.has(hash))) {
-                    await ImageCache.put(hash, dataURL);
+                if (!InMemoryImageCache.has(hash)) {
+                    InMemoryImageCache.set(hash, dataURL);
                 }
                 const node = window.LiteGraph.createNode("media/image");
                 if (node) {
@@ -1955,3 +2202,103 @@ function animationLoop() {
     requestAnimationFrame(animationLoop);
 }
 animationLoop();
+
+// GroupBoxNode: visually like an image node, with a draggable top bar
+class GroupBoxNode {
+    constructor(x, y, w, h, containedNodeIds = []) {
+        this.type = 'groupbox';
+        this.pos = [x, y];
+        this.size = [w, h];
+        this.title = 'Group';
+        this.containedNodeIds = containedNodeIds; // array of node ids
+        this.id = null; // will be set by graph
+        this.flags = { groupbox: true };
+        this._dragging = false;
+        this._dragOffset = [0, 0];
+    }
+    // Draw the group box
+    onDrawForeground(ctx) {
+        // Draw background
+        ctx.save();
+        ctx.fillStyle = 'rgba(60,60,80,0.18)';
+        ctx.strokeStyle = '#4af';
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.roundRect(0, 0, this.size[0], this.size[1], 12);
+        ctx.fill();
+        ctx.stroke();
+        // Draw top bar
+        ctx.fillStyle = '#223a5e';
+        ctx.fillRect(0, 0, this.size[0], 28);
+        ctx.fillStyle = '#fff';
+        ctx.font = 'bold 15px Arial';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(this.title, 12, 14);
+        ctx.restore();
+    }
+    // Check if a point is inside the top bar
+    isPointInBar(x, y) {
+        return x >= this.pos[0] && x <= this.pos[0] + this.size[0] &&
+               y >= this.pos[1] && y <= this.pos[1] + 28;
+    }
+    // Check if a point is inside the group box
+    isPointInBox(x, y) {
+        return x >= this.pos[0] && x <= this.pos[0] + this.size[0] &&
+               y >= this.pos[1] && y <= this.pos[1] + this.size[1];
+    }
+}
+
+// Global image cache
+const InMemoryImageCache = new Map();
+
+// Helper: create a thumbnail for an image
+function createThumbnail(img, size = 64) {
+    const canvas = document.createElement('canvas');
+    canvas.width = canvas.height = size;
+    const ctx = canvas.getContext('2d');
+    ctx.drawImage(img, 0, 0, size, size);
+    return canvas;
+}
+
+// Helper: load an image for a node, using the global cache
+function loadNodeImage(node, onload) {
+    if (!node.properties || !node.properties.src) return;
+    // If node already has a valid image, do nothing
+    if (node.img instanceof HTMLImageElement && node.img.complete && node.img.naturalWidth > 0) return;
+    // If cache has a fully loaded image, use it
+    const cached =  InMemoryImageCache.get(node.properties.src);
+    if (cached instanceof HTMLImageElement && cached.complete && cached.naturalWidth > 0) {
+        node.img = cached;
+        node.thumbnail = createThumbnail(node.img, 64);
+        if (onload) onload();
+        return;
+    }
+    // Otherwise, load and cache the image
+    const img = new window.Image();
+    img.onload = function() {
+        // Only cache fully loaded images
+        InMemoryImageCache.set(node.properties.src, img);
+        node.img = img;
+        node.thumbnail = createThumbnail(img, 64);
+        if (onload) onload();
+    };
+    img.src = node.properties.src;
+}
+
+// Helper: unload an image for a node (do NOT remove from cache)
+function unloadNodeImage(node) {
+    node.img = null;
+    node.thumbnail = null;
+    // Do NOT remove from ImageCache here; cache is only cleared explicitly or with an LRU policy
+}
+
+// Helper: check if a node is visible with margin
+function isNodeVisibleWithMargin(node, viewport, margin) {
+    return (
+        node.pos[0] + node.size[0] > viewport.x - margin &&
+        node.pos[0] < viewport.x + viewport.width + margin &&
+        node.pos[1] + node.size[1] > viewport.y - margin &&
+        node.pos[1] < viewport.y + viewport.height + margin
+    );
+}
+

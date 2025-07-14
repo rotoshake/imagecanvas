@@ -14,7 +14,9 @@ const StateManager = {
                 p: node.pos,
                 s: node.size,
                 pr: node.properties,
-                ti: node.title
+                ti: node.title,
+                g: node.type === 'groupbox' ? node.containedNodeIds : undefined,
+                f: node.flags // Add flags to compressed state
             })),
             o: state.offset,
             sc: state.scale
@@ -32,7 +34,9 @@ const StateManager = {
                 pos: node.p,
                 size: node.s,
                 properties: node.pr,
-                title: node.ti
+                title: node.ti,
+                containedNodeIds: node.t === 'groupbox' ? node.g || [] : undefined,
+                flags: node.f // Add flags to decompressed state
             })),
             offset: data.o,
             scale: data.sc
@@ -107,14 +111,13 @@ const StateManager = {
                 properties: node.type === 'media/image'
                     ? { hash: node.properties.hash, filename: node.properties.filename }
                     : { ...node.properties },
-                title: node.title
+                flags: node.flags ? { ...node.flags } : undefined,
+                title: node.title,
+                containedNodeIds: node.type === 'groupbox' ? node.containedNodeIds : undefined
             })),
             offset: canvas.offset,
             scale: canvas.scale
         };
-        // Debug: log all image node hashes on save
-        const imageNodes = state.nodes.filter(n => n.type === 'media/image');
-        console.debug('[State Save] image node hashes:', imageNodes.map(n => n.properties.hash));
         
         // Clean up before saving
         this.cleanupOldStates();
@@ -138,7 +141,9 @@ const StateManager = {
                             properties: node.type === 'media/image'
                                 ? { hash: node.properties.hash, filename: node.properties.filename }
                                 : { ...node.properties },
-                            title: node.title
+                            flags: node.flags ? { ...node.flags } : undefined,
+                            title: node.title,
+                            containedNodeIds: node.type === 'groupbox' ? node.containedNodeIds : undefined
                         })),
                         offset: canvas.offset,
                         scale: canvas.scale
@@ -174,32 +179,51 @@ const StateManager = {
                 state = JSON.parse(saved);
             }
             
-            // Debug: log all image node hashes on load
-            const imageNodes = state.nodes.filter(n => n.type === 'media/image');
-            console.debug('[State Load] image node hashes:', imageNodes.map(n => n.properties.hash));
-            
             // Restore canvas state
             if (state.offset) canvas.offset = state.offset;
             if (state.scale) canvas.scale = state.scale;
             
             // Restore nodes
             state.nodes.forEach(nodeData => {
-                const node = LiteGraph.createNode(nodeData.type);
-                if (node) {
+                let node;
+                if (nodeData.type === 'groupbox' && typeof GroupBoxNode !== 'undefined') {
+                    node = new GroupBoxNode(
+                        nodeData.pos[0],
+                        nodeData.pos[1],
+                        nodeData.size[0],
+                        nodeData.size[1],
+                        nodeData.containedNodeIds || []
+                    );
                     node.id = nodeData.id;
-                    node.pos = nodeData.pos;
-                    node.size = nodeData.size;
-                    node.properties = nodeData.properties || {};
                     node.title = nodeData.title;
-                    // If node has a hash, try to load image from cache
-                    if (nodeData.type === "media/image" && nodeData.properties.hash) {
-                        ImageCache.get(nodeData.properties.hash).then(dataURL => {
-                            console.debug('[ImageCache.get] hash:', nodeData.properties.hash, 'result:', !!dataURL);
+                } else {
+                    node = LiteGraph.createNode(nodeData.type);
+                    if (node) {
+                        node.id = nodeData.id;
+                        node.pos = nodeData.pos;
+                        node.size = nodeData.size;
+                        node.properties = nodeData.properties || {};
+                        node.flags = nodeData.flags ? { ...nodeData.flags } : {};
+                        // If node has a hash, try to load image from cache
+                        if (nodeData.type === "media/image" && nodeData.properties.hash) {
+                            const dataURL = (window.InMemoryImageCache && window.InMemoryImageCache.get) ? window.InMemoryImageCache.get(nodeData.properties.hash) : undefined;
                             if (dataURL) {
                                 node.setImage(dataURL, nodeData.properties.filename);
+                            } else if (window.ImageCache && typeof window.ImageCache.get === 'function') {
+                                window.ImageCache.get(nodeData.properties.hash).then(dataURL => {
+                                    if (dataURL) {
+                                        node.setImage(dataURL, nodeData.properties.filename);
+                                        node.properties.src = dataURL;
+                                        if (window.InMemoryImageCache && window.InMemoryImageCache.set) {
+                                            window.InMemoryImageCache.set(nodeData.properties.hash, dataURL);
+                                        }
+                                    }
+                                });
                             }
-                        });
+                        }
                     }
+                }
+                if (node) {
                     graph.add(node);
                 }
             });
