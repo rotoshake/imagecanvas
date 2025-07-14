@@ -125,6 +125,7 @@ if (!isUsingOfficialLiteGraph) {
                 this.auto_align_committed_direction = null;
                 this.auto_align_commit_point = [this.graph_mouse[0], this.graph_mouse[1]];
                 this.auto_align_waiting_for_switch = false; // <-- new
+                this.auto_align_is_reorder_mode = false; // Track if we're in reorder mode
                 // Store original positions for cancel animation
                 this.auto_align_originals = {};
                 for (const id in this.selected_nodes) {
@@ -185,44 +186,74 @@ if (!isUsingOfficialLiteGraph) {
                     const selectedNodes = Object.values(this.selected_nodes);
                     const clonedNodes = [];
                     
-                    for (const selectedNode of selectedNodes) {
-                        this.duplicateCount = (this.duplicateCount || 0) + 1;
-                        const offset = this.duplicateOffset * this.duplicateCount;
-                        const newNode = window.LiteGraph.createNode(selectedNode.type);
-                        if (newNode) {
-                            // Place new node at mouse position (centered)
-                            newNode.pos = [
-                                this.graph_mouse[0] - selectedNode.size[0] / 2 + offset,
-                                this.graph_mouse[1] - selectedNode.size[1] / 2 + offset
-                            ];
-                            newNode.size = [...selectedNode.size];
-                            newNode.properties = {...selectedNode.properties};
-                            newNode.title = selectedNode.title;
-                            if (selectedNode.type === "media/image" && selectedNode.properties.src) {
-                                newNode.setImage(selectedNode.properties.src, selectedNode.properties.filename);
+                    if (selectedNodes.length > 0) {
+                        // Find the node that was clicked (the one under the mouse)
+                        const clickedNode = selectedNodes.find(n => 
+                            this.graph_mouse[0] >= n.pos[0] && 
+                            this.graph_mouse[0] <= n.pos[0] + n.size[0] &&
+                            this.graph_mouse[1] >= n.pos[1] && 
+                            this.graph_mouse[1] <= n.pos[1] + n.size[1]
+                        ) || selectedNodes[0];
+                        
+                        // Use the actual mouse position in graph coordinates
+                        const mouseX = this.graph_mouse[0];
+                        const mouseY = this.graph_mouse[1];
+                        
+                        // Debug: log the positions to see what's happening
+                        console.log('Alt-drag duplication:', {
+                            mousePos: [mouseX, mouseY],
+                            clickedNode: clickedNode.title,
+                            clickedNodePos: clickedNode.pos,
+                            clickedNodeSize: clickedNode.size
+                        });
+                        
+                        for (const selectedNode of selectedNodes) {
+                            this.duplicateCount = (this.duplicateCount || 0) + 1;
+                            const newNode = window.LiteGraph.createNode(selectedNode.type);
+                            if (newNode) {
+                                // Place new node at exactly the same position as the original
+                                newNode.pos = [
+                                    selectedNode.pos[0],
+                                    selectedNode.pos[1]
+                                ];
+                                newNode.size = [...selectedNode.size];
+                                newNode.properties = {...selectedNode.properties};
+                                newNode.title = selectedNode.title;
+                                if (selectedNode.type === "media/image" && selectedNode.properties.src) {
+                                    newNode.setImage(selectedNode.properties.src, selectedNode.properties.filename);
+                                }
+                                this.graph.add(newNode);
+                                clonedNodes.push(newNode);
                             }
-                            this.graph.add(newNode);
-                            clonedNodes.push(newNode);
                         }
+                        
+                        // Select all the cloned nodes
+                        this.selected_nodes = {};
+                        for (const clonedNode of clonedNodes) {
+                            this.selected_nodes[clonedNode.id] = clonedNode;
+                        }
+                        
+                        // Set up multi-drag offsets for all cloned nodes
+                        this._multi_drag_offsets = {};
+                        for (const clonedNode of clonedNodes) {
+                            this._multi_drag_offsets[clonedNode.id] = [
+                                clonedNode.pos[0] - this.graph_mouse[0],
+                                clonedNode.pos[1] - this.graph_mouse[1]
+                            ];
+                        }
+                        
+                        // Start dragging the first cloned node
+                        if (clonedNodes.length > 0) {
+                            this.dragging_node = clonedNodes[0];
+                            this.node_captured = clonedNodes[0];
+                        }
+                        
+                        this.dirty_canvas = true;
+                        StateManager.saveState(this.graph, this.canvas);
+                        this.pushUndoState();
+                        e.preventDefault();
+                        return;
                     }
-                    
-                    // Select all the cloned nodes
-                    this.selected_nodes = {};
-                    for (const clonedNode of clonedNodes) {
-                        this.selected_nodes[clonedNode.id] = clonedNode;
-                    }
-                    
-                    // Start dragging the first cloned node
-                    if (clonedNodes.length > 0) {
-                        this.dragging_node = clonedNodes[0];
-                        this.node_captured = clonedNodes[0];
-                    }
-                    
-                    this.dirty_canvas = true;
-                    StateManager.saveState(this.graph, this.canvas);
-                    this.pushUndoState();
-                    e.preventDefault();
-                    return;
                 }
                 // Shift-click: add/remove node from selection
                 if (e.shiftKey) {
@@ -307,16 +338,20 @@ if (!isUsingOfficialLiteGraph) {
                         this.auto_align_committed = true;
                         this.auto_align_committed_axis = commitAxis;
                         this.auto_align_committed_direction = commitDir;
-                        // Push undo state right before the alignment starts
-                        StateManager.saveState(this.graph, this);
-                        this.pushUndoState();
+                        
+                        // Check if images are already aligned on this axis - if so, switch to reorder mode
+                        if (this.areImagesAlignedOnAxis(commitAxis)) {
+                            this.auto_align_is_reorder_mode = true;
+                        } else {
+                            this.auto_align_is_reorder_mode = false;
+                        }
+                        
+                        // Do NOT push undo state here - wait for animation completion
                         // Use the helper method for consistent behavior
                         this.triggerAutoAlign(commitAxis);
                         this.auto_align_committed_targets = this.auto_align_anim_targets;
                         this.auto_align_commit_point = [this.graph_mouse[0], this.graph_mouse[1]];
                         this.auto_align_waiting_for_switch = false;
-                        // Only log on commit
-                        console.log('[AutoAlign] Committed!', {commitAxis, commitDir, targets: this.auto_align_committed_targets, commit_point: this.auto_align_commit_point});
                     } else {
                         // Not committed, keep nodes at original positions
                         for (const id in this.selected_nodes) {
@@ -340,7 +375,8 @@ if (!isUsingOfficialLiteGraph) {
                         this.auto_align_has_left_circle = true;
                     }
                     
-                    // Only allow cancel if user has left the circle and is now back in it
+                    // DISABLED: Only allow cancel if user has left the circle and is now back in it
+                    /*
                     if (this.auto_align_has_left_circle && distanceFromHome < homeRadius) {
                         // Treat cancel as a third alignment type: "original" alignment
                         const currentAxis = 'original';
@@ -353,10 +389,14 @@ if (!isUsingOfficialLiteGraph) {
                         this.triggerAutoAlign(currentAxis);
                         this.auto_align_committed_targets = this.auto_align_anim_targets;
                         this.auto_align_commit_point = [this.graph_mouse[0], this.graph_mouse[1]];
-                        // Debug logging
-                        console.log('[AutoAlign] Original alignment triggered!', {currentAxis, currentDirection, targets: this.auto_align_committed_targets, commit_point: this.auto_align_commit_point});
+                        
+                        // Push undo state for cancel operation
+                        StateManager.saveState(this.graph, this);
+                        this.pushUndoState();
+                        
                         return; // <-- EARLY RETURN: do not run drag logic
                     }
+                    */
                     
                     // After commit, allow immediate axis switching based on current direction
                     const cdx = this.graph_mouse[0] - this.auto_align_commit_point[0];
@@ -372,6 +412,14 @@ if (!isUsingOfficialLiteGraph) {
                         (Math.abs(cdx) > directionThreshold && Math.sign(cdx) !== this.auto_align_committed_direction) ||
                         (Math.abs(cdy) > directionThreshold && Math.sign(cdy) !== this.auto_align_committed_direction))) {
                         
+                        // Check if switching to reorder mode (if images are already aligned on this axis)
+                        const switchingToReorder = this.areImagesAlignedOnAxis(currentAxis);
+                        if (switchingToReorder) {
+                            this.auto_align_is_reorder_mode = true;
+                        } else {
+                            this.auto_align_is_reorder_mode = false;
+                        }
+                        
                         this.auto_align_committed_axis = currentAxis;
                         this.auto_align_committed_direction = currentDirection;
                         // Do NOT update auto_align_originals on axis switch
@@ -379,8 +427,10 @@ if (!isUsingOfficialLiteGraph) {
                         this.triggerAutoAlign(currentAxis);
                         this.auto_align_committed_targets = this.auto_align_anim_targets;
                         this.auto_align_commit_point = [this.graph_mouse[0], this.graph_mouse[1]];
-                        // Only log on axis switch
-                        console.log('[AutoAlign] Axis switched!', {currentAxis, currentDirection, targets: this.auto_align_committed_targets, commit_point: this.auto_align_commit_point});
+                        
+                        // Push undo state for axis switching
+                        StateManager.saveState(this.graph, this);
+                        this.pushUndoState();
                     }
                 }
                 // Remove duplicate animation logic - let the main animation loop handle it
@@ -491,6 +541,8 @@ if (!isUsingOfficialLiteGraph) {
                 this.auto_align_originals = null;
                 this.auto_align_master_order = null;
                 this.auto_align_dominant_axis = null;
+                this.auto_align_is_reorder_mode = false;
+                // DO NOT reset auto_align_has_been_committed_before here - preserve it across drag operations
                 this.auto_align_last_axis = null;
                 this.auto_align_committed = false;
                 this.auto_align_committed_axis = null;
@@ -569,7 +621,10 @@ if (!isUsingOfficialLiteGraph) {
         }
         
         onMouseWheel(e) {
+            // Ignore all modifier keys (shift, ctrl, alt, etc.) for consistent zoom behavior
             const [x, y] = this.convertCanvasToOffset(e.clientX, e.clientY);
+            
+            // Always use the same zoom logic regardless of modifier keys
             const delta = e.deltaY > 0 ? 0.9 : 1.1;
             
             // Zoom towards mouse position
@@ -632,11 +687,13 @@ if (!isUsingOfficialLiteGraph) {
                 return false;
             } else if (e.key === 'h') {
                 // Recenter all nodes to the origin and set zoom to 1.0
+                this.pushUndoState();
                 this.recenterGraphToOrigin();
                 this.scale = 1.0;
                 const dpr = window.devicePixelRatio || 1;
                 this.offset = [this.canvas.width / dpr / 2, this.canvas.height / dpr / 2];
                 this.dirty_canvas = true;
+                StateManager.saveState(this.graph, this);
                 e.preventDefault();
             } else if (e.key === 'f') {
                 // Zoom to fit selection (if any), otherwise fit all
@@ -803,6 +860,10 @@ if (!isUsingOfficialLiteGraph) {
             const dpr = window.devicePixelRatio || 1;
             for (let i = this.graph.nodes.length - 1; i >= 0; i--) {
                 const node = this.graph.nodes[i];
+                // Only allow resize if the node is selected
+                if (!this.selected_nodes[node.id]) {
+                    continue;
+                }
                 // Node bottom-right corner in graph space
                 const nodeBR = [node.pos[0] + node.size[0], node.pos[1] + node.size[1]];
                 // Convert to screen space
@@ -835,16 +896,18 @@ if (!isUsingOfficialLiteGraph) {
             const dpr = window.devicePixelRatio || 1;
             const rect = this.canvas.getBoundingClientRect();
             
-            // Set actual canvas size
-            this.canvas.width = rect.width * dpr;
-            this.canvas.height = rect.height * dpr;
+            // Set actual canvas size - ensure integers to prevent white lines
+            this.canvas.width = Math.ceil(rect.width * dpr);
+            this.canvas.height = Math.ceil(rect.height * dpr);
             
+            // Reset the context transform before scaling to prevent accumulation
+            this.ctx.setTransform(1, 0, 0, 1, 0, 0);
             // Scale the context
             this.ctx.scale(dpr, dpr);
             
-            // Set CSS size
-            this.canvas.style.width = rect.width + 'px';
-            this.canvas.style.height = rect.height + 'px';
+            // Set CSS size - ensure integers
+            this.canvas.style.width = Math.floor(rect.width) + 'px';
+            this.canvas.style.height = Math.floor(rect.height) + 'px';
             
             this.dirty_canvas = true;
             // this.draw(); // Removed direct draw
@@ -872,11 +935,11 @@ if (!isUsingOfficialLiteGraph) {
             const ctx = this.ctx;
             const canvas = this.canvas;
             if (this.dirty_canvas) {
-                // Clear canvas (fix white line by using Math.ceil)
-                ctx.clearRect(0, 0, Math.ceil(canvas.width), Math.ceil(canvas.height));
-                // Draw background (fix white line by using Math.ceil)
-            ctx.fillStyle = '#222';
-                ctx.fillRect(0, 0, Math.ceil(canvas.width), Math.ceil(canvas.height));
+                // Clear canvas
+                ctx.clearRect(0, 0, canvas.width, canvas.height);
+                // Draw background
+                ctx.fillStyle = '#222';
+                ctx.fillRect(0, 0, canvas.width, canvas.height);
             // Draw grid
             this.drawGrid(ctx);
             // Apply transform
@@ -914,45 +977,40 @@ if (!isUsingOfficialLiteGraph) {
             ctx.save();
             ctx.setTransform(1, 0, 0, 1, 0, 0);
             ctx.fillStyle = '#222';
-            ctx.fillRect(0, 0, 220, 70); // fill overlay area with background color
+            ctx.fillRect(0, 0, 100, 30); // smaller overlay area
             ctx.font = '14px monospace';
             ctx.fillStyle = '#fff';
             ctx.fillText(`FPS: ${this.fps}`, 10, 20);
-            // Debug overlay
-            ctx.font = '11px monospace';
-            ctx.fillStyle = '#0f0';
-            ctx.fillText(`Mouse client: ${this.canvas_mouse ? this.canvas_mouse.map(v=>v.toFixed(1)).join(',') : ''}`, 10, 35);
-            ctx.fillText(`Graph: ${this.graph_mouse ? this.graph_mouse.map(v=>v.toFixed(1)).join(',') : ''}`, 10, 50);
-            ctx.fillText(`Scale: ${this.scale.toFixed(3)}  Offset: ${this.offset.map(v=>v.toFixed(1)).join(',')}`, 10, 65);
             ctx.restore();
         }
         
         drawGrid(ctx) {
+            // Hide grid when zoomed out too far
+            if (this.scale < 0.5) {
+                return;
+            }
+            
             const gridSize = 20;
             const offsetX = this.offset[0] % (gridSize * this.scale);
             const offsetY = this.offset[1] % (gridSize * this.scale);
             
-            ctx.strokeStyle = '#333';
-            ctx.lineWidth = 1;
-            ctx.beginPath();
+            ctx.fillStyle = '#333';
             
+            // Draw dots at grid intersections
             for (let x = offsetX; x < this.canvas.width; x += gridSize * this.scale) {
-                ctx.moveTo(x, 0);
-                ctx.lineTo(x, this.canvas.height);
+                for (let y = offsetY; y < this.canvas.height; y += gridSize * this.scale) {
+                    ctx.fillRect(x - 1, y - 1, 2, 2);
+                }
             }
-            
-            for (let y = offsetY; y < this.canvas.height; y += gridSize * this.scale) {
-                ctx.moveTo(0, y);
-                ctx.lineTo(this.canvas.width, y);
-            }
-            
-            ctx.stroke();
         }
         
         drawNode(ctx, node) {
             // Use animPos if auto-align mode or animating, else node.pos
             let drawX = node.pos[0], drawY = node.pos[1];
-            if ((this.auto_align_mode || this.auto_align_animating) && node._animPos) {
+            if ((this.auto_align_mode || this.auto_align_animating) && 
+                node._animPos && 
+                this.auto_align_anim_nodes && 
+                this.auto_align_anim_nodes.includes(node)) {
                 drawX = node._animPos[0];
                 drawY = node._animPos[1];
             }
@@ -1193,6 +1251,19 @@ if (!isUsingOfficialLiteGraph) {
         loadUndoState(state) {
             try {
                 const data = JSON.parse(state);
+                
+                // Clear any active auto-align state to prevent conflicts
+                this.auto_align_mode = false;
+                this.auto_align_animating = false;
+                this.auto_align_originals = null;
+                this.auto_align_master_order = null;
+                this.auto_align_dominant_axis = null;
+                this.auto_align_is_reorder_mode = false;
+                this.auto_align_committed = false;
+                this.auto_align_committed_axis = null;
+                this.auto_align_committed_targets = null;
+                this.auto_align_committed_direction = null;
+                
                 // Restore nodes
                 this.graph.nodes = [];
                 for (const n of data.graph) {
@@ -1218,6 +1289,25 @@ if (!isUsingOfficialLiteGraph) {
             }
         }
 
+        // Add a helper to detect if images are already aligned on an axis
+        areImagesAlignedOnAxis(axis) {
+            const nodes = Object.values(this.selected_nodes);
+            if (nodes.length < 2) return false;
+            
+            const tolerance = 10; // pixels tolerance for alignment
+            
+            if (axis === 'horizontal') {
+                // Check if all images have the same Y position (within tolerance)
+                const firstY = nodes[0].pos[1];
+                return nodes.every(n => Math.abs(n.pos[1] - firstY) < tolerance);
+            } else if (axis === 'vertical') {
+                // Check if all images have the same X position (within tolerance)
+                const firstX = nodes[0].pos[0];
+                return nodes.every(n => Math.abs(n.pos[0] - firstX) < tolerance);
+            }
+            return false;
+        }
+        
         // Add a helper to compute arrangement targets for a given axis
         computeAutoAlignTargets(axis) {
             // Use persistent originals if available
@@ -1314,7 +1404,6 @@ if (!isUsingOfficialLiteGraph) {
                     this.auto_align_master_order = masterOrder.map(n => n.id);
                     this.auto_align_dominant_axis = isVerticalDominant ? 'vertical' : 'horizontal';
                     
-                    console.log('[AutoAlign] Dominant axis:', this.auto_align_dominant_axis, 'Master order:', this.auto_align_master_order);
                 }
                 
                 // Use center of selection for auto_align_start
@@ -1346,9 +1435,9 @@ if (!isUsingOfficialLiteGraph) {
                     // Regular alignment: compute new targets using master order
                     targets = this.computeAutoAlignTargetsWithMasterOrder(axis);
                 }
-                lcanvas.auto_align_animating = true;
-                lcanvas.auto_align_anim_nodes = Object.values(this.selected_nodes);
-                lcanvas.auto_align_anim_targets = targets;
+                this.auto_align_animating = true;
+                this.auto_align_anim_nodes = Object.values(this.selected_nodes);
+                this.auto_align_anim_targets = targets;
             }
         }
         
@@ -1359,7 +1448,12 @@ if (!isUsingOfficialLiteGraph) {
             const masterOrder = this.auto_align_master_order || [];
             
             // Sort nodes according to the master order (regardless of alignment axis)
-            const sortedNodes = masterOrder.map(id => nodes.find(n => n.id === id)).filter(Boolean);
+            let sortedNodes = masterOrder.map(id => nodes.find(n => n.id === id)).filter(Boolean);
+            
+            // If in reorder mode, reverse the order
+            if (this.auto_align_is_reorder_mode) {
+                sortedNodes = sortedNodes.reverse();
+            }
             
             let center = 0;
             for (const n of sortedNodes) {
@@ -1578,6 +1672,10 @@ function animationLoop() {
                 }
                 // Only clear originals and stop animating if auto-align mode is not active (final completion)
                 if (!lcanvas.auto_align_mode) {
+                    // Push undo state only when animation is completely finished
+                    StateManager.saveState(lcanvas.graph, lcanvas);
+                    lcanvas.pushUndoState();
+                    
                     if (lcanvas.auto_align_originals) {
                         lcanvas.auto_align_originals = null;
                     }
@@ -1585,6 +1683,7 @@ function animationLoop() {
                         lcanvas.auto_align_master_order = null;
                     }
                     lcanvas.auto_align_dominant_axis = null; // Clear dominant axis
+                    lcanvas.auto_align_is_reorder_mode = false; // Clear reorder mode
                     lcanvas.auto_align_animating = false;
                 } else {
                     // If auto-align mode is still active, just stop the current animation
