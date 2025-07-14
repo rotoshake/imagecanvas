@@ -66,9 +66,9 @@ if (!isUsingOfficialLiteGraph) {
             this._last_fps_update = performance.now();
             this._frames_this_second = 0;
             // Undo/redo stacks
-            this.undoStack = [];
+            this.undoStack = StateManager.loadUndoStack();
             this.redoStack = [];
-            this.maxUndo = 10;
+            this.maxUndo = 20; // Increased from 5 to 20
             this.setupEventListeners();
             this.draw();
         }
@@ -249,7 +249,7 @@ if (!isUsingOfficialLiteGraph) {
                         }
                         
                         this.dirty_canvas = true;
-                        StateManager.saveState(this.graph, this.canvas);
+                        StateManager.saveState(this.graph, this);
                         this.pushUndoState();
                         e.preventDefault();
                         return;
@@ -551,9 +551,12 @@ if (!isUsingOfficialLiteGraph) {
                 this.dirty_canvas = true;
                 return; // <-- EARLY RETURN: do not run drag logic
             }
-            if (this.dragging_node || this.resizing_node || this.dragging_canvas) {
+            if (this.dragging_node || this.resizing_node) {
                 StateManager.saveState(this.graph, this);
                 this.pushUndoState();
+            } else if (this.dragging_canvas) {
+                // Only save persistent state for panning, not undo
+                StateManager.saveState(this.graph, this);
             }
             if (this.selection_rect && this.selection_rect_graph) {
                 // Finalize selection using graph coordinates
@@ -633,10 +636,10 @@ if (!isUsingOfficialLiteGraph) {
             this.scale *= delta;
             
             this.dirty_canvas = true;
-            // Debounced save after zooming
+            // Debounced save after zooming (only persistent state, not undo)
             clearTimeout(this._zoomSaveTimeout);
             this._zoomSaveTimeout = setTimeout(() => {
-            StateManager.saveState(this.graph, this);
+                StateManager.saveState(this.graph, this);
             }, 500);
             e.preventDefault();
         }
@@ -676,9 +679,23 @@ if (!isUsingOfficialLiteGraph) {
                 // Copy
                 this.copySelected();
                 e.preventDefault();
+            } else if (e.key === 'x' && (e.ctrlKey || e.metaKey)) {
+                // Cut
+                this.copySelected();
+                this.pushUndoState();
+                Object.values(this.selected_nodes).forEach(node => {
+                    this.graph.remove(node);
+                });
+                this.selected_nodes = {};
+                this.dirty_canvas = true;
+                StateManager.saveState(this.graph, this);
+                this.pushUndoState();
+                e.preventDefault();
             } else if (e.key === 'v' && (e.ctrlKey || e.metaKey)) {
                 // Paste
                 this.paste();
+                StateManager.saveState(this.graph, this);
+                this.pushUndoState();
                 e.preventDefault();
             } else if (e.key === 'd' && (e.ctrlKey || e.metaKey)) {
                 // Duplicate
@@ -702,6 +719,8 @@ if (!isUsingOfficialLiteGraph) {
                 } else {
                     this.zoomToFitAll();
                 }
+                // Save persistent state after zoom to fit (not undo)
+                StateManager.saveState(this.graph, this);
                 e.preventDefault();
             } else if ((e.key === 'a' && (e.ctrlKey || e.metaKey))) {
                 // Select all nodes
@@ -711,32 +730,74 @@ if (!isUsingOfficialLiteGraph) {
                 this.dirty_canvas = true;
                 e.preventDefault();
             } else if (e.key === '[') {
-                // Send selected node one step down in draw order
+                // Send selected node one step down in the stack of overlapping nodes
                 const selected = Object.values(this.selected_nodes);
                 if (selected.length === 1) {
                     const node = selected[0];
-                    const idx = this.graph.nodes.indexOf(node);
-                    if (idx > 0) {
-                        this.graph.nodes.splice(idx, 1);
-                        this.graph.nodes.splice(idx - 1, 0, node);
+                    const nodeIdx = this.graph.nodes.indexOf(node);
+                    // Find all overlapping nodes below in draw order
+                    const overlaps = this.graph.nodes
+                        .map((n, idx) => ({ n, idx }))
+                        .filter(obj => obj.n !== node &&
+                            node.pos[0] < obj.n.pos[0] + obj.n.size[0] &&
+                            node.pos[0] + node.size[0] > obj.n.pos[0] &&
+                            node.pos[1] < obj.n.pos[1] + obj.n.size[1] &&
+                            node.pos[1] + node.size[1] > obj.n.pos[1] &&
+                            obj.idx < nodeIdx
+                        );
+                    if (overlaps.length > 0) {
+                        // Find the closest overlapping node below
+                        const nextIdx = Math.max(...overlaps.map(obj => obj.idx));
+                        this.graph.nodes.splice(nodeIdx, 1);
+                        this.graph.nodes.splice(nextIdx, 0, node);
                         this.dirty_canvas = true;
                         StateManager.saveState(this.graph, this);
                         this.pushUndoState();
+                    } else {
+                        // Fallback: move down one step
+                        if (nodeIdx > 0) {
+                            this.graph.nodes.splice(nodeIdx, 1);
+                            this.graph.nodes.splice(nodeIdx - 1, 0, node);
+                            this.dirty_canvas = true;
+                            StateManager.saveState(this.graph, this);
+                            this.pushUndoState();
+                        }
                     }
                 }
                 e.preventDefault();
             } else if (e.key === ']') {
-                // Bring selected node one step up in draw order
+                // Bring selected node one step up in the stack of overlapping nodes
                 const selected = Object.values(this.selected_nodes);
                 if (selected.length === 1) {
                     const node = selected[0];
-                    const idx = this.graph.nodes.indexOf(node);
-                    if (idx < this.graph.nodes.length - 1) {
-                        this.graph.nodes.splice(idx, 1);
-                        this.graph.nodes.splice(idx + 1, 0, node);
+                    const nodeIdx = this.graph.nodes.indexOf(node);
+                    // Find all overlapping nodes above in draw order
+                    const overlaps = this.graph.nodes
+                        .map((n, idx) => ({ n, idx }))
+                        .filter(obj => obj.n !== node &&
+                            node.pos[0] < obj.n.pos[0] + obj.n.size[0] &&
+                            node.pos[0] + node.size[0] > obj.n.pos[0] &&
+                            node.pos[1] < obj.n.pos[1] + obj.n.size[1] &&
+                            node.pos[1] + node.size[1] > obj.n.pos[1] &&
+                            obj.idx > nodeIdx
+                        );
+                    if (overlaps.length > 0) {
+                        // Find the closest overlapping node above
+                        const nextIdx = Math.min(...overlaps.map(obj => obj.idx));
+                        this.graph.nodes.splice(nodeIdx, 1);
+                        this.graph.nodes.splice(nextIdx, 0, node);
                         this.dirty_canvas = true;
                         StateManager.saveState(this.graph, this);
                         this.pushUndoState();
+                    } else {
+                        // Fallback: move up one step
+                        if (nodeIdx < this.graph.nodes.length - 1) {
+                            this.graph.nodes.splice(nodeIdx, 1);
+                            this.graph.nodes.splice(nodeIdx + 1, 0, node);
+                            this.dirty_canvas = true;
+                            StateManager.saveState(this.graph, this);
+                            this.pushUndoState();
+                        }
                     }
                 }
                 e.preventDefault();
@@ -764,23 +825,46 @@ if (!isUsingOfficialLiteGraph) {
             if (!this.clipboard) return;
             this.selected_nodes = {};
             this.duplicateCount = (this.duplicateCount || 0) + 1;
+            // Compute bounding box of clipboard nodes
+            let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+            this.clipboard.forEach(nodeData => {
+                minX = Math.min(minX, nodeData.pos[0]);
+                minY = Math.min(minY, nodeData.pos[1]);
+                maxX = Math.max(maxX, nodeData.pos[0] + nodeData.size[0]);
+                maxY = Math.max(maxY, nodeData.pos[1] + nodeData.size[1]);
+            });
+            const bboxCenterX = (minX + maxX) / 2;
+            const bboxCenterY = (minY + maxY) / 2;
+            // Use current mouse position in graph coordinates
+            const targetCenter = this.graph_mouse ? [...this.graph_mouse] : [0, 0];
+            const dx = targetCenter[0] - bboxCenterX;
+            const dy = targetCenter[1] - bboxCenterY;
             this.clipboard.forEach((nodeData, i) => {
                 const node = window.LiteGraph.createNode(nodeData.type);
                 if (node) {
-                    const offset = this.duplicateOffset * this.duplicateCount;
-                    node.pos = [nodeData.pos[0] + offset, nodeData.pos[1] + offset];
+                    // Center at mouse
+                    node.pos = [nodeData.pos[0] + dx, nodeData.pos[1] + dy];
                     node.size = [...nodeData.size];
                     node.properties = {...nodeData.properties};
                     node.title = nodeData.title;
-                    if (nodeData.type === "media/image" && nodeData.properties.src) {
-                        node.setImage(nodeData.properties.src, nodeData.properties.filename);
-                    }
                     this.graph.add(node);
+                    node.graph = this.graph;
+                    // If node has a hash, try to load image from cache
+                    if (nodeData.type === "media/image" && nodeData.properties.hash) {
+                        ImageCache.get(nodeData.properties.hash).then(dataURL => {
+                            if (dataURL) {
+                                node.setImage(dataURL, nodeData.properties.filename);
+                                if (window.lcanvas) {
+                                    window.lcanvas.dirty_canvas = true;
+                                    window.lcanvas.draw();
+                                }
+                            }
+                        });
+                    }
                     this.selectNode(node);
                 }
             });
             this.dirty_canvas = true;
-            // this.draw(); // Removed direct draw
             StateManager.saveState(this.graph, this);
             this.pushUndoState();
         }
@@ -799,10 +883,20 @@ if (!isUsingOfficialLiteGraph) {
                     newNode.size = [...selectedNode.size];
                     newNode.properties = {...selectedNode.properties};
                     newNode.title = selectedNode.title;
-                    if (selectedNode.type === "media/image" && selectedNode.properties.src) {
-                        newNode.setImage(selectedNode.properties.src, selectedNode.properties.filename);
-                    }
                     this.graph.add(newNode);
+                    newNode.graph = this.graph;
+                    // If node has a hash, try to load image from cache
+                    if (selectedNode.type === "media/image" && selectedNode.properties.hash) {
+                        ImageCache.get(selectedNode.properties.hash).then(dataURL => {
+                            if (dataURL) {
+                                newNode.setImage(dataURL, selectedNode.properties.filename);
+                                if (window.lcanvas) {
+                                    window.lcanvas.dirty_canvas = true;
+                                    window.lcanvas.draw();
+                                }
+                            }
+                        });
+                    }
                     duplicatedNodes.push(newNode);
                 }
             }
@@ -871,6 +965,16 @@ if (!isUsingOfficialLiteGraph) {
                 const screenY = nodeBR[1] * this.scale + this.offset[1];
                 // Clickable area in screen space (16x16 px)
                 const handleScreenSize = 16 * dpr;
+                // Node size in screen space
+                const nodeScreenWidth = node.size[0] * this.scale;
+                const nodeScreenHeight = node.size[1] * this.scale;
+                // Disable handle if it would be too large relative to node size
+                if (
+                    handleScreenSize > nodeScreenWidth / 3 ||
+                    handleScreenSize > nodeScreenHeight / 3
+                ) {
+                    continue;
+                }
                 if (
                     x * this.scale + this.offset[0] >= screenX - handleScreenSize &&
                     x * this.scale + this.offset[0] <= screenX &&
@@ -917,23 +1021,30 @@ if (!isUsingOfficialLiteGraph) {
         isNodeVisible(node) {
             const dpr = window.devicePixelRatio || 1;
             const canvas = this.canvas;
+            
             // Node bounding box in screen space
             const x = node.pos[0] * this.scale + this.offset[0];
             const y = node.pos[1] * this.scale + this.offset[1];
             const w = node.size[0] * this.scale;
             const h = node.size[1] * this.scale;
+            
+            // Add some margin for better culling
+            const margin = 50;
+            
             // Visible area in screen space
             return (
-                x + w > 0 &&
-                y + h > 0 &&
-                x < canvas.width / dpr &&
-                y < canvas.height / dpr
+                x + w > -margin &&
+                y + h > -margin &&
+                x < canvas.width / dpr + margin &&
+                y < canvas.height / dpr + margin
             );
         }
         
         draw() {
             const ctx = this.ctx;
             const canvas = this.canvas;
+            let drawnNodes = 0; // Declare outside the if block
+            
             if (this.dirty_canvas) {
                 // Clear canvas
                 ctx.clearRect(0, 0, canvas.width, canvas.height);
@@ -950,9 +1061,10 @@ if (!isUsingOfficialLiteGraph) {
             for (const node of this.graph.nodes) {
                     if (this.isNodeVisible(node)) {
                 this.drawNode(ctx, node);
+                drawnNodes++;
             }
                 }
-                ctx.restore();
+            ctx.restore();
                 // Draw selection rectangle if active (always 1px width, device pixels)
                 if (this.selection_rect) {
                     ctx.save();
@@ -974,13 +1086,16 @@ if (!isUsingOfficialLiteGraph) {
                 this._frames_this_second = 0;
                 this._last_fps_update = now;
             }
+            
             ctx.save();
             ctx.setTransform(1, 0, 0, 1, 0, 0);
             ctx.fillStyle = '#222';
-            ctx.fillRect(0, 0, 100, 30); // smaller overlay area
+            ctx.fillRect(0, 0, 150, 50); // larger overlay area for more info
             ctx.font = '14px monospace';
             ctx.fillStyle = '#fff';
             ctx.fillText(`FPS: ${this.fps}`, 10, 20);
+            ctx.fillText(`Nodes: ${this.graph.nodes.length}`, 10, 35);
+            ctx.fillText(`Drawn: ${drawnNodes}`, 10, 50);
             ctx.restore();
         }
         
@@ -1014,12 +1129,36 @@ if (!isUsingOfficialLiteGraph) {
                 drawX = node._animPos[0];
                 drawY = node._animPos[1];
             }
+            
             ctx.save();
             ctx.translate(drawX, drawY);
             const isSelected = this.selected_nodes[node.id];
             const size = node.size;
             const titleHeight = 25;
             const borderRadius = 8;
+            
+            // Performance optimization: for very small nodes, draw as simple rectangles
+            const nodeWidth = node.size[0] * this.scale;
+            const nodeHeight = node.size[1] * this.scale;
+            const isVerySmall = nodeWidth < 5 || nodeHeight < 5;
+            
+            if (isVerySmall) {
+                // Draw small nodes as light grey rectangles
+                ctx.fillStyle = 'rgba(100,100,100,0.6)';
+                ctx.fillRect(5, 5, size[0] - 10, size[1] - 10);
+                
+                // Draw selection border if selected
+                if (isSelected) {
+                    ctx.lineWidth = 2 / this.scale;
+                    ctx.strokeStyle = '#4af';
+                    ctx.beginPath();
+                    ctx.rect(5, 5, size[0] - 10, size[1] - 10);
+                    ctx.stroke();
+                }
+                ctx.restore();
+                return;
+            }
+            
             // Only draw node background if image is missing or failed to load
             if (!node.img && (!node.properties || !node.properties.src)) {
                 ctx.fillStyle = 'rgba(30,30,30,0.95)';
@@ -1072,20 +1211,28 @@ if (!isUsingOfficialLiteGraph) {
             // Draw resize handle as a corner bracket only if selected, just inside the node (in node space)
             if (isSelected) {
                 const handleSize = 16 / this.scale;
-                ctx.save();
-                ctx.lineWidth = 3 / this.scale;
-                ctx.strokeStyle = '#fff';
-                ctx.shadowColor = 'rgba(0,0,0,0.3)';
-                ctx.shadowBlur = 2 / this.scale;
-                ctx.beginPath();
-                // Horizontal part
-                ctx.moveTo(size[0] - 5 - handleSize, size[1] - 5 - 2);
-                ctx.lineTo(size[0] - 5 - 2, size[1] - 5 - 2);
-                // Vertical part
-                ctx.moveTo(size[0] - 5 - 2, size[1] - 5 - handleSize);
-                ctx.lineTo(size[0] - 5 - 2, size[1] - 5 - 2);
-                ctx.stroke();
-                ctx.restore();
+                // Node size in screen space
+                const nodeScreenWidth = size[0] * this.scale;
+                const nodeScreenHeight = size[1] * this.scale;
+                // Only show handle if it would be enabled, or if this node is being resized
+                const handleWouldBeEnabled = handleSize <= nodeScreenWidth / 3 && handleSize <= nodeScreenHeight / 3;
+                const isBeingResized = this.resizing_node && this.resizing_node.id === node.id;
+                if (handleWouldBeEnabled || isBeingResized) {
+                    ctx.save();
+                    ctx.lineWidth = 3 / this.scale;
+                    ctx.strokeStyle = '#fff';
+                    ctx.shadowColor = 'rgba(0,0,0,0.3)';
+                    ctx.shadowBlur = 2 / this.scale;
+                    ctx.beginPath();
+                    // Horizontal part
+                    ctx.moveTo(size[0] - 5 - handleSize, size[1] - 5 - 2);
+                    ctx.lineTo(size[0] - 5 - 2, size[1] - 5 - 2);
+                    // Vertical part
+                    ctx.moveTo(size[0] - 5 - 2, size[1] - 5 - handleSize);
+                    ctx.lineTo(size[0] - 5 - 2, size[1] - 5 - 2);
+                    ctx.stroke();
+                    ctx.restore();
+                }
             }
             ctx.restore();
         }
@@ -1220,20 +1367,33 @@ if (!isUsingOfficialLiteGraph) {
 
         // --- Undo/Redo ---
         pushUndoState() {
-            const state = JSON.stringify({
-                graph: this.graph.nodes.map(n => ({
-                    type: n.type,
-                    pos: [...n.pos],
-                    size: [...n.size],
-                    properties: {...n.properties},
-                    title: n.title
-                })),
-                offset: [...this.offset],
-                scale: this.scale
-            });
-            this.undoStack.push(state);
-            if (this.undoStack.length > this.maxUndo) this.undoStack.shift();
-            this.redoStack = [];
+            try {
+                const state = JSON.stringify({
+                    graph: this.graph.nodes.map(n => ({
+                        type: n.type,
+                        pos: [...n.pos],
+                        size: [...n.size],
+                        // Always store hash and filename for images
+                        properties: n.type === 'media/image'
+                            ? { hash: n.properties.hash, filename: n.properties.filename }
+                            : { ...n.properties },
+                        title: n.title
+                    })),
+                    offset: [...this.offset],
+                    scale: this.scale
+                });
+                this.undoStack.push(state);
+                if (this.undoStack.length > this.maxUndo) this.undoStack.shift();
+                this.redoStack = []; // Clear redo stack when new operation is performed
+                // Save undo stack to localStorage with error handling
+                StateManager.saveUndoStack(this.undoStack);
+            } catch (e) {
+                console.warn('Failed to save undo state, clearing old states:', e);
+                // Clear undo stack if it's causing issues
+                this.undoStack = [];
+                this.redoStack = [];
+                StateManager.saveUndoStack(this.undoStack);
+            }
         }
         undo() {
             if (this.undoStack.length < 2) return;
@@ -1241,17 +1401,22 @@ if (!isUsingOfficialLiteGraph) {
             this.redoStack.push(current);
             const prev = this.undoStack[this.undoStack.length - 1];
             this.loadUndoState(prev);
+            
+            // Save updated undo stack
+            StateManager.saveUndoStack(this.undoStack);
         }
         redo() {
             if (this.redoStack.length === 0) return;
             const state = this.redoStack.pop();
             this.undoStack.push(state);
             this.loadUndoState(state);
+            
+            // Save updated undo stack
+            StateManager.saveUndoStack(this.undoStack);
         }
         loadUndoState(state) {
             try {
                 const data = JSON.parse(state);
-                
                 // Clear any active auto-align state to prevent conflicts
                 this.auto_align_mode = false;
                 this.auto_align_animating = false;
@@ -1263,7 +1428,6 @@ if (!isUsingOfficialLiteGraph) {
                 this.auto_align_committed_axis = null;
                 this.auto_align_committed_targets = null;
                 this.auto_align_committed_direction = null;
-                
                 // Restore nodes
                 this.graph.nodes = [];
                 for (const n of data.graph) {
@@ -1271,12 +1435,22 @@ if (!isUsingOfficialLiteGraph) {
                     if (node) {
                         node.pos = [...n.pos];
                         node.size = [...n.size];
-                        node.properties = {...n.properties};
+                        node.properties = { ...n.properties };
                         node.title = n.title;
-                        if (n.type === 'media/image' && n.properties.src) {
-                            node.setImage(n.properties.src, n.properties.filename);
-                        }
                         this.graph.add(node);
+                        node.graph = this.graph;
+                        // Always trigger async image load from cache for image nodes with a hash
+                        if (n.type === 'media/image' && n.properties.hash) {
+                            ImageCache.get(n.properties.hash).then(dataURL => {
+                                if (dataURL) {
+                                    node.setImage(dataURL, n.properties.filename);
+                                    if (window.lcanvas) {
+                                        window.lcanvas.dirty_canvas = true;
+                                        window.lcanvas.draw();
+                                    }
+                                }
+                            });
+                        }
                     }
                 }
                 // Restore offset/scale
@@ -1547,6 +1721,11 @@ function initApp() {
     // Save state periodically
     setInterval(() => StateManager.saveState(graph, lcanvas), 10000);
     
+    // Periodic cleanup to prevent quota issues
+    setInterval(() => {
+        StateManager.cleanupOldStates();
+    }, 30000); // Every 30 seconds
+    
     // Save state when page is about to unload
     window.addEventListener('beforeunload', () => StateManager.saveState(graph, lcanvas));
     
@@ -1562,6 +1741,77 @@ function initApp() {
     console.log('- Mouse wheel to zoom, drag empty space to pan');
 }
 
+// --- IndexedDB ImageCache Utility ---
+const ImageCache = {
+    db: null,
+    dbName: 'ImageCanvasCache',
+    storeName: 'images',
+    async open() {
+        if (this.db) return this.db;
+        return new Promise((resolve, reject) => {
+            const req = indexedDB.open(this.dbName, 1);
+            req.onupgradeneeded = (event) => {
+                const db = event.target.result;
+                if (!db.objectStoreNames.contains(this.storeName)) {
+                    db.createObjectStore(this.storeName);
+                }
+            };
+            req.onsuccess = (event) => {
+                this.db = event.target.result;
+                resolve(this.db);
+            };
+            req.onerror = (event) => {
+                reject(event.target.error);
+            };
+        });
+    },
+    async put(hash, data) {
+        const db = await this.open();
+        return new Promise((resolve, reject) => {
+            const tx = db.transaction([this.storeName], 'readwrite');
+            const store = tx.objectStore(this.storeName);
+            const req = store.put(data, hash);
+            req.onsuccess = () => resolve();
+            req.onerror = (e) => reject(e);
+        });
+    },
+    async get(hash) {
+        const db = await this.open();
+        return new Promise((resolve, reject) => {
+            const tx = db.transaction([this.storeName], 'readonly');
+            const store = tx.objectStore(this.storeName);
+            const req = store.get(hash);
+            req.onsuccess = () => resolve(req.result);
+            req.onerror = (e) => reject(e);
+        });
+    },
+    async has(hash) {
+        const db = await this.open();
+        return new Promise((resolve, reject) => {
+            const tx = db.transaction([this.storeName], 'readonly');
+            const store = tx.objectStore(this.storeName);
+            const req = store.get(hash);
+            req.onsuccess = () => resolve(!!req.result);
+            req.onerror = (e) => reject(e);
+        });
+    }
+};
+
+// --- Utility: Compute SHA-256 hash of image data (returns hex string) ---
+async function hashImageData(dataURL) {
+    // Convert base64 to ArrayBuffer
+    const base64 = dataURL.split(',')[1];
+    const binary = atob(base64);
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i++) {
+        bytes[i] = binary.charCodeAt(i);
+    }
+    const hashBuffer = await crypto.subtle.digest('SHA-256', bytes);
+    // Convert buffer to hex string
+    return Array.from(new Uint8Array(hashBuffer)).map(b => b.toString(16).padStart(2, '0')).join('');
+}
+
+// Patch setupDragAndDrop to use ImageCache
 function setupDragAndDrop(canvasElement, graph, lcanvas) {
     canvasElement.addEventListener('dragover', (e) => {
         e.preventDefault();
@@ -1573,7 +1823,7 @@ function setupDragAndDrop(canvasElement, graph, lcanvas) {
         e.stopPropagation();
     });
     
-    canvasElement.addEventListener('drop', (e) => {
+    canvasElement.addEventListener('drop', async (e) => {
         e.preventDefault();
         e.stopPropagation();
         
@@ -1586,34 +1836,41 @@ function setupDragAndDrop(canvasElement, graph, lcanvas) {
         const canvasY = e.clientY - rect.top;
         const graphPos = lcanvas.convertOffsetToCanvas(canvasX, canvasY);
         
+        // Prepare to select all new nodes
+        const newNodes = [];
         Array.from(files).forEach((file, index) => {
             if (!file.type.startsWith('image/')) return;
             
             const reader = new FileReader();
-            reader.onload = (event) => {
+            reader.onload = async (event) => {
+                const dataURL = event.target.result;
+                const hash = await hashImageData(dataURL);
+                if (!(await ImageCache.has(hash))) {
+                    await ImageCache.put(hash, dataURL);
+                }
                 const node = window.LiteGraph.createNode("media/image");
                 if (node) {
-                    // Center the node on the mouse position
+                    // Cascade nodes with a visible offset
                     node.pos = [
-                        graphPos[0] - node.size[0] / 2 + (index * 20), 
-                        graphPos[1] - node.size[1] / 2 + (index * 20)
+                        graphPos[0] - node.size[0] / 2 + (index * 40), 
+                        graphPos[1] - node.size[1] / 2 + (index * 40)
                     ];
-                    node.setImage(event.target.result, file.name);
+                    node.properties.hash = hash;
+                    node.properties.filename = file.name;
+                    node.setImage(dataURL, file.name);
                     graph.add(node);
-                    
-                    // Clear any drag state
-                    lcanvas.dragging_canvas = false;
-                    lcanvas.dragging_node = null;
-                    lcanvas.node_captured = null;
-                    lcanvas.node_dragged = null;
-                    
-                    // Force redraw
+                    newNodes.push(node);
                     lcanvas.dirty_canvas = true;
-                    // this.draw(); // Removed direct draw
-                    
-                    // Save state after adding node
                     StateManager.saveState(graph, lcanvas);
                     lcanvas.pushUndoState();
+                }
+                // After all files are processed, select all new nodes
+                if (newNodes.length === files.length) {
+                    lcanvas.selected_nodes = {};
+                    for (const n of newNodes) {
+                        lcanvas.selected_nodes[n.id] = n;
+                    }
+                    lcanvas.dirty_canvas = true;
                 }
             };
             reader.readAsDataURL(file);
