@@ -60,7 +60,7 @@ if (!isUsingOfficialLiteGraph) {
             this.canvas_mouse = [0, 0];
             this.last_mouse = [0, 0];
             this.clipboard = null;
-            this.selection_rect = null; // [x, y, w, h] in screen coords
+            this.selection_rect = null; // [x, y, w, h] in logical px
             this.selection_rect_graph = null; // [x, y] in graph coords (start)
             this.fps = 0;
             this._last_fps_update = performance.now();
@@ -70,6 +70,7 @@ if (!isUsingOfficialLiteGraph) {
             this.redoStack = [];
             this.maxUndo = 20; // Increased from 5 to 20
             this.setupEventListeners();
+            this.dpr = window.devicePixelRatio || 1;
             this.draw();
             this.grid_align_mode = false;
             this.grid_align_anchor = null;
@@ -115,17 +116,16 @@ if (!isUsingOfficialLiteGraph) {
         onMouseDown(e) {
             const dpr = window.devicePixelRatio || 1;
             const [x, y] = this.convertCanvasToOffset(e.clientX, e.clientY); // screen space
-            const graph_mouse = this.convertOffsetToCanvas(x, y);
             this.canvas_mouse = [x, y];
-            this.graph_mouse = graph_mouse;
+            this.graph_mouse = this.convertOffsetToCanvas(x, y);
             this.last_mouse = [x, y];
 
-            // --- GRID ALIGN MODE TRIGGER (TAKES PRECEDENCE) ---
-            if (e.ctrlKey && e.shiftKey && !this.getNodeAtPos(graph_mouse[0], graph_mouse[1]) && e.button === 0) {
+            // --- GRID ALIGN MODE TRIGGER (TAKES PRECEDENCE OVER PAN) ---
+            if ((e.ctrlKey || e.metaKey) && e.shiftKey && !this.getNodeAtPos(this.graph_mouse[0], this.graph_mouse[1]) && e.button === 0) {
                 this.grid_align_mode = true;
                 this.grid_align_dragging = true;
-                this.grid_align_anchor = [graph_mouse[0], graph_mouse[1]];
-                this.grid_align_box = [graph_mouse[0], graph_mouse[1], graph_mouse[0], graph_mouse[1]];
+                this.grid_align_anchor = [this.graph_mouse[0], this.graph_mouse[1]];
+                this.grid_align_box = [this.graph_mouse[0], this.graph_mouse[1], this.graph_mouse[0], this.graph_mouse[1]];
                 this.grid_align_columns = 1;
                 this.grid_align_targets = null;
                 this.grid_align_animating = false;
@@ -134,6 +134,13 @@ if (!isUsingOfficialLiteGraph) {
                 e.preventDefault();
                 return;
             }
+
+            // Always pan with middle mouse or command/ctrl+left (but NOT if shift is also held)
+            if ((e.button === 1) || (((e.ctrlKey || e.metaKey) && !e.shiftKey) && e.button === 0)) {
+                this.dragging_canvas = true;
+                return;
+            }
+
             // --- INTERRUPT AUTO-ALIGN ANIMATION IF ACTIVE ---
             if (this.auto_align_animating && this.auto_align_anim_nodes && this.auto_align_anim_targets) {
                 // Snap all animating nodes to their final positions
@@ -170,9 +177,9 @@ if (!isUsingOfficialLiteGraph) {
             // --- GROUP BOX DRAG ---
             for (const groupNode of this.graph.nodes) {
                 if (groupNode.type === 'groupbox' && typeof groupNode.isPointInBar === 'function') {
-                    if (groupNode.isPointInBar(graph_mouse[0], graph_mouse[1])) {
+                    if (groupNode.isPointInBar(this.graph_mouse[0], this.graph_mouse[1])) {
                         groupNode._dragging = true;
-                        groupNode._dragOffset = [graph_mouse[0] - groupNode.pos[0], graph_mouse[1] - groupNode.pos[1]];
+                        groupNode._dragOffset = [this.graph_mouse[0] - groupNode.pos[0], this.graph_mouse[1] - groupNode.pos[1]];
                         this.dragging_groupbox = groupNode;
                         groupNode._containedNodeOffsets = {};
                         for (const id of groupNode.containedNodeIds) {
@@ -188,7 +195,7 @@ if (!isUsingOfficialLiteGraph) {
             }
             // --- NODE DRAG START ---
             // Only allow dragging non-groupbox nodes
-            const node = this.getNodeAtPos(graph_mouse[0], graph_mouse[1]);
+            const node = this.getNodeAtPos(this.graph_mouse[0], this.graph_mouse[1]);
             // --- FIX: use screen-space for handle detection ---
             const resizeNode = this.getNodeResizeHandle(x, y);
             console.log('onMouseDown:', {x, y, node: node?.id, resizeNode: resizeNode?.id});
@@ -344,58 +351,33 @@ if (!isUsingOfficialLiteGraph) {
             if (node) {
                 // Check for alt+drag (duplicate)
                 if (e.altKey) {
-                    // Clone all selected nodes, not just the clicked one
-                    const selectedNodes = Object.values(this.selected_nodes);
+                    // If multiple nodes are selected and the clicked node is in the selection, duplicate all selected
+                    const selectedIds = Object.keys(this.selected_nodes);
+                    const isGroup = selectedIds.length > 1 && this.selected_nodes[node.id];
+                    const nodesToDuplicate = isGroup ? selectedIds.map(id => this.selected_nodes[id]) : [node];
                     const clonedNodes = [];
-                    
-                    if (selectedNodes.length > 0) {
-                        // Find the node that was clicked (the one under the mouse)
-                        const clickedNode = selectedNodes.find(n => 
-                            this.graph_mouse[0] >= n.pos[0] && 
-                            this.graph_mouse[0] <= n.pos[0] + n.size[0] &&
-                            this.graph_mouse[1] >= n.pos[1] && 
-                            this.graph_mouse[1] <= n.pos[1] + n.size[1]
-                        ) || selectedNodes[0];
-                        
-                        // Use the actual mouse position in graph coordinates
-                        const mouseX = this.graph_mouse[0];
-                        const mouseY = this.graph_mouse[1];
-                        
-                        // Debug: log the positions to see what's happening
-                        console.log('Alt-drag duplication:', {
-                            mousePos: [mouseX, mouseY],
-                            clickedNode: clickedNode.title,
-                            clickedNodePos: clickedNode.pos,
-                            clickedNodeSize: clickedNode.size
-                        });
-                        
-                        for (const selectedNode of selectedNodes) {
-                            this.duplicateCount = (this.duplicateCount || 0) + 1;
-                            const newNode = window.LiteGraph.createNode(selectedNode.type);
-                            if (newNode) {
-                                // Place new node at exactly the same position as the original
-                                newNode.pos = [
-                                    selectedNode.pos[0],
-                                    selectedNode.pos[1]
-                                ];
-                                newNode.size = [...selectedNode.size];
-                                newNode.properties = {...selectedNode.properties};
-                                newNode.title = selectedNode.title;
-                                if (selectedNode.type === "media/image" && selectedNode.properties.src) {
-                                    newNode.setImage(selectedNode.properties.src, selectedNode.properties.filename);
-                                }
-                                this.graph.add(newNode);
-                                clonedNodes.push(newNode);
+                    for (const origNode of nodesToDuplicate) {
+                        this.duplicateCount = (this.duplicateCount || 0) + 1;
+                        const newNode = window.LiteGraph.createNode(origNode.type);
+                        if (newNode) {
+                            newNode.pos = [origNode.pos[0], origNode.pos[1]];
+                            newNode.size = [...origNode.size];
+                            newNode.properties = {...origNode.properties};
+                            newNode.title = origNode.title;
+                            if (origNode.type === "media/image" && origNode.properties.src) {
+                                newNode.setImage(origNode.properties.src, origNode.properties.filename);
                             }
+                            this.graph.add(newNode);
+                            clonedNodes.push(newNode);
                         }
-                        
-                        // Select all the cloned nodes
-                        this.selected_nodes = {};
-                        for (const clonedNode of clonedNodes) {
-                            this.selected_nodes[clonedNode.id] = clonedNode;
-                        }
-                        
-                        // Set up multi-drag offsets for all cloned nodes
+                    }
+                    // Select all the cloned nodes
+                    this.selected_nodes = {};
+                    for (const clonedNode of clonedNodes) {
+                        this.selected_nodes[clonedNode.id] = clonedNode;
+                    }
+                    // Set up multi-drag offsets for all cloned nodes
+                    if (clonedNodes.length > 1) {
                         this._multi_drag_offsets = {};
                         for (const clonedNode of clonedNodes) {
                             this._multi_drag_offsets[clonedNode.id] = [
@@ -403,19 +385,18 @@ if (!isUsingOfficialLiteGraph) {
                                 clonedNode.pos[1] - this.graph_mouse[1]
                             ];
                         }
-                        
-                        // Start dragging the first cloned node
-                        if (clonedNodes.length > 0) {
-                            this.dragging_node = clonedNodes[0];
-                            this.node_captured = clonedNodes[0];
-                        }
-                        
-                        this.dirty_canvas = true;
-                        StateManager.saveState(this.graph, this);
-                        this.pushUndoState();
-                        e.preventDefault();
-                        return;
+                        this.dragging_node = clonedNodes[0];
+                        this.node_captured = clonedNodes[0];
+                    } else if (clonedNodes.length === 1) {
+                        this._multi_drag_offsets = null;
+                        this.dragging_node = clonedNodes[0];
+                        this.node_captured = clonedNodes[0];
                     }
+                    this.dirty_canvas = true;
+                    StateManager.saveState(this.graph, this);
+                    this.pushUndoState();
+                    e.preventDefault();
+                    return;
                 }
                 // Shift-click: add/remove node from selection
                 if (e.shiftKey) {
@@ -449,15 +430,17 @@ if (!isUsingOfficialLiteGraph) {
                     this._multi_drag_offsets = null;
                 }
             } else if (!e.shiftKey || Object.keys(this.selected_nodes).length <= 1) {
-                // Only clear selection if not shift+multi-select
-                this.selected_nodes = {};
-                // Only start rectangular selection for left mouse button
-                if (e.button === 0 && !(e.ctrlKey || e.metaKey)) {
-                    this.selection_rect = [x * dpr, y * dpr, 0, 0]; // screen coords in device pixels
-                    this.selection_rect_graph = [this.graph_mouse[0], this.graph_mouse[1]]; // graph coords
-                } else if (e.button === 1 || ((e.ctrlKey || e.metaKey) && e.button === 0)) {
-                this.dragging_canvas = true;
-            }
+                // --- Background interaction ---
+                if (!node && !resizeNode) {
+                    if (e.button === 0 && !(e.ctrlKey || e.metaKey)) {
+                        // Left click (no modifiers): deselect and start selection rectangle
+                        this.selected_nodes = {};
+                        this.selection_rect = [x, y, 0, 0]; // logical
+                        this.selection_rect_graph = [this.graph_mouse[0], this.graph_mouse[1]]; // graph coords
+                        this.dirty_canvas = true;
+                        return;
+                    }
+                }
             }
             this.dirty_canvas = true;
             e.preventDefault();
@@ -503,19 +486,42 @@ if (!isUsingOfficialLiteGraph) {
                 // Compute grid origin (top-left or other corner)
                 const originX = leftToRight ? Math.min(ax, bx) : Math.max(ax, bx) - columns * cellWidth;
                 const originY = topToBottom ? Math.min(ay, by) : Math.max(ay, by) - rows * cellHeight;
-                // Assign target positions
-                const targets = {};
-                selectedNodes.forEach((node, i) => {
+                // Assign target positions (nearest-neighbor matching)
+                // First, create target cell positions and their centers (only up to selectedNodes.length)
+                const gridTargets = [];
+                for (let i = 0; i < selectedNodes.length; i++) {
                     const col = i % columns;
                     const row = Math.floor(i / columns);
                     let tx = originX + (leftToRight ? col * cellWidth : (columns - 1 - col) * cellWidth);
                     let ty = originY + (topToBottom ? row * cellHeight : (rows - 1 - row) * cellHeight);
-                    // Center node in cell, preserve aspect ratio
-                    const w = node.size[0], h = node.size[1];
-                    tx += (cellWidth - w) / 2;
-                    ty += (cellHeight - h) / 2;
-                    targets[node.id] = [tx, ty];
-                });
+                    const cx = tx + cellWidth / 2;
+                    const cy = ty + cellHeight / 2;
+                    gridTargets.push({tx, ty, cx, cy});
+                }
+                // Now, assign nodes to gridTargets by closest original center
+                const availableNodes = [...selectedNodes];
+                const targets = {};
+                for (const gridTarget of gridTargets) {
+                    let minDist = Infinity;
+                    let closestNode = null;
+                    for (const node of availableNodes) {
+                        const nx = node.pos[0] + node.size[0] / 2;
+                        const ny = node.pos[1] + node.size[1] / 2;
+                        const dist = (nx - gridTarget.cx) ** 2 + (ny - gridTarget.cy) ** 2;
+                        if (dist < minDist) {
+                            minDist = dist;
+                            closestNode = node;
+                        }
+                    }
+                    if (closestNode) {
+                        // Center node in cell
+                        const w = closestNode.size[0], h = closestNode.size[1];
+                        const finalTx = gridTarget.tx + (cellWidth - w) / 2;
+                        const finalTy = gridTarget.ty + (cellHeight - h) / 2;
+                        targets[closestNode.id] = [finalTx, finalTy];
+                        availableNodes.splice(availableNodes.indexOf(closestNode), 1);
+                    }
+                }
                 // Animate nodes to targets using spring
                 this.grid_align_anim_nodes = selectedNodes;
                 this.grid_align_anim_targets = targets;
@@ -835,10 +841,10 @@ if (!isUsingOfficialLiteGraph) {
                 }
                 this.dirty_canvas = true;
             } else if (this.selection_rect) {
-                // Update selection rectangle in device pixels
+                // Update selection rectangle in logical pixels
                 const [startX, startY] = [this.selection_rect[0], this.selection_rect[1]];
-                this.selection_rect[2] = x * dpr - startX;
-                this.selection_rect[3] = y * dpr - startY;
+                this.selection_rect[2] = x - startX;
+                this.selection_rect[3] = y - startY;
                 this.dirty_canvas = true;
             } else if (this.dragging_canvas) {
                 const dx = x - this.last_mouse[0];
@@ -850,7 +856,13 @@ if (!isUsingOfficialLiteGraph) {
             } else {
                 // Update cursor based on what we're hovering over
                 const resizeNode = this.getNodeResizeHandle(this.canvas_mouse[0], this.canvas_mouse[1]);
-                this.canvas.style.cursor = resizeNode ? 'se-resize' : 'default';
+                if (resizeNode) {
+                    this.canvas.style.cursor = 'se-resize';
+                } else if (this.isSelectionBoxHandle && this.isSelectionBoxHandle(this.canvas_mouse[0], this.canvas_mouse[1])) {
+                    this.canvas.style.cursor = 'se-resize';
+                } else {
+                    this.canvas.style.cursor = 'default';
+                }
             }
             
             this.last_mouse = [x, y];
@@ -910,10 +922,9 @@ if (!isUsingOfficialLiteGraph) {
                 // Finalize selection using graph coordinates
                 const [gx0, gy0] = this.selection_rect_graph;
                 const [sx, sy, sw, sh] = this.selection_rect;
-                // Convert selection rectangle end point from device pixels to graph coordinates
-                const dpr = window.devicePixelRatio || 1;
+                // Convert selection rectangle end point from logical pixels to graph coordinates
                 const [ex, ey] = [sx + sw, sy + sh];
-                const [gx1, gy1] = this.convertOffsetToCanvas(ex / dpr, ey / dpr);
+                const [gx1, gy1] = this.convertOffsetToCanvas(ex, ey);
                 const rect = [
                     Math.min(gx0, gx1),
                     Math.min(gy0, gy1),
@@ -921,7 +932,7 @@ if (!isUsingOfficialLiteGraph) {
                     Math.abs(gy1 - gy0)
                 ];
                 // Only run selection if rectangle is large enough and not just a click
-                if (rect[2] > 5 / this.scale && rect[3] > 5 / this.scale) {
+                if (rect[2] > 5 && rect[3] > 5) {
                     this.selected_nodes = {};
                     for (const node of this.graph.nodes) {
                         // Node bounding box
@@ -952,9 +963,13 @@ if (!isUsingOfficialLiteGraph) {
                 this.dirty_canvas = true;
             } else {
                 // If no selection rectangle, always clear selection on mouse up if not clicking a node
-                if (!this.dragging_node && !this.resizing_node) {
-                    this.selected_nodes = {};
-                    this.dirty_canvas = true;
+                if (!this.dragging_node && !this.resizing_node && !this._resizing_selection_box && !this.dragging_canvas) {
+                    // If a background click was pending and no drag occurred, deselect all
+                    if (this._background_click_pending) {
+                        this.selected_nodes = {};
+                        this.dirty_canvas = true;
+                        this._background_click_pending = false;
+                    }
                 }
             }
             this.dragging_canvas = false;
@@ -1039,6 +1054,8 @@ if (!isUsingOfficialLiteGraph) {
                 return;
             }
             this._resizing_selection_box = false;
+            this._background_click_down = false;
+            this._background_click_pos = null;
         }
         
         onMouseWheel(e) {
@@ -1299,6 +1316,7 @@ if (!isUsingOfficialLiteGraph) {
         paste() {
             if (!this.clipboard) return;
             this.selected_nodes = {};
+            const pastedNodes = [];
             this.duplicateCount = (this.duplicateCount || 0) + 1;
             // Compute bounding box of clipboard nodes
             let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
@@ -1337,9 +1355,14 @@ if (!isUsingOfficialLiteGraph) {
                             // Optionally: trigger async load from persistent cache or show placeholder
                         }
                     }
-                    this.selectNode(node);
+                    pastedNodes.push(node);
                 }
             });
+            // Select all pasted nodes
+            this.selected_nodes = {};
+            for (const node of pastedNodes) {
+                this.selected_nodes[node.id] = node;
+            }
             this.dirty_canvas = true;
             StateManager.saveState(this.graph, this);
             this.pushUndoState();
@@ -1479,24 +1502,14 @@ if (!isUsingOfficialLiteGraph) {
         }
         
         applyDPI() {
-            const dpr = window.devicePixelRatio || 1;
-            const rect = this.canvas.getBoundingClientRect();
-            
-            // Set actual canvas size - ensure integers to prevent white lines
-            this.canvas.width = Math.ceil(rect.width * dpr);
-            this.canvas.height = Math.ceil(rect.height * dpr);
-            
-            // Reset the context transform before scaling to prevent accumulation
-            this.ctx.setTransform(1, 0, 0, 1, 0, 0);
-            // Scale the context
-            this.ctx.scale(dpr, dpr);
-            
-            // Set CSS size - ensure integers
-            this.canvas.style.width = Math.floor(rect.width) + 'px';
-            this.canvas.style.height = Math.floor(rect.height) + 'px';
-            
+            this.dpr = window.devicePixelRatio || 1;
+            this.canvas.width = window.innerWidth * this.dpr;
+            this.canvas.height = window.innerHeight * this.dpr;
+            this.canvas.style.width = window.innerWidth + 'px';
+            this.canvas.style.height = window.innerHeight + 'px';
+            this.ctx.setTransform(1, 0, 0, 1, 0, 0); // Reset before scaling
+            this.ctx.scale(this.dpr, this.dpr);
             this.dirty_canvas = true;
-            // this.draw(); // Removed direct draw
         }
         
         // Helper: check if node is visible on the canvas
@@ -1582,7 +1595,7 @@ if (!isUsingOfficialLiteGraph) {
                 this._last_fps_update = now;
             }
             ctx.save();
-            ctx.setTransform(1, 0, 0, 1, 0, 0);
+            ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
             ctx.fillStyle = '#222';
             ctx.fillRect(0, 0, 150, 50);
             ctx.font = '14px monospace';
@@ -1593,21 +1606,19 @@ if (!isUsingOfficialLiteGraph) {
             // Draw grid align overlay if active
             if (this.grid_align_mode && this.grid_align_dragging && this.grid_align_box) {
                 ctx.save();
-                ctx.setTransform(1, 0, 0, 1, 0, 0);
+                ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
                 ctx.strokeStyle = '#4af';
                 ctx.lineWidth = 2;
                 ctx.setLineDash([4, 4]);
                 const [ax, ay, bx, by] = this.grid_align_box;
-                // Convert both corners from graph to screen coordinates
+                // Convert both corners from graph to screen coordinates (logical pixels)
                 const sx0 = ax * this.scale + this.offset[0];
                 const sy0 = ay * this.scale + this.offset[1];
                 const sx1 = bx * this.scale + this.offset[0];
                 const sy1 = by * this.scale + this.offset[1];
                 const x0 = Math.min(sx0, sx1), y0 = Math.min(sy0, sy1);
                 const x1 = Math.max(sx0, sx1), y1 = Math.max(sy0, sy1);
-                // DPI scaling
-                const dpr = window.devicePixelRatio || 1;
-                ctx.strokeRect(x0 * dpr, y0 * dpr, (x1 - x0) * dpr, (y1 - y0) * dpr);
+                ctx.strokeRect(x0, y0, (x1 - x0), (y1 - y0));
                 ctx.restore();
             }
             // Animate grid align nodes (spring)
@@ -1668,21 +1679,20 @@ if (!isUsingOfficialLiteGraph) {
                     maxX = Math.max(maxX, n.pos[0] + n.size[0]);
                     maxY = Math.max(maxY, n.pos[1] + n.size[1]);
                 }
-                // Convert to screen coordinates
-                const dpr = window.devicePixelRatio || 1;
+                // Convert to screen coordinates (logical pixels)
                 const sx = minX * this.scale + this.offset[0];
                 const sy = minY * this.scale + this.offset[1];
                 const sw = (maxX - minX) * this.scale;
                 const sh = (maxY - minY) * this.scale;
-                // Add screen-space margin (8px)
-                const marginPx = 8 * dpr;
-                const dsx = sx * dpr - marginPx;
-                const dsy = sy * dpr - marginPx;
-                const dsw = sw * dpr + marginPx * 2;
-                const dsh = sh * dpr + marginPx * 2;
+                // Add screen-space margin (8 logical px)
+                const marginPx = 8;
+                const dsx = sx - marginPx;
+                const dsy = sy - marginPx;
+                const dsw = sw + marginPx * 2;
+                const dsh = sh + marginPx * 2;
                 // Draw transparent blue box
                 ctx.save();
-                ctx.setTransform(1, 0, 0, 1, 0, 0);
+                ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
                 ctx.globalAlpha = 0.15;
                 ctx.fillStyle = '#4af';
                 ctx.fillRect(dsx, dsy, dsw, dsh);
@@ -1692,7 +1702,7 @@ if (!isUsingOfficialLiteGraph) {
                 ctx.setLineDash([4, 4]);
                 ctx.strokeRect(dsx, dsy, dsw, dsh);
                 // Draw bracket handle (bottom-right corner)
-                const handleSize = 16 * dpr;
+                const handleSize = 16;
                 ctx.setLineDash([]);
                 ctx.save();
                 ctx.strokeStyle = '#fff';
@@ -1713,7 +1723,7 @@ if (!isUsingOfficialLiteGraph) {
             // Draw selection marquee (rectangular selection)
             if (this.selection_rect) {
                 ctx.save();
-                ctx.setTransform(1, 0, 0, 1, 0, 0);
+                ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
                 ctx.strokeStyle = '#4af';
                 ctx.lineWidth = 2;
                 ctx.setLineDash([4, 4]);
@@ -2032,6 +2042,8 @@ if (!isUsingOfficialLiteGraph) {
                     }
                 }
                 this.dirty_canvas = true;
+                StateManager.saveState(this.graph, this);
+                this.pushUndoState();
                 e.preventDefault();
                 return;
             }
@@ -2411,20 +2423,19 @@ if (!isUsingOfficialLiteGraph) {
                 maxX = Math.max(maxX, n.pos[0] + n.size[0]);
                 maxY = Math.max(maxY, n.pos[1] + n.size[1]);
             }
-            // Convert to screen coordinates
-            const dpr = window.devicePixelRatio || 1;
+            // Convert to screen coordinates (logical pixels)
             const sx = minX * this.scale + this.offset[0];
             const sy = minY * this.scale + this.offset[1];
             const sw = (maxX - minX) * this.scale;
             const sh = (maxY - minY) * this.scale;
-            // Add screen-space margin (8px)
-            const marginPx = 8 * dpr;
-            const dsx = sx * dpr - marginPx;
-            const dsy = sy * dpr - marginPx;
-            const dsw = sw * dpr + marginPx * 2;
-            const dsh = sh * dpr + marginPx * 2;
+            // Add screen-space margin (8 logical px)
+            const marginPx = 8;
+            const dsx = sx - marginPx;
+            const dsy = sy - marginPx;
+            const dsw = sw + marginPx * 2;
+            const dsh = sh + marginPx * 2;
             // Make the handle hit area a bit larger for usability
-            const handleSize = 20 * dpr;
+            const handleSize = 20;
             return (
                 x >= dsx + dsw - handleSize &&
                 x <= dsx + dsw &&
