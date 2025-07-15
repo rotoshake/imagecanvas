@@ -16,7 +16,8 @@ const StateManager = {
                 pr: node.properties,
                 ti: node.title,
                 g: node.type === 'groupbox' ? node.containedNodeIds : undefined,
-                f: node.flags // Add flags to compressed state
+                f: node.flags, // Add flags to compressed state
+                ar: node.aspectRatio // Add aspect ratio to compressed state
             })),
             o: state.offset,
             sc: state.scale
@@ -36,7 +37,8 @@ const StateManager = {
                 properties: node.pr,
                 title: node.ti,
                 containedNodeIds: node.t === 'groupbox' ? node.g || [] : undefined,
-                flags: node.f // Add flags to decompressed state
+                flags: node.f, // Add flags to decompressed state
+                aspectRatio: node.ar // Add aspect ratio to decompressed state
             })),
             offset: data.o,
             scale: data.sc
@@ -100,13 +102,14 @@ const StateManager = {
     },
     
     // Save state with fallback mechanisms
-    saveState: function(graph, canvas) {
+    async saveState(graph, canvas) {
         const state = {
             nodes: graph.nodes.map(node => ({
                 id: node.id,
                 type: node.type,
                 pos: node.pos,
                 size: node.size,
+                aspectRatio: node.aspectRatio || (node.size[0] / node.size[1]), // Save aspect ratio
                 // Only store hash and filename for images, never src
                 properties: node.type === 'media/image'
                     ? { hash: node.properties.hash, filename: node.properties.filename }
@@ -125,7 +128,7 @@ const StateManager = {
         try {
             // Try compressed version first
             const compressed = this.compressState(state);
-            localStorage.setItem(this.STATE_KEY, compressed);
+            await StateDB.put(this.STATE_KEY, compressed);
         } catch (e) {
             if (e.name === 'QuotaExceededError') {
                 console.warn('Storage quota exceeded, attempting cleanup and retry');
@@ -138,6 +141,7 @@ const StateManager = {
                             type: node.type,
                             pos: node.pos,
                             size: node.size,
+                            aspectRatio: node.aspectRatio || (node.size[0] / node.size[1]), // Save aspect ratio
                             properties: node.type === 'media/image'
                                 ? { hash: node.properties.hash, filename: node.properties.filename }
                                 : { ...node.properties },
@@ -149,7 +153,7 @@ const StateManager = {
                         scale: canvas.scale
                     };
                     const minimalCompressed = this.compressState(minimalState);
-                    localStorage.setItem(this.STATE_KEY, minimalCompressed);
+                    await StateDB.put(this.STATE_KEY, minimalCompressed);
                     console.log('Saved minimal state (without image data)');
                     this.notifyQuotaIssue('Saved minimal state - images will be reloaded from cache');
                 } catch (e2) {
@@ -164,8 +168,8 @@ const StateManager = {
         }
     },
     
-    loadState: function(graph, canvas, LiteGraph) {
-        const saved = localStorage.getItem(this.STATE_KEY);
+    async loadState(graph, canvas, LiteGraph) {
+        const saved = await StateDB.get(this.STATE_KEY);
         if (!saved) return;
         
         try {
@@ -202,6 +206,7 @@ const StateManager = {
                         node.id = nodeData.id;
                         node.pos = nodeData.pos;
                         node.size = nodeData.size;
+                        node.aspectRatio = nodeData.aspectRatio || (nodeData.size[0] / nodeData.size[1]); // Restore aspect ratio
                         node.properties = nodeData.properties || {};
                         node.flags = nodeData.flags ? { ...nodeData.flags } : {};
                         // If node has a hash, try to load image from cache
@@ -238,29 +243,69 @@ const StateManager = {
     },
     
     // Save undo stack with compression
-    saveUndoStack: function(undoStack) {
-        try {
-            const compressed = JSON.stringify(undoStack);
-            localStorage.setItem(this.UNDO_STACK_KEY, compressed);
-        } catch (e) {
-            if (e.name === 'QuotaExceededError') {
-                console.warn('Undo stack quota exceeded, clearing old states');
-                this.notifyQuotaIssue('Undo history cleared due to storage limits');
-                localStorage.removeItem(this.UNDO_STACK_KEY);
-            } else {
-                console.error('Failed to save undo stack:', e);
-            }
-        }
+    async saveUndoStack(undoStack) {
+        await StateDB.put(this.UNDO_STACK_KEY, JSON.stringify(undoStack));
     },
     
     // Load undo stack
-    loadUndoStack: function() {
-        try {
-            const saved = localStorage.getItem(this.UNDO_STACK_KEY);
-            return saved ? JSON.parse(saved) : [];
-        } catch (e) {
-            console.error('Failed to load undo stack:', e);
-            return [];
-        }
+    async loadUndoStack() {
+        const saved = await StateDB.get(this.UNDO_STACK_KEY);
+        return saved ? JSON.parse(saved) : [];
+    }
+};
+
+// --- IndexedDB StateDB Utility ---
+const StateDB = {
+    db: null,
+    dbName: 'ImageCanvasState',
+    storeName: 'state',
+    async open() {
+        if (this.db) return this.db;
+        return new Promise((resolve, reject) => {
+            const req = indexedDB.open(this.dbName, 1);
+            req.onupgradeneeded = (event) => {
+                const db = event.target.result;
+                if (!db.objectStoreNames.contains(this.storeName)) {
+                    db.createObjectStore(this.storeName);
+                }
+            };
+            req.onsuccess = (event) => {
+                this.db = event.target.result;
+                resolve(this.db);
+            };
+            req.onerror = (event) => {
+                reject(event.target.error);
+            };
+        });
+    },
+    async put(key, data) {
+        const db = await this.open();
+        return new Promise((resolve, reject) => {
+            const tx = db.transaction([this.storeName], 'readwrite');
+            const store = tx.objectStore(this.storeName);
+            const req = store.put(data, key);
+            req.onsuccess = () => resolve();
+            req.onerror = (e) => reject(e);
+        });
+    },
+    async get(key) {
+        const db = await this.open();
+        return new Promise((resolve, reject) => {
+            const tx = db.transaction([this.storeName], 'readonly');
+            const store = tx.objectStore(this.storeName);
+            const req = store.get(key);
+            req.onsuccess = () => resolve(req.result);
+            req.onerror = (e) => reject(e);
+        });
+    },
+    async remove(key) {
+        const db = await this.open();
+        return new Promise((resolve, reject) => {
+            const tx = db.transaction([this.storeName], 'readwrite');
+            const store = tx.objectStore(this.storeName);
+            const req = store.delete(key);
+            req.onsuccess = () => resolve();
+            req.onerror = (e) => reject(e);
+        });
     }
 };

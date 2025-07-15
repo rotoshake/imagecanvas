@@ -40,8 +40,20 @@ class ImageNode {
         this.img = new Image();
         this.img.onload = () => {
             if (!this.img) return; // Defensive: image was unloaded or replaced
-            this.aspectRatio = this.img.width / this.img.height;
-            this.size[0] = this.size[1] * this.aspectRatio;
+            
+            // Only reset aspect ratio if it's the default value (indicating no custom scaling)
+            // This preserves non-uniform scaling when loading from state
+            const shouldResetAspect = !this.aspectRatio || this.aspectRatio === 1;
+            
+            if (shouldResetAspect) {
+                this.aspectRatio = this.img.width / this.img.height;
+                this.originalAspect = this.aspectRatio;
+                this.size[0] = this.size[1] * this.aspectRatio;
+            } else {
+                // Preserve existing aspect ratio and size from state
+                this.originalAspect = this.img.width / this.img.height;
+            }
+            
             this._prev_size = this.size.slice();
             this.onResize();
             // Update title with full filename (no truncation) only if default
@@ -55,7 +67,9 @@ class ImageNode {
                 filename: this.properties.filename,
                 hash: this.properties.hash,
                 width: this.img.width,
-                height: this.img.height
+                height: this.img.height,
+                aspectRatio: this.aspectRatio,
+                shouldResetAspect: shouldResetAspect
             });
             if (this.graph && this.graph.canvas) {
                 this.graph.canvas.dirty_canvas = true;
@@ -118,11 +132,22 @@ class ImageNode {
     onResize() {
         const dw = Math.abs(this.size[0] - this._prev_size[0]);
         const dh = Math.abs(this.size[1] - this._prev_size[1]);
-        if (dw > dh) {
-            this.size[1] = this.size[0] / this.aspectRatio;
+        
+        // Only enforce aspect ratio if it's the original aspect ratio (indicating uniform scaling)
+        // This allows non-uniform scaling to persist
+        const isOriginalAspect = this.aspectRatio === this.originalAspect;
+        
+        if (isOriginalAspect) {
+            if (dw > dh) {
+                this.size[1] = this.size[0] / this.aspectRatio;
+            } else {
+                this.size[0] = this.size[1] * this.aspectRatio;
+            }
         } else {
-            this.size[0] = this.size[1] * this.aspectRatio;
+            // For non-uniform scaling, update the aspect ratio to match current size
+            this.aspectRatio = this.size[0] / this.size[1];
         }
+        
         this._prev_size = this.size.slice();
     }
 
