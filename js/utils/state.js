@@ -17,7 +17,8 @@ const StateManager = {
                 ti: node.title,
                 g: node.type === 'groupbox' ? node.containedNodeIds : undefined,
                 f: node.flags, // Add flags to compressed state
-                ar: node.aspectRatio // Add aspect ratio to compressed state
+                ar: node.aspectRatio, // Add aspect ratio to compressed state
+                r: node.rotation || 0 // Add rotation
             })),
             o: state.offset,
             sc: state.scale
@@ -38,7 +39,8 @@ const StateManager = {
                 title: node.ti,
                 containedNodeIds: node.t === 'groupbox' ? node.g || [] : undefined,
                 flags: node.f, // Add flags to decompressed state
-                aspectRatio: node.ar // Add aspect ratio to decompressed state
+                aspectRatio: node.ar, // Add aspect ratio to decompressed state
+                rotation: node.r || 0 // Add rotation
             })),
             offset: data.o,
             scale: data.sc
@@ -110,8 +112,9 @@ const StateManager = {
                 pos: node.pos,
                 size: node.size,
                 aspectRatio: node.aspectRatio || (node.size[0] / node.size[1]), // Save aspect ratio
-                // Only store hash and filename for images, never src
-                properties: node.type === 'media/image'
+                rotation: node.rotation || 0, // Save rotation
+                // Only store hash and filename for images and videos, never src
+                properties: (node.type === 'media/image' || node.type === 'media/video')
                     ? { hash: node.properties.hash, filename: node.properties.filename }
                     : { ...node.properties },
                 flags: node.flags ? { ...node.flags } : undefined,
@@ -142,6 +145,7 @@ const StateManager = {
                             pos: node.pos,
                             size: node.size,
                             aspectRatio: node.aspectRatio || (node.size[0] / node.size[1]), // Save aspect ratio
+                            rotation: node.rotation || 0, // Save rotation
                             properties: node.type === 'media/image'
                                 ? { hash: node.properties.hash, filename: node.properties.filename }
                                 : { ...node.properties },
@@ -207,17 +211,26 @@ const StateManager = {
                         node.pos = nodeData.pos;
                         node.size = nodeData.size;
                         node.aspectRatio = nodeData.aspectRatio || (nodeData.size[0] / nodeData.size[1]); // Restore aspect ratio
+                        node.rotation = nodeData.rotation || 0; // Restore rotation
                         node.properties = nodeData.properties || {};
                         node.flags = nodeData.flags ? { ...nodeData.flags } : {};
-                        // If node has a hash, try to load image from cache
-                        if (nodeData.type === "media/image" && nodeData.properties.hash) {
+                        // If node has a hash, try to load image or video from cache
+                        if ((nodeData.type === "media/image" || nodeData.type === "media/video") && nodeData.properties.hash) {
                             const dataURL = (window.InMemoryImageCache && window.InMemoryImageCache.get) ? window.InMemoryImageCache.get(nodeData.properties.hash) : undefined;
                             if (dataURL) {
-                                node.setImage(dataURL, nodeData.properties.filename);
+                                if (nodeData.type === "media/video") {
+                                    node.setVideo(dataURL, nodeData.properties.filename);
+                                } else {
+                                    node.setImage(dataURL, nodeData.properties.filename);
+                                }
                             } else if (window.ImageCache && typeof window.ImageCache.get === 'function') {
                                 window.ImageCache.get(nodeData.properties.hash).then(dataURL => {
                                     if (dataURL) {
-                                        node.setImage(dataURL, nodeData.properties.filename);
+                                        if (nodeData.type === "media/video") {
+                                            node.setVideo(dataURL, nodeData.properties.filename);
+                                        } else {
+                                            node.setImage(dataURL, nodeData.properties.filename);
+                                        }
                                         node.properties.src = dataURL;
                                         if (window.InMemoryImageCache && window.InMemoryImageCache.set) {
                                             window.InMemoryImageCache.set(nodeData.properties.hash, dataURL);

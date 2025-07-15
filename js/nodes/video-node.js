@@ -1,20 +1,21 @@
-// Image Node class definition
-class ImageNode {
+// Video Node class definition
+class VideoNode {
     constructor() {
-        this.type = "media/image";
-        this.title = "Image";
-        this.properties = { src: null, scale: 1.0, filename: null };
+        this.type = "media/video";
+        this.title = "Video";
+        this.properties = { src: null, filename: null, loop: true };
         this.flags = { hide_title: true };
         this.size = [200, 200];
         this.pos = [0, 0];
         this.resizable = true;
         this.aspectRatio = 1;
-        this.rotation = 0;
         this._prev_size = [200, 200];
-        this.outputs = [{ name: "image", type: "" }];
-        this.img = null;
-        this.thumbnails = {}; // Multiple thumbnail sizes
-        this._thumbnailSizes = [64, 128, 256, 512]; // Different thumbnail sizes
+        this.outputs = [{ name: "video", type: "" }];
+        this.video = null;
+        this.thumbnails = {}; // Multiple thumbnail sizes (first frame)
+        this._thumbnailSizes = [64, 128, 256, 512];
+        this.userPaused = false;
+        this.rotation = 0; // Add rotation property
         // Defensive: ensure size and scale are valid
         if (!this.size || this.size.length !== 2 || !this.size.every(Number.isFinite)) {
             this.size = [200, 200];
@@ -22,73 +23,83 @@ class ImageNode {
         if (!Number.isFinite(this.properties.scale)) {
             this.properties.scale = 1.0;
         }
-        // Debug: log creation and hash if present
-        console.debug('[ImageNode] Created', {
+        console.debug('[VideoNode] Created', {
             filename: this.properties.filename,
             src: this.properties.src,
             hash: this.properties.hash
         });
     }
 
-    setImage(src, filename = null, hash = null) {
+    setVideo(src, filename = null, hash = null) {
         this.properties.src = src;
         this.properties.filename = filename;
         if (hash) this.properties.hash = hash;
-        this.img = new Image();
-        this.img.onload = () => {
-            if (!this.img) return; // Defensive: image was unloaded or replaced
-            
-            // Only reset aspect ratio if it's the default value (indicating no custom scaling)
-            // This preserves non-uniform scaling when loading from state
+        this.video = document.createElement('video');
+        this.video.muted = true; // Mute by default to avoid audio issues
+        this.video.loop = this.properties.loop;
+        this.video.autoplay = true; // Start playback automatically
+        this._thumbnailsGenerated = false;
+        this.video.onloadedmetadata = () => {
+            if (!this.video) return;
             const shouldResetAspect = !this.aspectRatio || this.aspectRatio === 1;
-            
             if (shouldResetAspect) {
-                this.aspectRatio = this.img.width / this.img.height;
+                this.aspectRatio = this.video.videoWidth / this.video.videoHeight;
                 this.originalAspect = this.aspectRatio;
                 this.size[0] = this.size[1] * this.aspectRatio;
             } else {
-                // Preserve existing aspect ratio and size from state
-                this.originalAspect = this.img.width / this.img.height;
+                this.originalAspect = this.video.videoWidth / this.video.videoHeight;
             }
-            
             this._prev_size = this.size.slice();
             this.onResize();
-            // Update title with full filename (no truncation) only if default
-            if (filename && (!this.title || this.title === 'Image')) {
+            if (filename && (!this.title || this.title === 'Video')) {
                 this.title = filename;
             }
-            // Generate multiple thumbnail sizes
-            this.generateThumbnails();
-            // Debug: log image loaded
-            console.debug('[ImageNode] Image loaded', {
+            // Seek to first frame and generate thumbnails after seek
+            const tryGenerate = () => {
+                if (this._thumbnailsGenerated) return;
+                this._thumbnailsGenerated = true;
+                this.generateThumbnails();
+                if (this.graph && this.graph.canvas) {
+                    this.graph.canvas.dirty_canvas = true;
+                    this.graph.canvas.draw();
+                }
+            };
+            // If already at 0, just try to generate
+            if (Math.abs(this.video.currentTime) > 0.01) {
+                this.video.currentTime = 0;
+            }
+            // Use onseeked if available, fallback to oncanplay
+            this.video.onseeked = tryGenerate;
+            this.video.oncanplay = tryGenerate;
+            // If video is already ready, try immediately
+            if (this.video.readyState >= 2) {
+                tryGenerate();
+            }
+            console.debug('[VideoNode] Video loaded', {
                 filename: this.properties.filename,
                 hash: this.properties.hash,
-                width: this.img.width,
-                height: this.img.height,
+                width: this.video.videoWidth,
+                height: this.video.videoHeight,
                 aspectRatio: this.aspectRatio,
                 shouldResetAspect: shouldResetAspect
             });
             if (this.graph && this.graph.canvas) {
                 this.graph.canvas.dirty_canvas = true;
                 this.graph.canvas.draw();
-                // Debug: log redraw triggered
-                console.debug('[ImageNode] Canvas redraw triggered after image load');
             }
+            // Start playback
+            this.video.play().catch(e => console.warn('Video playback failed:', e));
         };
-        this.img.src = src;
+        this.video.src = src;
     }
 
     generateThumbnails() {
-        if (!(this.img instanceof HTMLImageElement) || !this.img.width || !this.img.height) return;
-        
+        if (!this.video || !this.video.videoWidth || !this.video.videoHeight) return;
         this.thumbnails = {};
-        
         for (const thumbSize of this._thumbnailSizes) {
             const canvas = document.createElement('canvas');
             const ctx = canvas.getContext('2d');
-            
-            // Calculate thumbnail dimensions maintaining aspect ratio
-            let tw = this.img.width, th = this.img.height;
+            let tw = this.video.videoWidth, th = this.video.videoHeight;
             if (!tw || !th) { tw = th = 1; }
             if (tw > th && tw > thumbSize) {
                 th = Math.round(th * (thumbSize / tw));
@@ -99,41 +110,31 @@ class ImageNode {
             } else if (tw > thumbSize) {
                 tw = th = thumbSize;
             }
-            
             canvas.width = tw;
             canvas.height = th;
-            
-            // Draw with high quality
             ctx.imageSmoothingEnabled = true;
             ctx.imageSmoothingQuality = 'high';
-            ctx.drawImage(this.img, 0, 0, tw, th);
-            
+            try {
+                ctx.drawImage(this.video, 0, 0, tw, th);
+            } catch (e) {}
             this.thumbnails[thumbSize] = canvas;
         }
     }
 
     getBestThumbnail(targetWidth, targetHeight) {
-        if (!(this.img instanceof HTMLImageElement) || !this.img.width || !this.img.height) return null;
-        
-        // Find the smallest thumbnail that's still larger than target
+        if (!this.video.videoWidth || !this.video.videoHeight) return null;
         for (const size of this._thumbnailSizes) {
             if (size >= targetWidth && size >= targetHeight) {
                 return this.thumbnails[size];
             }
         }
-        
-        // If no thumbnail is large enough, use the largest one
         return this.thumbnails[Math.max(...this._thumbnailSizes)];
     }
 
     onResize() {
         const dw = Math.abs(this.size[0] - this._prev_size[0]);
         const dh = Math.abs(this.size[1] - this._prev_size[1]);
-        
-        // Only enforce aspect ratio if it's the original aspect ratio (indicating uniform scaling)
-        // This allows non-uniform scaling to persist
         const isOriginalAspect = this.aspectRatio === this.originalAspect;
-        
         if (isOriginalAspect) {
             if (dw > dh) {
                 this.size[1] = this.size[0] / this.aspectRatio;
@@ -141,23 +142,22 @@ class ImageNode {
                 this.size[0] = this.size[1] * this.aspectRatio;
             }
         } else {
-            // For non-uniform scaling, update the aspect ratio to match current size
             this.aspectRatio = this.size[0] / this.size[1];
         }
-        
         this._prev_size = this.size.slice();
     }
 
     onDrawForeground(ctx) {
-        // Defensive: ensure size and scale are valid before drawing
         if (!this.size || this.size.length !== 2 || !this.size.every(Number.isFinite)) {
             this.size = [200, 200];
         }
         if (!Number.isFinite(this.properties.scale)) {
             this.properties.scale = 1.0;
         }
-        if (!(this.img instanceof HTMLImageElement) || !this.img.width || !this.img.height) {
-            // Draw gray box with loading text
+        if (!this.video && this.properties && this.properties.src) {
+            this.setVideo(this.properties.src, this.properties.filename, this.properties.hash);
+        }
+        if (!this.video || !this.video.videoWidth || !this.video.videoHeight) {
             ctx.save();
             ctx.fillStyle = '#cccccc';
             ctx.fillRect(0, 0, this.size[0], this.size[1]);
@@ -169,12 +169,22 @@ class ImageNode {
             ctx.restore();
             return;
         }
+        let scale = 1, dpr = 1;
+        if (this.graph && this.graph.canvas) {
+            scale = this.graph.canvas.scale || 1;
+            dpr = this.graph.canvas.dpr || window.devicePixelRatio || 1;
+        }
+        const screenW = this.size[0] * scale * dpr;
+        const screenH = this.size[1] * scale * dpr;
         const w = this.size[0];
         const h = this.size[1];
-        // Determine if we should use thumbnail based on size and zoom
-        const shouldUseThumbnail = w < this.img.width / 3 || h < this.img.height / 3;
-        if (shouldUseThumbnail && Object.keys(this.thumbnails).length > 0) {
-            // Use appropriate thumbnail size
+        if (screenW < 32 || screenH < 32) {
+            ctx.save();
+            ctx.fillStyle = '#888';
+            ctx.fillRect(0, 0, w, h);
+            ctx.restore();
+            return;
+        } else if (screenW < 64 || screenH < 64) {
             const targetWidth = Math.round(w * this.properties.scale);
             const targetHeight = Math.round(h * this.properties.scale);
             const thumbnail = this.getBestThumbnail(targetWidth, targetHeight);
@@ -182,24 +192,22 @@ class ImageNode {
                 ctx.imageSmoothingEnabled = true;
                 ctx.imageSmoothingQuality = 'high';
                 ctx.drawImage(thumbnail, 0, 0, w * this.properties.scale, h * this.properties.scale);
-            } else if (this.img instanceof HTMLImageElement) {
-                ctx.drawImage(this.img, 0, 0, w * this.properties.scale, h * this.properties.scale);
+            } else {
+                ctx.save();
+                ctx.fillStyle = '#888';
+                ctx.fillRect(0, 0, w, h);
+                ctx.restore();
             }
-        } else if (this.img instanceof HTMLImageElement) {
-            ctx.drawImage(this.img, 0, 0, w * this.properties.scale, h * this.properties.scale);
+            return;
+        } else {
+            ctx.imageSmoothingEnabled = true;
+            ctx.imageSmoothingQuality = 'high';
+            ctx.drawImage(this.video, 0, 0, w * this.properties.scale, h * this.properties.scale);
+            if (!this.userPaused && this.video.paused) {
+                this.video.play().catch(()=>{});
+            }
         }
-        // Draw the title only if not in thumbnail mode and not hidden
-        if (!shouldUseThumbnail && !this.flags.hide_title) {
-            ctx.save();
-            ctx.font = 'bold 15px Arial';
-            ctx.textAlign = 'left';
-            ctx.textBaseline = 'top';
-            ctx.fillStyle = 'rgba(0,0,0,0.7)';
-            ctx.fillRect(0, 0, ctx.measureText(this.title).width + 16, 24);
-            ctx.fillStyle = '#fff';
-            ctx.fillText(this.title, 8, 12);
-            ctx.restore();
-        }
+        // Remove in-node title drawing here (was previously drawing title inside the node)
     }
 
     onExecute() {
@@ -212,5 +220,3 @@ class ImageNode {
         // Placeholder for output data
     }
 }
-
-// Register the node type (will be called from app.js)
