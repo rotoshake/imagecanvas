@@ -125,40 +125,9 @@ if (!isUsingOfficialLiteGraph) {
             this.canvas_mouse = [x, y];
             this.graph_mouse = this.convertOffsetToCanvas(x, y);
             this.last_mouse = [x, y];
-            // --- NEW: Rotation handle check (individual nodes first, then multi) ---
-            const rotationNode = this.getNodeRotationHandle(x, y);
-            if (rotationNode) {
-                if (Object.keys(this.selected_nodes).length > 1) {
-                    this.rotating_node = null; // Ensure only multi mode is active
-                    this._rotating_selection = true;
-                    this._individual_batch_mode = true;
-                    // Store anchor node ID and center for batch rotation
-                    this._batch_rotation_anchor_id = rotationNode.id;
-                    this._batch_rotation_anchor_center = [
-                        rotationNode.pos[0] + rotationNode.size[0] / 2,
-                        rotationNode.pos[1] + rotationNode.size[1] / 2
-                    ];
-                    // Store initial angle from anchor center to mouse
-                    const dx = this.graph_mouse[0] - this._batch_rotation_anchor_center[0];
-                    const dy = this.graph_mouse[1] - this._batch_rotation_anchor_center[1];
-                    this._rotation_initial_angle = Math.atan2(dy, dx);
-                } else {
-                    this.rotating_node = rotationNode;
-                    this._rotating_selection = false; // Ensure only single mode is active
-                    this._individual_batch_mode = false;
-                    const cx = rotationNode.pos[0] + rotationNode.size[0] / 2;
-                    const cy = rotationNode.pos[1] + rotationNode.size[1] / 2;
-                    this._rotation_center = [cx, cy];
-                    const dx = this.graph_mouse[0] - cx;
-                    const dy = this.graph_mouse[1] - cy;
-                    this._rotation_initial_angle = Math.atan2(dy, dx);
-                }
-                e.preventDefault();
-                return;
-            }
-            // --- EXISTING: Rotation handle check (multi-selection) ---
+            // --- FIX: Prioritize group rotation handle for multi-selection ---
             if (Object.keys(this.selected_nodes).length > 1 && this.isSelectionBoxRotationHandle(x, y)) {
-                this.rotating_node = null; // Ensure only multi mode is active
+                this.rotating_node = null;
                 this._rotating_selection = true;
                 this._individual_batch_mode = false;
                 let sumX = 0, sumY = 0, count = 0;
@@ -177,10 +146,52 @@ if (!isUsingOfficialLiteGraph) {
                 const dx = brX - cx;
                 const dy = brY - cy;
                 this._rotation_initial_angle = Math.atan2(dy, dx);
+                this._multi_rotation_initial = {};
+                for (const id in this.selected_nodes) {
+                    const n = this.selected_nodes[id];
+                    this._multi_rotation_initial[id] = {
+                        pos: [...n.pos],
+                        rot: n.rotation || 0
+                    };
+                }
                 e.preventDefault();
                 return;
             }
-
+            // --- Rotation handle check (individual nodes, then multi-batch) ---
+            const rotationNode = this.getNodeRotationHandle(x, y);
+            if (rotationNode) {
+                if (Object.keys(this.selected_nodes).length > 1) {
+                    this.rotating_node = null;
+                    this._rotating_selection = true;
+                    this._individual_batch_mode = true;
+                    this._batch_rotation_anchor_id = rotationNode.id;
+                    this._batch_rotation_anchor_center = [
+                        rotationNode.pos[0] + rotationNode.size[0] / 2,
+                        rotationNode.pos[1] + rotationNode.size[1] / 2
+                    ];
+                    this._multi_rotation_initial = {};
+                    for (const id in this.selected_nodes) {
+                        const n = this.selected_nodes[id];
+                        this._multi_rotation_initial[id] = n.rotation || 0;
+                    }
+                    const dx = this.graph_mouse[0] - this._batch_rotation_anchor_center[0];
+                    const dy = this.graph_mouse[1] - this._batch_rotation_anchor_center[1];
+                    this._rotation_initial_angle = Math.atan2(dy, dx);
+                } else {
+                    this.rotating_node = rotationNode;
+                    this._rotating_selection = false;
+                    this._individual_batch_mode = false;
+                    const cx = rotationNode.pos[0] + rotationNode.size[0] / 2;
+                    const cy = rotationNode.pos[1] + rotationNode.size[1] / 2;
+                    this._rotation_center = [cx, cy];
+                    const dx = this.graph_mouse[0] - cx;
+                    const dy = this.graph_mouse[1] - cy;
+                    this._rotation_initial_angle = Math.atan2(dy, dx);
+                    this._rotation_initial_rot = this.rotating_node.rotation || 0;
+                }
+                e.preventDefault();
+                return;
+            }
             // --- GRID ALIGN MODE TRIGGER (TAKES PRECEDENCE OVER PAN) ---
             if ((e.ctrlKey || e.metaKey) && e.shiftKey && !this.getNodeAtPos(this.graph_mouse[0], this.graph_mouse[1]) && e.button === 0) {
                 this.grid_align_mode = true;
@@ -954,96 +965,68 @@ if (!isUsingOfficialLiteGraph) {
             //     this.draw();
             // }
             if (this._rotating_selection) {
+                let totalDelta;
                 if (this._individual_batch_mode) {
-                    // Batch individual: rotate all selected nodes around their own centers by the same delta
-                    let anchorNode = null;
-                    for (const id in this.selected_nodes) {
-                        if (id == this._batch_rotation_anchor_id) {
-                            anchorNode = this.selected_nodes[id];
-                            break;
-                        }
+                    // Batch individual: use anchor node center
+                    totalDelta = Math.atan2(this.graph_mouse[1] - this._batch_rotation_anchor_center[1], this.graph_mouse[0] - this._batch_rotation_anchor_center[0]) - this._rotation_initial_angle;
+                } else {
+                    // Group rigid: use group center
+                    totalDelta = Math.atan2(this.graph_mouse[1] - this._multi_rotation_center[1], this.graph_mouse[0] - this._multi_rotation_center[0]) - this._rotation_initial_angle;
+                }
+                let totalDeltaDeg = totalDelta * 180 / Math.PI;
+                if (this._individual_batch_mode) {
+                    // Batch individual: same total delta to each node's rotation (around own center)
+                    let effectiveTotalDeltaDeg = totalDeltaDeg;
+                    if (e.shiftKey) {
+                        const anchorId = this._batch_rotation_anchor_id;
+                        const anchorInit = this._multi_rotation_initial[anchorId];
+                        const tentative = anchorInit + totalDeltaDeg;
+                        const snapped = Math.round(tentative / 45) * 45;
+                        effectiveTotalDeltaDeg = snapped - anchorInit;
                     }
-                    let anchorCenter = this._batch_rotation_anchor_center;
-                    if (anchorNode) {
-                        anchorCenter = [
-                            anchorNode.pos[0] + anchorNode.size[0] / 2,
-                            anchorNode.pos[1] + anchorNode.size[1] / 2
-                        ];
-                    }
-                    const dx = this.graph_mouse[0] - anchorCenter[0];
-                    const dy = this.graph_mouse[1] - anchorCenter[1];
-                    let current_angle = Math.atan2(dy, dx);
-                    let delta = current_angle - this._rotation_initial_angle;
-                    let deltaDeg = delta * 180 / Math.PI;
-                    // Use anchor node's total rotation for snapping reference
-                    let effectiveDeltaDeg = deltaDeg;
-                    if (anchorNode) {
-                        const tentative = anchorNode.rotation + deltaDeg;
-                        let snapped = tentative;
-                        if (e.shiftKey) {
-                            snapped = Math.round(tentative / 45) * 45;
-                        }
-                        effectiveDeltaDeg = snapped - anchorNode.rotation;
-                    }
-                    // Apply same effective delta to all nodes' rotations (no position changes)
                     for (const id in this.selected_nodes) {
                         const n = this.selected_nodes[id];
-                        n.rotation = (n.rotation + effectiveDeltaDeg) % 360;
+                        const initRot = this._multi_rotation_initial[id];
+                        n.rotation = (initRot + effectiveTotalDeltaDeg) % 360;
                     }
-                    this._rotation_initial_angle = current_angle;
                     this.dirty_canvas = true;
                 } else {
-                    // Group rigid rotation: rotate all positions around fixed multi-center, add same delta to rotations
-                    const cx = this._multi_rotation_center[0];
-                    const cy = this._multi_rotation_center[1];
-                    const dx = this.graph_mouse[0] - cx;
-                    const dy = this.graph_mouse[1] - cy;
-                    let current_angle = Math.atan2(dy, dx);
-                    let delta = current_angle - this._rotation_initial_angle;
-                    let deltaDeg = delta * 180 / Math.PI;
-                    // Pick a reference node (first in selection) for snapping reference
-                    const refNode = Object.values(this.selected_nodes)[0];
-                    let effectiveDeltaDeg = deltaDeg;
-                    if (refNode) {
-                        const tentative = refNode.rotation + deltaDeg;
-                        let snapped = tentative;
-                        if (e.shiftKey) {
-                            snapped = Math.round(tentative / 45) * 45;
-                        }
-                        effectiveDeltaDeg = snapped - refNode.rotation;
+                    // Group rigid: apply total delta to initial positions/rotations (around group center)
+                    let effectiveTotalDeltaDeg = totalDeltaDeg;
+                    if (e.shiftKey) {
+                        const refId = Object.keys(this.selected_nodes)[0];
+                        const refInit = this._multi_rotation_initial[refId].rot;
+                        const tentative = refInit + totalDeltaDeg;
+                        const snapped = Math.round(tentative / 45) * 45;
+                        effectiveTotalDeltaDeg = snapped - refInit;
                     }
-                    let effectiveDelta = effectiveDeltaDeg * Math.PI / 180;
-                    // Apply rotation to positions and rotations
-                    const cos = Math.cos(effectiveDelta);
-                    const sin = Math.sin(effectiveDelta);
+                    const effectiveDeltaRad = effectiveTotalDeltaDeg * Math.PI / 180;
+                    const cosD = Math.cos(effectiveDeltaRad);
+                    const sinD = Math.sin(effectiveDeltaRad);
                     for (const id in this.selected_nodes) {
                         const n = this.selected_nodes[id];
-                        // Rotate current center around cx,cy
-                        let cdx = n.pos[0] + n.size[0] / 2 - cx;
-                        let cdy = n.pos[1] + n.size[1] / 2 - cy;
-                        let new_cdx = cdx * cos - cdy * sin;
-                        let new_cdy = cdx * sin + cdy * cos;
-                        n.pos[0] = cx + new_cdx - n.size[0] / 2;
-                        n.pos[1] = cy + new_cdy - n.size[1] / 2;
-                        n.rotation = (n.rotation + effectiveDeltaDeg) % 360;
+                        const init = this._multi_rotation_initial[id];
+                        const initCx = init.pos[0] + n.size[0] / 2;
+                        const initCy = init.pos[1] + n.size[1] / 2;
+                        const cdx = initCx - this._multi_rotation_center[0];
+                        const cdy = initCy - this._multi_rotation_center[1];
+                        const newCdx = cdx * cosD - cdy * sinD;
+                        const newCdy = cdx * sinD + cdy * cosD;
+                        n.pos[0] = this._multi_rotation_center[0] + newCdx - n.size[0] / 2;
+                        n.pos[1] = this._multi_rotation_center[1] + newCdy - n.size[1] / 2;
+                        n.rotation = (init.rot + effectiveTotalDeltaDeg) % 360;
                     }
-                    this._rotation_initial_angle = current_angle;
                     this.dirty_canvas = true;
                 }
             } else if (this.rotating_node && !this._rotating_selection) {
-                // Single node rotation (unchanged, but included for completeness/context)
-                const cx = this._rotation_center[0];
-                const cy = this._rotation_center[1];
-                const dx = this.graph_mouse[0] - cx;
-                const dy = this.graph_mouse[1] - cy;
-                let current_angle = Math.atan2(dy, dx);
-                let delta = current_angle - this._rotation_initial_angle;
-                let newRotation = (this.rotating_node.rotation + delta * 180 / Math.PI) % 360;
+                // Single node: apply total delta to initial rotation
+                const totalDelta = Math.atan2(this.graph_mouse[1] - this._rotation_center[1], this.graph_mouse[0] - this._rotation_center[0]) - this._rotation_initial_angle;
+                const totalDeltaDeg = totalDelta * 180 / Math.PI;
+                let newRotation = this._rotation_initial_rot + totalDeltaDeg;
                 if (e.shiftKey) {
                     newRotation = Math.round(newRotation / 45) * 45;
                 }
-                this.rotating_node.rotation = newRotation;
-                this._rotation_initial_angle = current_angle;
+                this.rotating_node.rotation = newRotation % 360;
                 this.dirty_canvas = true;
             } else {
                 // Update cursor based on hover (unchanged)
@@ -1296,7 +1279,7 @@ if (!isUsingOfficialLiteGraph) {
                         y = -this.offset[1] / this.scale + (this.canvas.height / this.dpr) / (2 * this.scale);
                     }
                     node.pos = [x - node.size[0] / 2, y - node.size[1] / 2];
-                    node.setText("Enter text here"); // Default text
+                    node.setText("Text"); // Default text
                     this.graph.add(node);
                     // Select the new node
                     this.selected_nodes = {};
@@ -1667,40 +1650,33 @@ if (!isUsingOfficialLiteGraph) {
         
         getNodeResizeHandle(x, y) {
             const dpr = window.devicePixelRatio || 1;
-            const handleCssSize = 16;  // CSS pixels (not * dpr for hit detection)
-
+            const handleCssSize = 16;
             // Prioritize selected nodes first
             const candidates = [...Object.values(this.selected_nodes), ...this.graph.nodes.filter(n => !this.selected_nodes[n.id])];
-
             for (const node of candidates) {
                 if (node.type === 'groupbox') continue;
-
-                // Node bottom-right in graph space
-                const nodeBR = [node.pos[0] + node.size[0], node.pos[1] + node.size[1]];
-
-                // Convert to canvas CSS pixels
-                const screenX = nodeBR[0] * this.scale + this.offset[0];
-                const screenY = nodeBR[1] * this.scale + this.offset[1];
-
+                // Use rotated bottom-right corner for hit test
+                const [screenX, screenY] = this.getRotatedCorner(node, 'br');
+                const centerX = (node.pos[0] + node.size[0] / 2) * this.scale + this.offset[0];
+                const centerY = (node.pos[1] + node.size[1] / 2) * this.scale + this.offset[1];
+                const inward = 10; // px inward from the corner
+                const dx = screenX - centerX;
+                const dy = screenY - centerY;
+                const dist = Math.sqrt(dx * dx + dy * dy) || 1;
+                const nx = dx / dist;
+                const ny = dy / dist;
+                const hitX = screenX - nx * inward;
+                const hitY = screenY - ny * inward;
                 // Node size in CSS pixels
                 const nodeCssWidth = node.size[0] * this.scale;
                 const nodeCssHeight = node.size[1] * this.scale;
-
-                // Disable handle if it's too large relative to node (but less aggressive threshold)
-                const handleDisabled = (
-                    handleCssSize > nodeCssWidth / 2 ||
-                    handleCssSize > nodeCssHeight / 2
-                );
+                // Fixed minimum node size in screen space
+                const minNodeScreenSize = 24;
+                const hideHandles = this.grid_align_mode || this.auto_align_mode || this.auto_align_animating;
+                const handleDisabled = hideHandles || nodeCssWidth < minNodeScreenSize || nodeCssHeight < minNodeScreenSize;
                 if (handleDisabled) continue;
-
-                // Check if click (CSS pixels) is in handle area
-                const inHandleArea = (
-                    x >= screenX - handleCssSize &&
-                    x <= screenX &&
-                    y >= screenY - handleCssSize &&
-                    y <= screenY
-                );
-
+                // Check if click (CSS pixels) is in handle area (circular)
+                const inHandleArea = Math.hypot(x - hitX, y - hitY) <= handleCssSize;
                 if (inHandleArea) {
                     return node;
                 }
@@ -1952,26 +1928,47 @@ if (!isUsingOfficialLiteGraph) {
                 ctx.fillRect(x, y, w, h);
                 ctx.restore();
             }
-            // NEW: Draw multi-selection rotation handle if applicable
-            if (Object.keys(this.selected_nodes).length > 1) {
-                const [minX, minY, width, height] = this.getSelectionAABB();
-                const screenX = (minX + width) * this.scale + this.offset[0];
-                const screenY = (minY + height) * this.scale + this.offset[1];
-                const centerX = ((minX + width / 2) * this.scale + this.offset[0]);
-                const centerY = ((minY + height / 2) * this.scale + this.offset[1]);
-                const dx = screenX - centerX;
-                const dy = screenY - centerY;
-                const dist = Math.sqrt(dx * dx + dy * dy) || 1;
-                const nx = dx / dist;
-                const ny = dy / dist;
-                const handleDist = 20;
-                const hx = screenX + nx * handleDist;
-                const hy = screenY + ny * handleDist;
+            // Draw multi-selection rotation handle if applicable (hide during alignment animation)
+            if (
+                Object.keys(this.selected_nodes).length > 1 &&
+                !this.grid_align_mode &&
+                !this.auto_align_mode &&
+                !this.auto_align_animating
+            ) {
+                // ... existing code for group rotation handle ...
+                // Use the same bottom-right corner as the group resize handle (with margin)
+                let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+                for (const selId in this.selected_nodes) {
+                    const n = this.selected_nodes[selId];
+                    minX = Math.min(minX, n.pos[0]);
+                    minY = Math.min(minY, n.pos[1]);
+                    maxX = Math.max(maxX, n.pos[0] + n.size[0]);
+                    maxY = Math.max(maxY, n.pos[1] + n.size[1]);
+                }
+                // Convert to screen coordinates (logical pixels)
+                const sx = minX * this.scale + this.offset[0];
+                const sy = minY * this.scale + this.offset[1];
+                const sw = (maxX - minX) * this.scale;
+                const sh = (maxY - minY) * this.scale;
+                // Add screen-space margin (8 logical px)
+                const marginPx = 8;
+                const dsx = sx - marginPx;
+                const dsy = sy - marginPx;
+                const dsw = sw + marginPx * 2;
+                const dsh = sh + marginPx * 2;
+                // Bottom-right corner of the blue box (resize handle anchor)
+                const brX = dsx + dsw;
+                const brY = dsy + dsh;
+                // Offset for rotation handle (diagonal down and right)
+                const offset = 8; // px
+                const hx = brX + offset;
+                const hy = brY + offset;
                 ctx.save();
                 ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
                 ctx.beginPath();
-                ctx.arc(hx, hy, 8, 0, 2 * Math.PI);
+                ctx.arc(hx, hy, 4, 0, 2 * Math.PI);
                 ctx.fillStyle = '#4af';
+                ctx.globalAlpha = 0.5;
                 ctx.fill();
                 ctx.restore();
             }
@@ -2022,18 +2019,23 @@ if (!isUsingOfficialLiteGraph) {
             }
             // Draw overlays/handles (resize, selection border) that should be transformed
             const isSelected = this.selected_nodes[node.id];
+            // Hide handles during alignment animation
+            const hideHandles = this.grid_align_mode || this.auto_align_mode || this.auto_align_animating;
             if (isSelected) {
                 // Selection border
                 ctx.lineWidth = 2 / this.scale;
                 ctx.globalAlpha = 1.0;
                 ctx.strokeStyle = '#4af';
                 ctx.strokeRect(0, 0, node.size[0], node.size[1]);
-                // Resize handle
+                // Resize/rotation handle logic
                 const handleSize = 16 / this.scale;
                 const nodeCssWidth = node.size[0] * this.scale;
                 const nodeCssHeight = node.size[1] * this.scale;
-                const handleDisabled = handleSize > nodeCssWidth / 2 || handleSize > nodeCssHeight / 2;
+                // Fixed minimum node size in screen space
+                const minNodeScreenSize = 24;
+                const handleDisabled = hideHandles || nodeCssWidth < minNodeScreenSize || nodeCssHeight < minNodeScreenSize;
                 if (!handleDisabled) {
+                    // Resize handle
                     ctx.save();
                     ctx.lineWidth = 3 / this.scale;
                     ctx.strokeStyle = '#fff';
@@ -2046,30 +2048,29 @@ if (!isUsingOfficialLiteGraph) {
                     ctx.lineTo(node.size[0], node.size[1]);
                     ctx.stroke();
                     ctx.restore();
+                    // Rotation handle (in screen space, not transformed)
+                    const [screenX, screenY] = this.getRotatedCorner(node, 'br');
+                    const centerScreenX = (node.pos[0] + node.size[0] / 2) * this.scale + this.offset[0];
+                    const centerScreenY = (node.pos[1] + node.size[1] / 2) * this.scale + this.offset[1];
+                    const dx = screenX - centerScreenX;
+                    const dy = screenY - centerScreenY;
+                    const dist = Math.sqrt(dx * dx + dy * dy);
+                    const nx = dx / dist;
+                    const ny = dy / dist;
+                    const handleDist = 12;  // CSS px offset
+                    const hx = screenX + nx * handleDist;
+                    const hy = screenY + ny * handleDist;
+                    ctx.save();
+                    ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
+                    ctx.beginPath();
+                    ctx.arc(hx, hy, 4, 0, 2 * Math.PI);
+                    ctx.fillStyle = '#4af';
+                    ctx.globalAlpha = 0.5;
+                    ctx.fill();
+                    ctx.restore();
                 }
             }
             ctx.restore();
-            // Draw rotation handle (in screen space, not transformed)
-            if (isSelected) {
-                const [screenX, screenY] = this.getRotatedCorner(node, 'br');
-                const centerScreenX = (node.pos[0] + node.size[0] / 2) * this.scale + this.offset[0];
-                const centerScreenY = (node.pos[1] + node.size[1] / 2) * this.scale + this.offset[1];
-                const dx = screenX - centerScreenX;
-                const dy = screenY - centerScreenY;
-                const dist = Math.sqrt(dx * dx + dy * dy);
-                const nx = dx / dist;
-                const ny = dy / dist;
-                const handleDist = 20;  // CSS px offset
-                const hx = screenX + nx * handleDist;
-                const hy = screenY + ny * handleDist;
-                ctx.save();
-                ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
-                ctx.beginPath();
-                ctx.arc(hx, hy, 8, 0, 2 * Math.PI);
-                ctx.fillStyle = '#4af';
-                ctx.fill();
-                ctx.restore();
-            }
         }
 
         onDoubleClick(e) {
@@ -2182,38 +2183,48 @@ if (!isUsingOfficialLiteGraph) {
             }
             const clickedNode = this.getNodeAtPos(graphPos[0], graphPos[1]);
             if (clickedNode && clickedNode.type === 'media/text') {
-                // Create a textarea for editing text
-                if (this._editingTextInput) return; // Only one at a time
+                // Create contenteditable div for WYSIWYG editing
+                if (this._editingTextInput) return;
                 const canvasRect = this.canvas.getBoundingClientRect();
-                // Convert node position to screen coordinates
                 const screenX = (clickedNode.pos[0] * this.scale + this.offset[0]) + canvasRect.left;
                 const screenY = (clickedNode.pos[1] * this.scale + this.offset[1]) + canvasRect.top;
                 const screenW = (clickedNode.size[0]) * this.scale;
                 const screenH = (clickedNode.size[1]) * this.scale;
-                const textarea = document.createElement('textarea');
-                textarea.value = clickedNode.properties.text || '';
-                textarea.style.position = 'absolute';
-                textarea.style.left = `${screenX}px`;
-                textarea.style.top = `${screenY}px`;
-                textarea.style.width = `${screenW}px`;
-                textarea.style.height = `${screenH}px`;
-                textarea.style.font = '14px Arial';
-                textarea.style.padding = '5px';
-                textarea.style.border = '1px solid #4af';
-                textarea.style.background = 'rgba(255,255,255,0.9)';
-                textarea.style.color = '#000';
-                textarea.style.zIndex = 1000;
-                textarea.style.boxSizing = 'border-box';
-                textarea.style.resize = 'none';
-                document.body.appendChild(textarea);
-                textarea.focus();
-                textarea.select();
-                this._editingTextInput = textarea;
+                const editDiv = document.createElement('div');
+                editDiv.contentEditable = true;
+                editDiv.innerText = clickedNode.properties.text; // Use innerText for plain text
+                editDiv.style.position = 'absolute';
+                editDiv.style.left = `${screenX}px`;
+                editDiv.style.top = `${screenY}px`;
+                editDiv.style.width = `${screenW}px`;
+                editDiv.style.height = `${screenH}px`;
+                editDiv.style.font = `${clickedNode.properties.fontSize * this.scale}px Arial`;
+                editDiv.style.padding = `${10 * this.scale}px`; // Match canvas padding
+                editDiv.style.border = '1px dashed #4af';
+                editDiv.style.background = 'transparent'; // Transparent bg for WYSIWYG overlay
+                editDiv.style.color = '#fff';
+                editDiv.style.zIndex = 1000;
+                editDiv.style.boxSizing = 'border-box';
+                editDiv.style.outline = 'none';
+                editDiv.style.overflow = 'hidden'; // Prevent scrollbars during edit
+                editDiv.style.whiteSpace = 'pre-wrap';
+                editDiv.style.wordWrap = 'break-word';
+                editDiv.style.lineHeight = '1.4'; // Match canvas line spacing
+                document.body.appendChild(editDiv);
+                editDiv.focus();
+                // Select all text
+                const range = document.createRange();
+                range.selectNodeContents(editDiv);
+                const sel = window.getSelection();
+                sel.removeAllRanges();
+                sel.addRange(range);
+                this._editingTextInput = editDiv;
                 this._editingTextNode = clickedNode;
                 const finishEdit = () => {
-                    if (textarea.parentNode) textarea.parentNode.removeChild(textarea);
-                    if (textarea.value !== clickedNode.properties.text) {
-                        clickedNode.setText(textarea.value, clickedNode.properties.isMarkdown);
+                    if (editDiv.parentNode) editDiv.parentNode.removeChild(editDiv);
+                    const newText = editDiv.innerText.replace(/\n$/, ''); // Trim trailing newline
+                    if (newText !== clickedNode.properties.text) {
+                        clickedNode.setText(newText, clickedNode.properties.isMarkdown);
                         this.dirty_canvas = true;
                         StateManager.saveState(this.graph, this);
                         this.pushUndoState();
@@ -2221,15 +2232,49 @@ if (!isUsingOfficialLiteGraph) {
                     this._editingTextInput = null;
                     this._editingTextNode = null;
                 };
-                textarea.addEventListener('blur', finishEdit);
-                textarea.addEventListener('keydown', (evt) => {
+                editDiv.addEventListener('blur', finishEdit);
+                editDiv.addEventListener('keydown', (evt) => {
                     if (evt.key === 'Enter' && !evt.shiftKey) {
-                        textarea.blur();
+                        evt.preventDefault();
+                        editDiv.blur();
                     } else if (evt.key === 'Escape') {
-                        textarea.value = clickedNode.properties.text;
-                        textarea.blur();
+                        editDiv.innerText = clickedNode.properties.text;
+                        editDiv.blur();
                     }
                 });
+                // Live update for WYSIWYG
+                editDiv.addEventListener('input', () => {
+                    const newText = editDiv.innerText;
+                    clickedNode.setText(newText, clickedNode.properties.isMarkdown);
+                    // Dynamically resize the editDiv to match updated node size
+                    const canvasRect = this.canvas.getBoundingClientRect();
+                    const screenX = (clickedNode.pos[0] * this.scale + this.offset[0]) + canvasRect.left;
+                    const screenY = (clickedNode.pos[1] * this.scale + this.offset[1]) + canvasRect.top;
+                    const screenW = (clickedNode.size[0]) * this.scale;
+                    const screenH = (clickedNode.size[1]) * this.scale;
+                    editDiv.style.left = `${screenX}px`;
+                    editDiv.style.top = `${screenY}px`;
+                    editDiv.style.width = `${screenW}px`;
+                    editDiv.style.height = `${screenH}px`;
+                    this.dirty_canvas = true;
+                });
+                return;
+            }
+            // After title editing block, before any return:
+            const rotationNode = this.getNodeRotationHandle(x, y);
+            const isMultiRotation = this.isSelectionBoxRotationHandle(x, y);
+            if (rotationNode || isMultiRotation) {
+                if (Object.keys(this.selected_nodes).length > 1) {
+                    for (const id in this.selected_nodes) {
+                        this.selected_nodes[id].rotation = 0;
+                    }
+                } else if (rotationNode) {
+                    rotationNode.rotation = 0;
+                }
+                this.dirty_canvas = true;
+                StateManager.saveState(this.graph, this);
+                this.pushUndoState();
+                e.preventDefault();
                 return;
             }
         }
@@ -2652,7 +2697,7 @@ if (!isUsingOfficialLiteGraph) {
             const cos = Math.cos(angle);
             const sin = Math.sin(angle);
             const localX = dx * cos - dy * sin + node.size[0] / 2;
-            const localY = -dx * sin + dy * cos + node.size[1] / 2; // <-- Corrected sign for -sin
+            const localY = dx * sin + dy * cos + node.size[1] / 2;
             return localX > 0 && localX < node.size[0] && localY > 0 && localY < node.size[1];
         }
         getNodeAtPos(gx, gy) {
@@ -2684,15 +2729,32 @@ if (!isUsingOfficialLiteGraph) {
         getNodeResizeHandle(x, y) {
             const dpr = window.devicePixelRatio || 1;
             const handleCssSize = 16;
-            for (const id in this.selected_nodes) {
-                const node = this.selected_nodes[id];
+            // Prioritize selected nodes first
+            const candidates = [...Object.values(this.selected_nodes), ...this.graph.nodes.filter(n => !this.selected_nodes[n.id])];
+            for (const node of candidates) {
+                if (node.type === 'groupbox') continue;
+                // Use rotated bottom-right corner for hit test
                 const [screenX, screenY] = this.getRotatedCorner(node, 'br');
+                const centerX = (node.pos[0] + node.size[0] / 2) * this.scale + this.offset[0];
+                const centerY = (node.pos[1] + node.size[1] / 2) * this.scale + this.offset[1];
+                const inward = 10; // px inward from the corner
+                const dx = screenX - centerX;
+                const dy = screenY - centerY;
+                const dist = Math.sqrt(dx * dx + dy * dy) || 1;
+                const nx = dx / dist;
+                const ny = dy / dist;
+                const hitX = screenX - nx * inward;
+                const hitY = screenY - ny * inward;
+                // Node size in CSS pixels
                 const nodeCssWidth = node.size[0] * this.scale;
                 const nodeCssHeight = node.size[1] * this.scale;
-                const handleDisabled = handleCssSize > nodeCssWidth / 2 || handleCssSize > nodeCssHeight / 2;
+                // Fixed minimum node size in screen space
+                const minNodeScreenSize = 24;
+                const hideHandles = this.grid_align_mode || this.auto_align_mode || this.auto_align_animating;
+                const handleDisabled = hideHandles || nodeCssWidth < minNodeScreenSize || nodeCssHeight < minNodeScreenSize;
                 if (handleDisabled) continue;
-                const halfHandle = handleCssSize / 2;
-                const inHandleArea = Math.abs(x - screenX) <= halfHandle && Math.abs(y - screenY) <= halfHandle;
+                // Check if click (CSS pixels) is in handle area (circular)
+                const inHandleArea = Math.hypot(x - hitX, y - hitY) <= handleCssSize;
                 if (inHandleArea) {
                     return node;
                 }
@@ -2705,6 +2767,13 @@ if (!isUsingOfficialLiteGraph) {
             const minDistance = 8;
             for (const id in this.selected_nodes) {
                 const node = this.selected_nodes[id];
+                // Use same hide logic as resize handle
+                const nodeCssWidth = node.size[0] * this.scale;
+                const nodeCssHeight = node.size[1] * this.scale;
+                const minNodeScreenSize = 24;
+                const hideHandles = this.grid_align_mode || this.auto_align_mode || this.auto_align_animating;
+                const handleDisabled = hideHandles || nodeCssWidth < minNodeScreenSize || nodeCssHeight < minNodeScreenSize;
+                if (handleDisabled) continue;
                 const [screenX, screenY] = this.getRotatedCorner(node, 'br');
                 const dx = x - screenX;
                 const dy = y - screenY;
@@ -2721,8 +2790,22 @@ if (!isUsingOfficialLiteGraph) {
             let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
             for (const id in this.selected_nodes) {
                 const node = this.selected_nodes[id];
-                const corners = ['tl', 'tr', 'bl', 'br'].map(which => this.getRotatedCorner(node, which));
-                for (const [wx, wy] of corners) {
+                const angle = (node.rotation || 0) * Math.PI / 180;
+                const cosA = Math.cos(angle);
+                const sinA = Math.sin(angle);
+                const cx = node.pos[0] + node.size[0] / 2;
+                const cy = node.pos[1] + node.size[1] / 2;
+                const hw = node.size[0] / 2;
+                const hh = node.size[1] / 2;
+                const offsets = [
+                    [-hw, -hh],
+                    [hw, -hh],
+                    [-hw, hh],
+                    [hw, hh]
+                ];
+                for (const [ox, oy] of offsets) {
+                    const wx = cx + ox * cosA - oy * sinA;
+                    const wy = cy + ox * sinA + oy * cosA;
                     minX = Math.min(minX, wx);
                     minY = Math.min(minY, wy);
                     maxX = Math.max(maxX, wx);
@@ -2733,19 +2816,31 @@ if (!isUsingOfficialLiteGraph) {
         }
         isSelectionBoxRotationHandle(x, y) {
             if (Object.keys(this.selected_nodes).length <= 1) return false;
-            const [minX, minY, width, height] = this.getSelectionAABB();
-            const screenX = (minX + width) * this.scale + this.offset[0];
-            const screenY = (minY + height) * this.scale + this.offset[1];
-            const centerX = ((minX + width / 2) * this.scale + this.offset[0]);
-            const centerY = ((minY + height / 2) * this.scale + this.offset[1]);
-            const dx = screenX - centerX;
-            const dy = screenY - centerY;
-            const dist = Math.sqrt(dx * dx + dy * dy) || 1;
-            const nx = dx / dist;
-            const ny = dy / dist;
-            const handleDist = 20;
-            const hx = screenX + nx * handleDist;
-            const hy = screenY + ny * handleDist;
+            // Use the same logic as the draw() method for the group rotation handle
+            let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+            for (const selId in this.selected_nodes) {
+                const n = this.selected_nodes[selId];
+                minX = Math.min(minX, n.pos[0]);
+                minY = Math.min(minY, n.pos[1]);
+                maxX = Math.max(maxX, n.pos[0] + n.size[0]);
+                maxY = Math.max(maxY, n.pos[1] + n.size[1]);
+            }
+            const sx = minX * this.scale + this.offset[0];
+            const sy = minY * this.scale + this.offset[1];
+            const sw = (maxX - minX) * this.scale;
+            const sh = (maxY - minY) * this.scale;
+            const marginPx = 8;
+            const dsx = sx - marginPx;
+            const dsy = sy - marginPx;
+            const dsw = sw + marginPx * 2;
+            const dsh = sh + marginPx * 2;
+            // Bottom-right corner of the blue box (resize handle anchor)
+            const brX = dsx + dsw;
+            const brY = dsy + dsh;
+            // Offset for rotation handle (diagonal down and right)
+            const offset = 16; // px
+            const hx = brX + offset;
+            const hy = brY + offset;
             const handleRadius = 12;
             const mouseDx = x - hx;
             const mouseDy = y - hy;
