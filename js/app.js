@@ -2185,46 +2185,53 @@ if (!isUsingOfficialLiteGraph) {
             if (clickedNode && clickedNode.type === 'media/text') {
                 // Create contenteditable div for WYSIWYG editing
                 if (this._editingTextInput) return;
+                
                 const canvasRect = this.canvas.getBoundingClientRect();
                 const screenX = (clickedNode.pos[0] * this.scale + this.offset[0]) + canvasRect.left;
                 const screenY = (clickedNode.pos[1] * this.scale + this.offset[1]) + canvasRect.top;
                 const screenW = (clickedNode.size[0]) * this.scale;
                 const screenH = (clickedNode.size[1]) * this.scale;
+                
                 const editDiv = document.createElement('div');
                 editDiv.contentEditable = true;
-                editDiv.innerText = clickedNode.properties.text; // Use innerText for plain text
+                editDiv.innerText = clickedNode.properties.text;
                 editDiv.style.position = 'absolute';
                 editDiv.style.left = `${screenX}px`;
                 editDiv.style.top = `${screenY}px`;
                 editDiv.style.width = `${screenW}px`;
                 editDiv.style.height = `${screenH}px`;
+                
+                // Match the canvas font size exactly
                 editDiv.style.font = `${clickedNode.properties.fontSize * this.scale}px Arial`;
                 editDiv.style.padding = `${10 * this.scale}px`; // Match canvas padding
+                editDiv.style.lineHeight = `${clickedNode.properties.leadingFactor}`; // Match canvas line height
+                
                 editDiv.style.border = '1px dashed #4af';
-                editDiv.style.background = 'transparent'; // Transparent bg for WYSIWYG overlay
+                editDiv.style.background = 'transparent';
                 editDiv.style.color = '#fff';
                 editDiv.style.zIndex = 1000;
                 editDiv.style.boxSizing = 'border-box';
                 editDiv.style.outline = 'none';
-                editDiv.style.overflow = 'hidden'; // Prevent scrollbars during edit
-                editDiv.style.whiteSpace = 'pre-wrap';
-                editDiv.style.wordWrap = 'break-word';
-                editDiv.style.lineHeight = '1.4'; // Match canvas line spacing
+                editDiv.style.overflowWrap = 'break-word';
+                
                 document.body.appendChild(editDiv);
                 editDiv.focus();
+                
                 // Select all text
                 const range = document.createRange();
                 range.selectNodeContents(editDiv);
                 const sel = window.getSelection();
                 sel.removeAllRanges();
                 sel.addRange(range);
+                
                 this._editingTextInput = editDiv;
                 this._editingTextNode = clickedNode;
+                
                 const finishEdit = () => {
                     if (editDiv.parentNode) editDiv.parentNode.removeChild(editDiv);
-                    const newText = editDiv.innerText.replace(/\n$/, ''); // Trim trailing newline
+                    const newText = editDiv.innerText.replace(/\n$/, '');
                     if (newText !== clickedNode.properties.text) {
-                        clickedNode.setText(newText, clickedNode.properties.isMarkdown);
+                        clickedNode.setText(newText);
                         this.dirty_canvas = true;
                         StateManager.saveState(this.graph, this);
                         this.pushUndoState();
@@ -2232,6 +2239,7 @@ if (!isUsingOfficialLiteGraph) {
                     this._editingTextInput = null;
                     this._editingTextNode = null;
                 };
+                
                 editDiv.addEventListener('blur', finishEdit);
                 editDiv.addEventListener('keydown', (evt) => {
                     if (evt.key === 'Enter' && !evt.shiftKey) {
@@ -2242,22 +2250,15 @@ if (!isUsingOfficialLiteGraph) {
                         editDiv.blur();
                     }
                 });
-                // Live update for WYSIWYG
+                
+                // Live update for WYSIWYG - but don't resize during editing to avoid jumps
                 editDiv.addEventListener('input', () => {
                     const newText = editDiv.innerText;
-                    clickedNode.setText(newText, clickedNode.properties.isMarkdown);
-                    // Dynamically resize the editDiv to match updated node size
-                    const canvasRect = this.canvas.getBoundingClientRect();
-                    const screenX = (clickedNode.pos[0] * this.scale + this.offset[0]) + canvasRect.left;
-                    const screenY = (clickedNode.pos[1] * this.scale + this.offset[1]) + canvasRect.top;
-                    const screenW = (clickedNode.size[0]) * this.scale;
-                    const screenH = (clickedNode.size[1]) * this.scale;
-                    editDiv.style.left = `${screenX}px`;
-                    editDiv.style.top = `${screenY}px`;
-                    editDiv.style.width = `${screenW}px`;
-                    editDiv.style.height = `${screenH}px`;
+                    // Update the node's text property but don't trigger fitTextToBox during editing
+                    clickedNode.properties.text = newText;
                     this.dirty_canvas = true;
                 });
+                
                 return;
             }
             // After title editing block, before any return:
