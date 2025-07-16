@@ -31,6 +31,16 @@ root/
 - Mouse wheel to zoom, drag empty space to pan
 - Auto-save state to localStorage
 - DPI scaling support
+- **Text nodes with word wrapping and WYSIWYG editing**
+- **Non-uniform scaling for text nodes**
+
+## Text Node Editing & Features
+
+- **Word Wrapping:** Text nodes automatically wrap text to fit the node's width, both when editing and when rendered on the canvas.
+- **WYSIWYG Editing:** Double-click a text node to edit its content in-place with a live overlay that matches the final rendered appearance (font, size, wrapping, and padding).
+- **Non-Uniform Scaling:** Text nodes can be resized freely in both width and height, and the text will reflow and scale accordingly.
+- **Live Bounding Box:** The node's bounding box automatically adjusts its height to fit the wrapped text as you type.
+- **Consistent Alignment:** The overlay and the canvas rendering are visually aligned for a seamless editing experience.
 
 ## Using the Official LiteGraph Library
 
