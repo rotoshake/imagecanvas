@@ -270,12 +270,12 @@ if (!isUsingOfficialLiteGraph) {
             const node = this.getNodeAtPos(this.graph_mouse[0], this.graph_mouse[1]);
             // --- FIX: use screen-space for handle detection ---
             const resizeNode = this.getNodeResizeHandle(x, y);
-            console.log('onMouseDown:', {x, y, node: node?.id, resizeNode: resizeNode?.id});
+            // console.log('onMouseDown:', {x, y, node: node?.id, resizeNode: resizeNode?.id});
             
             // Simple debug for single node
             if (Object.keys(this.selected_nodes).length === 1) {
                 const selectedNode = Object.values(this.selected_nodes)[0];
-                console.log('Selected node:', selectedNode.id, 'resizeNode:', resizeNode?.id);
+                // console.log('Selected node:', selectedNode.id, 'resizeNode:', resizeNode?.id);
             }
             
             // Debug: show handle detection details for selected nodes (FIXED: no extra offset on clickX/Y)
@@ -300,19 +300,19 @@ if (!isUsingOfficialLiteGraph) {
                     handleCssSize > nodeCssWidth / 2 ||  // FIXED: /2 instead of /3
                     handleCssSize > nodeCssHeight / 2
                 );
-                console.log('Handle debug:', {
-                    nodeId: selectedNode.id,
-                    nodeBR: nodeBR,
-                    screenX: screenX,
-                    screenY: screenY,
-                    handleCssSize: handleCssSize,
-                    nodeCssWidth: nodeCssWidth,
-                    nodeCssHeight: nodeCssHeight,
-                    clickX: clickX,
-                    clickY: clickY,
-                    inHandleArea: inHandleArea,
-                    handleDisabled: handleDisabled
-                });
+                // console.log('Handle debug:', {
+                //     nodeId: selectedNode.id,
+                //     nodeBR: nodeBR,
+                //     screenX: screenX,
+                //     screenY: screenY,
+                //     handleCssSize: handleCssSize,
+                //     nodeCssWidth: nodeCssWidth,
+                //     nodeCssHeight: nodeCssHeight,
+                //     clickX: clickX,
+                //     clickY: clickY,
+                //     inHandleArea: inHandleArea,
+                //     handleDisabled: handleDisabled
+                // });
             }
             // --- NEW: Prioritize auto-align before bounding box handle ---
             this._resizing_selection_box = false;
@@ -526,7 +526,7 @@ if (!isUsingOfficialLiteGraph) {
 
             // Always declare resizeNode at the top so it is available everywhere
             const resizeNode = this.getNodeResizeHandle(this.canvas_mouse[0], this.canvas_mouse[1]);
-            console.log('onMouseMove called', 'grid_align_mode:', this.grid_align_mode);
+            // console.log('onMouseMove called', 'grid_align_mode:', this.grid_align_mode);
             
             // --- GRID ALIGN MODE (TOP PRIORITY) ---
             if (this.grid_align_mode && this.grid_align_dragging && this.grid_align_anchor) {
@@ -1752,7 +1752,12 @@ if (!isUsingOfficialLiteGraph) {
             const margin = 200; // px margin for preloading
             // Load/unload images based on visibility
             for (const node of this.graph.nodes) {
-                if (node.type === 'media/image' && node.properties && node.properties.src) {
+                if (
+                    (node.type === 'media/image' ||
+                     node.type === 'media/video' ||
+                     node.type === 'media/text' ||
+                     node.type === 'ui/properties') && node.onDrawForeground
+                ) {
                     if (isNodeVisibleWithMargin(node, viewport, margin)) {
                         loadNodeImage(node);
                     } else {
@@ -1773,6 +1778,7 @@ if (!isUsingOfficialLiteGraph) {
             // Draw other nodes
             for (const node of this.graph.nodes) {
                 if (node.type !== 'groupbox') {
+                    //console.log('Processing node for drawing:', node.type, 'at', node.pos, 'size:', node.size);
                     this.drawNode(ctx, node);
                 }
             }
@@ -2010,11 +2016,12 @@ if (!isUsingOfficialLiteGraph) {
                 ctx.translate(-node.size[0] / 2, -node.size[1] / 2);
             }
             // Draw node content (image, video, text, etc.)
-            if (node.type === 'media/image' && node.onDrawForeground) {
-                node.onDrawForeground(ctx);
-            } else if (node.type === 'media/video' && node.onDrawForeground) {
-                node.onDrawForeground(ctx);
-            } else if (node.type === 'media/text' && node.onDrawForeground) {
+            if (
+                (node.type === 'media/image' ||
+                 node.type === 'media/video' ||
+                 node.type === 'media/text') && node.onDrawForeground //||
+                //  node.type === 'ui/properties') && node.onDrawForeground
+            ) {
                 node.onDrawForeground(ctx);
             }
             // Draw overlays/handles (resize, selection border) that should be transformed
@@ -2345,20 +2352,22 @@ if (!isUsingOfficialLiteGraph) {
         pushUndoState() {
             try {
                 const state = JSON.stringify({
-                    graph: this.graph.nodes.map(n => ({
-                        type: n.type,
-                        pos: [...n.pos],
-                        size: [...n.size],
-                        aspectRatio: n.aspectRatio || (n.size[0] / n.size[1]), // Save aspect ratio for persistence
-                        rotation: n.rotation || 0, // Save rotation
-                        // Only store hash and filename for images and videos
-                        properties: (n.type === 'media/image' || n.type === 'media/video')
-                            ? { hash: n.properties.hash, filename: n.properties.filename }
-                            : { ...n.properties },
-                        flags: n.flags ? { ...n.flags } : undefined,
-                        title: n.title
-                    }))
-                    // Do NOT include offset or scale in undo state
+                    graph: this.graph.nodes
+                        // .filter(n => !(n.flags && n.flags.no_serialize))
+                        .map(n => ({
+                            type: n.type,
+                            pos: [...n.pos],
+                            size: [...n.size],
+                            aspectRatio: n.aspectRatio || (n.size[0] / n.size[1]), // Save aspect ratio for persistence
+                            rotation: n.rotation || 0, // Save rotation
+                            // Only store hash and filename for images and videos
+                            properties: (n.type === 'media/image' || n.type === 'media/video')
+                                ? { hash: n.properties.hash, filename: n.properties.filename }
+                                : { ...n.properties },
+                            flags: n.flags ? { ...n.flags } : undefined,
+                            title: n.title
+                        }))
+                        // Do NOT include offset or scale in undo state
                 });
                 this.undoStack.push(state);
                 if (this.undoStack.length > this.maxUndo) this.undoStack.shift();
@@ -2897,8 +2906,67 @@ async function initApp() {
     // Load undo stack before loading state
     await lcanvas.initializeUndoStack();
     await StateManager.loadState(graph, lcanvas, window.LiteGraph);
+
+    // Add this debug logging:
+    // console.log('State loaded, canvas values are:', 
+    // {
+    //     offset: lcanvas.offset,
+    //     scale: lcanvas.scale
+    // });
+
+   // Safety check for corrupted offset values
+    const maxSafeOffset = 1000000; // 1 million pixels seems reasonable as max
+    if (!lcanvas.offset || 
+        Math.abs(lcanvas.offset[0]) > maxSafeOffset || 
+        Math.abs(lcanvas.offset[1]) > maxSafeOffset ||
+        !Number.isFinite(lcanvas.offset[0]) ||
+        !Number.isFinite(lcanvas.offset[1])) {
+        
+        // console.warn('Corrupted canvas offset detected, resetting:', lcanvas.offset);
+        lcanvas.offset = [0, 0];
+    } else {
+        // console.log('Offset values are valid, keeping:', lcanvas.offset);
+    }
+
+    // Safety check for corrupted scale
+    if (!Number.isFinite(lcanvas.scale) || lcanvas.scale <= 0 || lcanvas.scale > 10) {
+        console.warn('Corrupted canvas scale detected, resetting:', lcanvas.scale);
+        lcanvas.scale = 1.0;
+    }
+
+    // console.log('Canvas state after safety check:', { offset: lcanvas.offset, scale: lcanvas.scale });
+
     lcanvas.dirty_canvas = true;
     // No direct draw, handled by animation loop
+    
+    // --- PROPERTIES PANEL INTEGRATION ---
+    // const propertiesPanel = new PropertiesPanelNode();
+    // graph.add(propertiesPanel);
+    // function positionPropertiesPanel() {
+    //     const canvasRect = lcanvas.canvas.getBoundingClientRect();
+    //     propertiesPanel.positionOnRight(canvasRect.width, canvasRect.height);
+    // }
+    // positionPropertiesPanel();
+    // window.addEventListener('resize', positionPropertiesPanel);
+    // function updatePropertiesPanelSelection() {
+    //     if (propertiesPanel) {
+    //         propertiesPanel.updateSelection(lcanvas.selected_nodes || {});
+    //     }
+    // }
+    // // Wrap selectNode to update the panel
+    // const originalSelectNode = lcanvas.selectNode.bind(lcanvas);
+    // lcanvas.selectNode = function(node) {
+    //     originalSelectNode(node);
+    //     updatePropertiesPanelSelection();
+    // };
+    // // Wrap onMouseUp to update the panel after selection box or deselection
+    // const originalOnMouseUp = lcanvas.onMouseUp.bind(lcanvas);
+    // lcanvas.onMouseUp = function(e) {
+    //     originalOnMouseUp(e);
+    //     updatePropertiesPanelSelection();
+    // };
+    // // Initial update
+    // updatePropertiesPanelSelection();
     
     // Handle window resize and zoom changes
     let resizeTimeout;
@@ -2942,16 +3010,16 @@ async function initApp() {
     // Save state when page is about to unload
     window.addEventListener('beforeunload', () => StateManager.saveState(graph, lcanvas));
     
-    console.log('LiteGraph application initialized');
-    console.log('Controls:');
-    console.log('- Drag & drop images to add them');
-    console.log('- Drag nodes to move them');
-    console.log('- Alt+drag to duplicate a node');
-    console.log('- Ctrl/Cmd+C to copy, Ctrl/Cmd+V to paste');
-    console.log('- Ctrl/Cmd+D to duplicate selected');
-    console.log('- Delete/Backspace to remove selected');
-    console.log('- Drag resize handle (bottom-right) to resize');
-    console.log('- Mouse wheel to zoom, drag empty space to pan');
+    // console.log('LiteGraph application initialized');
+    // console.log('Controls:');
+    // console.log('- Drag & drop images to add them');
+    // console.log('- Drag nodes to move them');
+    // console.log('- Alt+drag to duplicate a node');
+    // console.log('- Ctrl/Cmd+C to copy, Ctrl/Cmd+V to paste');
+    // console.log('- Ctrl/Cmd+D to duplicate selected');
+    // console.log('- Delete/Backspace to remove selected');
+    // console.log('- Drag resize handle (bottom-right) to resize');
+    // console.log('- Mouse wheel to zoom, drag empty space to pan');
 }
 
 // --- IndexedDB ImageCache Utility ---
@@ -3048,7 +3116,15 @@ function setupDragAndDrop(canvasElement, graph, lcanvas) {
         const canvasX = e.clientX - rect.left;
         const canvasY = e.clientY - rect.top;
         const graphPos = lcanvas.convertOffsetToCanvas(canvasX, canvasY);
-        
+        // console.log('Drop coordinates:', {
+        //     clientX: e.clientX,
+        //     clientY: e.clientY,
+        //     canvasX: canvasX,
+        //     canvasY: canvasY,
+        //     graphPos: graphPos,
+        //     canvasScale: lcanvas.scale,
+        //     canvasOffset: lcanvas.offset
+        // });
         // Prepare to select all new nodes
         const newNodes = [];
         Array.from(files).forEach((file, index) => {
