@@ -10,6 +10,10 @@ class StateManager {
         this.db = null;
         this.undoStack = [];
         this.redoStack = [];
+        
+        // Performance optimization: cache parsed states
+        this.parsedStateCache = new Map();
+        this.maxCacheSize = 5; // Keep last 5 states parsed
     }
     
     async init() {
@@ -118,9 +122,6 @@ class StateManager {
     }
     
     async deserializeState(state, graph, canvas) {
-        // Clear existing nodes
-        graph.clear();
-        
         // Restore viewport
         if (state.viewport) {
             canvas.viewport.offset = [...state.viewport.offset];
@@ -134,30 +135,116 @@ class StateManager {
             );
         }
         
-        // Restore nodes
-        for (const nodeData of state.nodes) {
-            const node = NodeFactory.createNode(nodeData.type);
-            if (!node) continue;
-            
-            node.id = nodeData.id;
-            node.pos = [...nodeData.pos];
-            node.size = [...nodeData.size];
-            node.aspectRatio = nodeData.aspectRatio || 1;
-            node.rotation = nodeData.rotation || 0;
-            node.properties = { ...nodeData.properties };
-            node.flags = { ...nodeData.flags };
-            node.title = nodeData.title;
-            
-            // Load media content from cache
-            if ((nodeData.type === 'media/image' || nodeData.type === 'media/video') && nodeData.properties.hash) {
-                this.loadNodeFromCache(node, nodeData.type);
-            }
-            
-            graph.add(node);
-        }
+        // Efficient node restoration: preserve loaded media when possible
+        await this.restoreNodesEfficiently(state.nodes, graph);
         
         graph.lastNodeId = Math.max(...state.nodes.map(n => n.id), 0);
         canvas.dirty_canvas = true;
+    }
+    
+    async restoreNodesEfficiently(targetNodes, graph) {
+        const startTime = performance.now();
+        const currentNodes = new Map();
+        const targetNodeMap = new Map();
+        
+        // Map current nodes by ID
+        for (const node of graph.nodes) {
+            currentNodes.set(node.id, node);
+        }
+        
+        // Map target nodes by ID
+        for (const nodeData of targetNodes) {
+            targetNodeMap.set(nodeData.id, nodeData);
+        }
+        
+        // Remove nodes that shouldn't exist
+        for (const [id, node] of currentNodes) {
+            if (!targetNodeMap.has(id)) {
+                graph.remove(node);
+            }
+        }
+        
+        // Update existing nodes or create new ones
+        for (const nodeData of targetNodes) {
+            const existingNode = currentNodes.get(nodeData.id);
+            
+            if (existingNode && existingNode.type === nodeData.type) {
+                // Update existing node (preserves media objects)
+                this.updateExistingNode(existingNode, nodeData);
+            } else {
+                // Remove existing node with different type
+                if (existingNode) {
+                    graph.remove(existingNode);
+                }
+                
+                // Create new node
+                const newNode = NodeFactory.createNode(nodeData.type);
+                if (newNode) {
+                    newNode.id = nodeData.id;
+                    this.applyNodeData(newNode, nodeData);
+                    
+                    // Load media content from cache
+                    if ((nodeData.type === 'media/image' || nodeData.type === 'media/video') && nodeData.properties.hash) {
+                        this.loadNodeFromCache(newNode, nodeData.type);
+                    }
+                    
+                    graph.add(newNode);
+                                 }
+             }
+         }
+         
+         const endTime = performance.now();
+         console.log(`Efficient undo restoration took ${(endTime - startTime).toFixed(2)}ms for ${targetNodes.length} nodes`);
+     }
+    
+    updateExistingNode(node, nodeData) {
+        // Update all properties while preserving media objects
+        node.pos = [...nodeData.pos];
+        node.size = [...nodeData.size];
+        node.aspectRatio = nodeData.aspectRatio || 1;
+        node.rotation = nodeData.rotation || 0;
+        node.flags = { ...nodeData.flags };
+        node.title = nodeData.title;
+        
+        // Update properties carefully for media nodes
+        if (node.type === 'media/image' || node.type === 'media/video') {
+            const oldHash = node.properties.hash;
+            const newHash = nodeData.properties.hash;
+            
+                         // Only reload media if hash changed
+            if (oldHash !== newHash) {
+                node.properties = { ...nodeData.properties };
+                if (newHash) {
+                    this.loadNodeFromCache(node, node.type);
+                }
+            } else {
+                // Preserve existing media objects, just update other properties
+                const mediaProperties = ['hash', 'filename'];
+                for (const [key, value] of Object.entries(nodeData.properties)) {
+                    if (!mediaProperties.includes(key)) {
+                        node.properties[key] = value;
+                    }
+                }
+                
+                // Ensure media is still loaded (in case it was lost)
+                if (newHash && (!node.img && !node.video)) {
+                    this.loadNodeFromCache(node, node.type);
+                }
+            }
+        } else {
+            // Non-media nodes can have properties replaced
+            node.properties = { ...nodeData.properties };
+        }
+    }
+    
+    applyNodeData(node, nodeData) {
+        node.pos = [...nodeData.pos];
+        node.size = [...nodeData.size];
+        node.aspectRatio = nodeData.aspectRatio || 1;
+        node.rotation = nodeData.rotation || 0;
+        node.properties = { ...nodeData.properties };
+        node.flags = { ...nodeData.flags };
+        node.title = nodeData.title;
     }
     
     async loadNodeFromCache(node, nodeType) {
@@ -249,11 +336,31 @@ class StateManager {
     
     async loadUndoState(stateString, graph, canvas) {
         try {
-            const state = JSON.parse(stateString);
+            let state;
+            
+            // Check cache first
+            if (this.parsedStateCache.has(stateString)) {
+                state = this.parsedStateCache.get(stateString);
+            } else {
+                // Parse and cache
+                state = JSON.parse(stateString);
+                this.cacheState(stateString, state);
+            }
+            
             await this.deserializeState(state, graph, canvas);
         } catch (error) {
             console.error('Failed to load undo state:', error);
         }
+    }
+    
+    cacheState(stateString, parsedState) {
+        // Simple LRU: if cache is full, remove oldest
+        if (this.parsedStateCache.size >= this.maxCacheSize) {
+            const firstKey = this.parsedStateCache.keys().next().value;
+            this.parsedStateCache.delete(firstKey);
+        }
+        
+        this.parsedStateCache.set(stateString, parsedState);
     }
     
     async saveUndoStack() {

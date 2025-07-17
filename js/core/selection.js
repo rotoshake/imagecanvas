@@ -8,6 +8,10 @@ class SelectionManager {
         this.selectionRect = null;
         this.callbacks = new Set();
         this.lastSelection = new Map(); // For undo/redo
+        
+        // Performance optimization: cache bounding box
+        this._cachedBoundingBox = null;
+        this._boundingBoxDirty = true;
     }
     
     addCallback(callback) {
@@ -19,6 +23,9 @@ class SelectionManager {
     }
     
     notifyChange() {
+        // Invalidate bounding box cache when selection changes
+        this._boundingBoxDirty = true;
+        
         this.callbacks.forEach(callback => {
             try {
                 callback(this.selectedNodes);
@@ -111,6 +118,23 @@ class SelectionManager {
     getBoundingBox() {
         if (this.selectedNodes.size === 0) return null;
         
+        // Use cached bounding box if available and not dirty
+        // Note: Cache is invalidated during animations to ensure dynamic updates
+        if (!this._boundingBoxDirty && this._cachedBoundingBox) {
+            // Check if any selected nodes are animating (invalidates cache)
+            let hasAnimatingNodes = false;
+            for (const node of this.selectedNodes.values()) {
+                if (node._animPos || node._gridAnimPos) {
+                    hasAnimatingNodes = true;
+                    break;
+                }
+            }
+            
+            if (!hasAnimatingNodes) {
+                return this._cachedBoundingBox;
+            }
+        }
+        
         let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
         
         for (const node of this.selectedNodes.values()) {
@@ -161,7 +185,9 @@ class SelectionManager {
             maxY = Math.max(maxY, y + h);
         }
         
-        return [minX, minY, maxX - minX, maxY - minY];
+        this._cachedBoundingBox = [minX, minY, maxX - minX, maxY - minY];
+        this._boundingBoxDirty = false;
+        return this._cachedBoundingBox;
     }
     
     getNodePosition(node) {
@@ -177,6 +203,11 @@ class SelectionManager {
         
         // Fall back to actual position
         return node.pos;
+    }
+    
+    // Method to invalidate bounding box cache (called when nodes are moved/transformed)
+    invalidateBoundingBox() {
+        this._boundingBoxDirty = true;
     }
     
     getCenter() {

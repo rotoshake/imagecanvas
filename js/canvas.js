@@ -26,6 +26,12 @@ class LGraphCanvas {
         this.lastFrameTime = performance.now();
         this.fps = 0;
         
+        // Async loading management
+        this.loadingQueue = new Set();
+        this.preloadQueue = new Set();
+        this.maxConcurrentLoads = 3;
+        this.currentLoads = 0;
+        
         // Undo/redo (will be connected to StateManager)
         this.stateManager = null;
         
@@ -37,6 +43,7 @@ class LGraphCanvas {
         this.viewport.applyDPI();
         this.animationSystem.start();
         this.startRenderLoop();
+        this.startPreloadLoop();
         
         console.log('LGraphCanvas initialized');
     }
@@ -57,7 +64,8 @@ class LGraphCanvas {
                 canvas: false,
                 node: null,
                 nodes: new Map(),
-                offsets: new Map()
+                offsets: new Map(),
+                isDuplication: false  // Track if this drag is from duplication
             },
             resizing: {
                 active: false,
@@ -105,6 +113,11 @@ class LGraphCanvas {
     // ===================================
     
     onMouseDown(e) {
+        // Finish any active text editing
+        if (this._editingTextInput) {
+            this.finishTextEditing();
+        }
+
         const [x, y] = this.viewport.convertCanvasToOffset(e.clientX, e.clientY);
         this.mouseState.canvas = [x, y];
         this.mouseState.graph = this.viewport.convertOffsetToGraph(x, y);
@@ -136,9 +149,7 @@ class LGraphCanvas {
         }
         
         // GRID ALIGN MODE TRIGGER (TAKES PRECEDENCE)
-        if ((e.ctrlKey || e.metaKey) && e.shiftKey && 
-            !this.handleDetector.getNodeAtPosition(...this.mouseState.graph, this.graph.nodes) && 
-            e.button === 0) {
+        if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.button === 0) {
             
             if (this.alignmentManager && this.alignmentManager.startGridAlign(this.mouseState.graph)) {
                 e.preventDefault();
@@ -209,6 +220,13 @@ class LGraphCanvas {
         
         // Regular interaction cleanup
         this.finishInteractions();
+        
+        // Safety: ensure duplication undo state is created even if something went wrong
+        if (this.interactionState.dragging.isDuplication) {
+            this.pushUndoState();
+            this.interactionState.dragging.isDuplication = false;
+        }
+        
         this.mouseState.down = false;
         this.mouseState.button = -1;
         this.dirty_canvas = true;
@@ -245,6 +263,16 @@ class LGraphCanvas {
             isFinite(newOffset[0]) ? newOffset[0] : currentOffset[0],
             isFinite(newOffset[1]) ? newOffset[1] : currentOffset[1]
         ];
+        
+        // Update text editing overlay if active
+        if (this._editingTextInput && this._editingTextNode) {
+            this.positionTextEditingOverlay(this._editingTextInput, this._editingTextNode);
+            this.updateTextEditingOverlaySize(this._editingTextInput, this._editingTextNode);
+        }
+        
+        // Clear preload queue during zoom - will be repopulated with new nearby nodes
+        console.log(`🔍 Zoom detected - clearing preload queue for fresh prioritization`);
+        this.clearPreloadQueue();
         
         this.dirty_canvas = true;
     }
@@ -435,14 +463,33 @@ class LGraphCanvas {
     // ===================================
     
     startNodeDrag(node, e) {
-        if (!this.selection.isSelected(node)) {
-            if (!e.shiftKey) {
-                this.selection.clear();
+        if (e.shiftKey && !e.ctrlKey && !e.metaKey) {
+            // Shift-click (but not Ctrl+Shift): toggle selection
+            if (this.selection.isSelected(node)) {
+                // Remove from selection
+                this.selection.deselectNode(node);
+                // If we just deselected the only node, there's nothing to drag
+                if (this.selection.isEmpty()) {
+                    return;
+                }
+                // Use another selected node as the drag reference
+                const selectedNodes = this.selection.getSelectedNodes();
+                this.interactionState.dragging.node = selectedNodes[0];
+            } else {
+                // Add to selection
+                this.selection.selectNode(node, true);
+                this.interactionState.dragging.node = node;
             }
-            this.selection.selectNode(node, true);
+        } else {
+            // Regular click or Ctrl+Shift (for grid align)
+            if (!this.selection.isSelected(node)) {
+                // Node not selected: replace selection with this node
+                this.selection.clear();
+                this.selection.selectNode(node, true);
+            }
+            // If node was already selected, keep current selection
+            this.interactionState.dragging.node = node;
         }
-        
-        this.interactionState.dragging.node = node;
         
         // Calculate offsets for all selected nodes
         const selectedNodes = this.selection.getSelectedNodes();
@@ -557,6 +604,7 @@ class LGraphCanvas {
         
         // Start dragging all duplicates, using the dragged duplicate as reference
         this.interactionState.dragging.node = draggedDuplicate;
+        this.interactionState.dragging.isDuplication = true;  // Mark as duplication drag
         
         // Calculate offsets for all duplicates
         for (const duplicate of duplicates) {
@@ -567,8 +615,7 @@ class LGraphCanvas {
             this.interactionState.dragging.offsets.set(duplicate.id, offset);
         }
         
-        // Mark for undo
-        this.pushUndoState();
+        // DON'T push undo state yet - wait until drag is complete for atomic operation
         this.dirty_canvas = true;
     }
     // ===================================
@@ -593,6 +640,11 @@ class LGraphCanvas {
         const dx = this.mouseState.canvas[0] - this.mouseState.last[0];
         const dy = this.mouseState.canvas[1] - this.mouseState.last[1];
         this.viewport.pan(dx, dy);
+        
+        // Update text editing overlay if active
+        if (this._editingTextInput && this._editingTextNode) {
+            this.positionTextEditingOverlay(this._editingTextInput, this._editingTextNode);
+        }
     }
     
     updateNodeDrag() {
@@ -603,6 +655,8 @@ class LGraphCanvas {
                 node.pos[1] = this.mouseState.graph[1] + offset[1];
             }
         }
+        // Invalidate selection bounding box cache when nodes move
+        this.selection.invalidateBoundingBox();
     }
     
     updateResize(e) {
@@ -655,6 +709,8 @@ class LGraphCanvas {
                     selectedNode.aspectRatio = selectedNode.size[0] / selectedNode.size[1];
                     if (selectedNode.onResize) selectedNode.onResize();
                 }
+                // Invalidate bounding box cache after batch resize
+                this.selection.invalidateBoundingBox();
             }
         } else {
             // Single node: original behavior
@@ -673,6 +729,9 @@ class LGraphCanvas {
             if (node.onResize) {
                 node.onResize();
             }
+            
+            // Invalidate bounding box cache after single node resize
+            this.selection.invalidateBoundingBox();
         }
     }
     
@@ -711,6 +770,9 @@ class LGraphCanvas {
                 node.onResize();
             }
         }
+        
+        // Invalidate bounding box cache after multi-resize
+        this.selection.invalidateBoundingBox();
     }
     
     updateRotation(e) {
@@ -819,9 +881,17 @@ class LGraphCanvas {
         
         // Node drag
         if (this.interactionState.dragging.node) {
+            const wasDuplication = this.interactionState.dragging.isDuplication;
+            
             this.interactionState.dragging.node = null;
             this.interactionState.dragging.offsets.clear();
-            if (wasInteracting) this.pushUndoState();
+            this.interactionState.dragging.isDuplication = false;
+            
+            // For duplication: always create undo state (even without movement)
+            // For regular drag: only create undo state if there was interaction
+            if (wasDuplication || wasInteracting) {
+                this.pushUndoState();
+            }
         }
         
         // Resize
@@ -1292,8 +1362,128 @@ class LGraphCanvas {
     }
     
     startTextEditing(node, e) {
-        // Implementation for text editing...
-        console.log('Start text editing for node:', node.id);
+        if (this._editingTextInput) {
+            this.finishTextEditing();
+        }
+
+        // Mark node as editing
+        node.startEditing();
+        
+        // Create WYSIWYG textarea overlay
+        const textarea = document.createElement('textarea');
+        textarea.value = node.properties.text || '';
+        textarea.style.position = 'fixed';
+        textarea.style.zIndex = '10000';
+        textarea.style.resize = 'none';
+        textarea.style.border = '2px solid #4af';
+        textarea.style.outline = 'none';
+        textarea.style.background = 'transparent';
+        textarea.style.color = node.properties.textColor;
+        textarea.style.fontFamily = node.properties.fontFamily;
+        textarea.style.fontSize = `${node.properties.fontSize * this.viewport.scale}px`;
+        textarea.style.textAlign = node.properties.textAlign;
+        textarea.style.lineHeight = node.properties.leadingFactor;
+        textarea.style.padding = `${node.properties.padding * this.viewport.scale}px`;
+        textarea.style.overflow = 'hidden';
+        textarea.style.whiteSpace = 'pre-wrap';
+        textarea.style.wordWrap = 'break-word';
+
+        // Position and size the textarea to match the node
+        this.positionTextEditingOverlay(textarea, node);
+
+        // Event handlers
+        textarea.addEventListener('blur', () => this.finishTextEditing());
+        textarea.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape') {
+                this.cancelTextEditing();
+            } else if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
+                this.finishTextEditing();
+            }
+            e.stopPropagation();
+        });
+
+        // Update text and size in real-time
+        textarea.addEventListener('input', () => {
+            node.properties.text = textarea.value;
+            this.dirty_canvas = true;
+            this.updateTextEditingOverlaySize(textarea, node);
+        });
+
+        // Add to DOM and focus
+        document.body.appendChild(textarea);
+        textarea.focus();
+        textarea.select();
+
+        // Store references
+        this._editingTextInput = textarea;
+        this._editingTextNode = node;
+    }
+
+    positionTextEditingOverlay(textarea, node) {
+        // Use animated position if available
+        let nodePos = node.pos;
+        if (node._gridAnimPos) {
+            nodePos = node._gridAnimPos;
+        } else if (node._animPos) {
+            nodePos = node._animPos;
+        }
+
+        const [screenX, screenY] = this.viewport.convertGraphToOffset(nodePos[0], nodePos[1]);
+        const rect = this.canvas.getBoundingClientRect();
+        
+        textarea.style.left = `${rect.left + screenX}px`;
+        textarea.style.top = `${rect.top + screenY}px`;
+        textarea.style.width = `${node.size[0] * this.viewport.scale}px`;
+        textarea.style.height = `${node.size[1] * this.viewport.scale}px`;
+    }
+
+    updateTextEditingOverlaySize(textarea, node) {
+        // Update overlay size to match node
+        textarea.style.width = `${node.size[0] * this.viewport.scale}px`;
+        textarea.style.height = `${node.size[1] * this.viewport.scale}px`;
+        textarea.style.fontSize = `${node.properties.fontSize * this.viewport.scale}px`;
+        textarea.style.padding = `${node.properties.padding * this.viewport.scale}px`;
+    }
+
+    finishTextEditing() {
+        if (!this._editingTextInput || !this._editingTextNode) return;
+
+        const node = this._editingTextNode;
+        const textarea = this._editingTextInput;
+        
+        // Update node text
+        node.properties.text = textarea.value;
+        node.stopEditing();
+        
+        // Auto-resize if needed
+        if (node.autoResize) {
+            node.autoResize();
+        }
+
+        // Cleanup
+        document.body.removeChild(textarea);
+        this._editingTextInput = null;
+        this._editingTextNode = null;
+        
+        this.pushUndoState();
+        this.dirty_canvas = true;
+    }
+
+    cancelTextEditing() {
+        if (!this._editingTextInput || !this._editingTextNode) return;
+
+        const node = this._editingTextNode;
+        const textarea = this._editingTextInput;
+        
+        // Restore original text (no changes)
+        node.stopEditing();
+        
+        // Cleanup
+        document.body.removeChild(textarea);
+        this._editingTextInput = null;
+        this._editingTextNode = null;
+        
+        this.dirty_canvas = true;
     }
     
     resetAspectRatio(resizeHandle) {
@@ -1422,6 +1612,66 @@ class LGraphCanvas {
         requestAnimationFrame(render);
     }
     
+    startPreloadLoop() {
+        const processLoadingQueue = async () => {
+            // Process visible nodes first (high priority)
+            if (this.loadingQueue.size > 0 && this.currentLoads < this.maxConcurrentLoads) {
+                const nodeId = this.loadingQueue.values().next().value;
+                this.loadingQueue.delete(nodeId);
+                
+                const node = this.graph.getNodeById(nodeId);
+                if (node && node.loadingState === 'idle') {
+                    this.currentLoads++;
+                    
+                    try {
+                        const success = await this.loadNodeFromCache(node);
+                        if (success) {
+                            this.dirty_canvas = true; // Trigger redraw
+                        }
+                    } finally {
+                        this.currentLoads--;
+                    }
+                }
+            }
+            
+            // Process preload queue if we have spare capacity
+            else if (this.preloadQueue.size > 0 && this.currentLoads < this.maxConcurrentLoads) {
+                const nodeId = this.preloadQueue.values().next().value;
+                this.preloadQueue.delete(nodeId);
+                
+                const node = this.graph.getNodeById(nodeId);
+                if (node && node.loadingState === 'idle') {
+                    this.currentLoads++;
+                    
+                    try {
+                        await this.loadNodeFromCache(node);
+                        // Don't trigger redraw for preloads unless visible
+                        if (this.viewport.isNodeVisible(node, CONFIG.PERFORMANCE.VISIBILITY_MARGIN)) {
+                            this.dirty_canvas = true;
+                        }
+                    } finally {
+                        this.currentLoads--;
+                    }
+                }
+            }
+            
+            // Schedule next processing cycle
+            setTimeout(processLoadingQueue, 16); // ~60fps processing
+        };
+        
+        processLoadingQueue();
+    }
+    
+    clearPreloadQueue() {
+        this.preloadQueue.clear();
+        // Keep visible queue since those are important
+    }
+
+    clearAllQueues() {
+        this.loadingQueue.clear();
+        this.preloadQueue.clear();
+    }
+    
     updatePerformanceStats(timestamp) {
         this.frameCounter++;
         
@@ -1434,6 +1684,8 @@ class LGraphCanvas {
     
     draw() {
         if (!this.ctx) return;
+        
+        const startTime = performance.now();
         
         const ctx = this.ctx;
         const canvas = this.canvas;
@@ -1448,6 +1700,8 @@ class LGraphCanvas {
         // Draw grid
         this.drawGrid(ctx);
         
+        const gridTime = performance.now();
+        
         // Apply viewport transformation
         ctx.save();
         ctx.translate(this.viewport.offset[0], this.viewport.offset[1]);
@@ -1459,6 +1713,8 @@ class LGraphCanvas {
             this.getConfig('PERFORMANCE.VISIBILITY_MARGIN', 200)
         );
         
+        const cullTime = performance.now();
+        
         // Update node visibility and loading
         this.updateNodeVisibility(visibleNodes);
         
@@ -1467,6 +1723,8 @@ class LGraphCanvas {
             this.drawNode(ctx, node);
         }
         
+        const nodesTime = performance.now();
+        
         ctx.restore();
         
         // Draw UI overlays (selection, handles, etc.)
@@ -1474,6 +1732,15 @@ class LGraphCanvas {
         
         // Draw performance stats
         this.drawStats(ctx);
+        
+        const uiTime = performance.now();
+        
+        const totalTime = uiTime - startTime;
+        
+        // Log performance if frame takes longer than 16ms (below 60fps)
+        if (totalTime > 16) {
+            console.log(`🐌 Slow frame: ${totalTime.toFixed(1)}ms total (grid: ${(gridTime-startTime).toFixed(1)}ms, cull: ${(cullTime-gridTime).toFixed(1)}ms, nodes: ${(nodesTime-cullTime).toFixed(1)}ms, ui: ${(uiTime-nodesTime).toFixed(1)}ms)`);
+        }
     }
     
     drawGrid(ctx) {
@@ -1490,17 +1757,59 @@ class LGraphCanvas {
     }
     
     updateNodeVisibility(visibleNodes) {
-        // Load media content for visible nodes
+        // Queue media loading for visible nodes (non-blocking)
         for (const node of visibleNodes) {
             if ((node.type === 'media/image' || node.type === 'media/video') && 
                 node.loadingState === 'idle' && node.properties.hash) {
-                this.loadNodeFromCache(node);
+                this.queueNodeLoading(node, 'visible');
+            }
+        }
+        
+        // Queue preloading for nearby nodes
+        this.queueNearbyNodes();
+    }
+    
+    queueNodeLoading(node, priority = 'normal') {
+        if (this.loadingQueue.has(node.id) || this.preloadQueue.has(node.id)) {
+            return; // Already queued
+        }
+        
+        if (priority === 'visible') {
+            // High priority: visible nodes go to front of loading queue
+            this.loadingQueue.add(node.id);
+        } else {
+            // Lower priority: nearby nodes go to preload queue
+            this.preloadQueue.add(node.id);
+        }
+    }
+    
+    queueNearbyNodes() {
+        // Only queue a few nearby nodes to avoid excessive preloading
+        const viewport = this.viewport.getViewport();
+        const expandedMargin = CONFIG.PERFORMANCE.VISIBILITY_MARGIN * 2;
+        
+        let nearbyCount = 0;
+        const maxNearby = 10; // Limit preloading
+        
+        for (const node of this.graph.nodes) {
+            if (nearbyCount >= maxNearby) break;
+            
+            if ((node.type === 'media/image' || node.type === 'media/video') && 
+                node.loadingState === 'idle' && node.properties.hash &&
+                !this.loadingQueue.has(node.id) && !this.preloadQueue.has(node.id)) {
+                
+                // Check if nearby (but not visible)
+                if (this.viewport.isNodeVisible(node, expandedMargin) && 
+                    !this.viewport.isNodeVisible(node, CONFIG.PERFORMANCE.VISIBILITY_MARGIN)) {
+                    this.queueNodeLoading(node, 'preload');
+                    nearbyCount++;
+                }
             }
         }
     }
     
     async loadNodeFromCache(node) {
-        if (!window.imageCache) return;
+        if (!window.imageCache) return false;
         
         const cached = window.imageCache.get(node.properties.hash);
         if (cached) {
@@ -1510,10 +1819,13 @@ class LGraphCanvas {
                 } else if (node.setImage) {
                     await node.setImage(cached, node.properties.filename, node.properties.hash);
                 }
+                return true;
             } catch (error) {
                 console.warn('Failed to load cached media:', error);
+                return false;
             }
         }
+        return false;
     }
     
     drawNode(ctx, node) {
@@ -1557,8 +1869,12 @@ class LGraphCanvas {
         ctx.strokeRect(0, 0, node.size[0], node.size[1]);
         
         // Draw handles if node is large enough and not during alignment animations
-        if (this.handleDetector.shouldShowHandles(node) && 
-            (!this.alignmentManager || !this.alignmentManager.isAnimating())) {
+        // For performance: limit individual handles when many nodes are selected
+        const shouldDrawHandles = this.handleDetector.shouldShowHandles(node) && 
+                                 (!this.alignmentManager || !this.alignmentManager.isAnimating()) &&
+                                 (this.selection.size() <= 5); // Only draw individual handles for 5 or fewer nodes
+        
+        if (shouldDrawHandles) {
             this.drawNodeHandles(ctx, node);
         }
     }

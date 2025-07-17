@@ -25,7 +25,8 @@ class ImageNode extends BaseNode {
         }
         
         try {
-            this.img = await this.loadImageAsync(src);
+            // Use non-blocking image loading with immediate return
+            this.img = await this.loadImageAsyncOptimized(src);
             this.loadingState = 'loaded';
             
             // Set aspect ratio only if not previously set
@@ -37,7 +38,8 @@ class ImageNode extends BaseNode {
                 this.originalAspect = this.img.width / this.img.height;
             }
             
-            this.generateThumbnails();
+            // Generate thumbnails asynchronously without blocking
+            this.generateThumbnailsAsync();
             this.onResize();
             this.markDirty();
             
@@ -52,6 +54,30 @@ class ImageNode extends BaseNode {
             const img = new Image();
             img.onload = () => resolve(img);
             img.onerror = reject;
+            img.src = src;
+        });
+    }
+    
+    loadImageAsyncOptimized(src) {
+        return new Promise((resolve, reject) => {
+            const img = new Image();
+            
+            // Use decode() for better performance if available
+            img.onload = () => {
+                if (img.decode) {
+                    img.decode()
+                        .then(() => resolve(img))
+                        .catch(() => resolve(img)); // Fall back to regular loading
+                } else {
+                    resolve(img);
+                }
+            };
+            
+            img.onerror = reject;
+            
+            // Set crossOrigin and loading hints for better performance
+            img.crossOrigin = 'anonymous';
+            img.loading = 'eager';
             img.src = src;
         });
     }
@@ -87,6 +113,49 @@ class ImageNode extends BaseNode {
             ctx.drawImage(this.img, 0, 0, width, height);
             
             this.thumbnails.set(size, canvas);
+        }
+    }
+    
+    async generateThumbnailsAsync() {
+        if (!this.img?.width || !this.img?.height) return;
+        
+        this.thumbnails.clear();
+        
+        // Generate thumbnails in smaller batches to avoid blocking
+        for (let i = 0; i < this.thumbnailSizes.length; i++) {
+            const size = this.thumbnailSizes[i];
+            
+            // Use setTimeout to yield control between thumbnail generations
+            await new Promise(resolve => {
+                setTimeout(() => {
+                    const canvas = Utils.createCanvas(1, 1);
+                    const ctx = canvas.getContext('2d');
+                    
+                    // Calculate dimensions maintaining aspect ratio
+                    let width = this.img.width;
+                    let height = this.img.height;
+                    
+                    if (width > height && width > size) {
+                        height = Math.round(height * (size / width));
+                        width = size;
+                    } else if (height > width && height > size) {
+                        width = Math.round(width * (size / height));
+                        height = size;
+                    } else if (Math.max(width, height) > size) {
+                        width = height = size;
+                    }
+                    
+                    canvas.width = width;
+                    canvas.height = height;
+                    
+                    ctx.imageSmoothingEnabled = true;
+                    ctx.imageSmoothingQuality = CONFIG.THUMBNAILS.QUALITY;
+                    ctx.drawImage(this.img, 0, 0, width, height);
+                    
+                    this.thumbnails.set(size, canvas);
+                    resolve();
+                }, 0);
+            });
         }
     }
     

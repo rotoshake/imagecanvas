@@ -12,7 +12,7 @@ const CONFIG = {
     },
     
     PERFORMANCE: {
-        MAX_FPS: 60,
+        MAX_FPS: 120,
         THUMBNAIL_THRESHOLD: 50, // pixels
         VISIBILITY_MARGIN: 200,
         BATCH_SIZE: 100

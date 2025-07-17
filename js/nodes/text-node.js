@@ -271,6 +271,15 @@ class TextNode extends BaseNode {
         this.markDirty();
     }
     
+    // Double-click to edit text
+    onDblClick(e) {
+        if (this.graph?.canvas?.startTextEditing) {
+            this.graph.canvas.startTextEditing(this, e);
+            return true; // Handled
+        }
+        return false;
+    }
+
     // Auto-resize based on content
     autoResize() {
         if (!this.properties.text) return;
