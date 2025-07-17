@@ -1,222 +1,386 @@
-// Video Node class definition
-class VideoNode {
-    constructor() {
-        this.type = "media/video";
-        this.title = "Video";
-        this.properties = { src: null, filename: null, loop: true };
-        this.flags = { hide_title: true };
-        this.size = [200, 200];
-        this.pos = [0, 0];
-        this.resizable = true;
-        this.aspectRatio = 1;
-        this._prev_size = [200, 200];
-        this.outputs = [{ name: "video", type: "" }];
-        this.video = null;
-        this.thumbnails = {}; // Multiple thumbnail sizes (first frame)
-        this._thumbnailSizes = [64, 128, 256, 512];
-        this.userPaused = false;
-        this.rotation = 0; // Add rotation property
-        // Defensive: ensure size and scale are valid
-        if (!this.size || this.size.length !== 2 || !this.size.every(Number.isFinite)) {
-            this.size = [200, 200];
-        }
-        if (!Number.isFinite(this.properties.scale)) {
-            this.properties.scale = 1.0;
-        }
-        console.debug('[VideoNode] Created', {
-            filename: this.properties.filename,
-            src: this.properties.src,
-            hash: this.properties.hash
-        });
-    }
+// ===================================
+// VIDEO NODE CLASS
+// ===================================
 
-    setVideo(src, filename = null, hash = null) {
+class VideoNode extends BaseNode {
+    constructor() {
+        super('media/video');
+        this.title = 'Video';
+        this.properties = { 
+            src: null, 
+            filename: null, 
+            hash: null, 
+            loop: true,
+            muted: true,
+            autoplay: true,
+            paused: false  // Add paused property to properties
+        };
+        this.flags = { hide_title: true };
+        this.video = null;
+        this.thumbnails = new Map();
+        this.thumbnailSizes = CONFIG.THUMBNAILS.SIZES;
+        this.userPaused = false;  // Keep for backward compatibility
+        this.thumbnailGenerated = false;
+    }
+    
+    async setVideo(src, filename = null, hash = null) {
         this.properties.src = src;
         this.properties.filename = filename;
-        if (hash) this.properties.hash = hash;
-        this.video = document.createElement('video');
-        this.video.muted = true; // Mute by default to avoid audio issues
-        this.video.loop = this.properties.loop;
-        this.video.autoplay = true; // Start playback automatically
-        this._thumbnailsGenerated = false;
-        this.video.onloadedmetadata = () => {
-            if (!this.video) return;
-            const shouldResetAspect = !this.aspectRatio || this.aspectRatio === 1;
-            if (shouldResetAspect) {
+        this.properties.hash = hash;
+        this.loadingState = 'loading';
+        
+        // Update title
+        if (filename && (!this.title || this.title === 'Video')) {
+            this.title = filename;
+        }
+        
+        try {
+            this.video = await this.loadVideoAsync(src);
+            this.loadingState = 'loaded';
+            
+            // Set aspect ratio only if not previously set
+            if (this.aspectRatio === 1) {
                 this.aspectRatio = this.video.videoWidth / this.video.videoHeight;
                 this.originalAspect = this.aspectRatio;
                 this.size[0] = this.size[1] * this.aspectRatio;
             } else {
                 this.originalAspect = this.video.videoWidth / this.video.videoHeight;
             }
-            this._prev_size = this.size.slice();
+            
+            await this.generateThumbnails();
             this.onResize();
-            if (filename && (!this.title || this.title === 'Video')) {
-                this.title = filename;
-            }
-            // Seek to first frame and generate thumbnails after seek
-            const tryGenerate = () => {
-                if (this._thumbnailsGenerated) return;
-                this._thumbnailsGenerated = true;
-                this.generateThumbnails();
-                if (this.graph && this.graph.canvas) {
-                    this.graph.canvas.dirty_canvas = true;
-                    this.graph.canvas.draw();
-                }
-            };
-            // If already at 0, just try to generate
-            if (Math.abs(this.video.currentTime) > 0.01) {
-                this.video.currentTime = 0;
-            }
-            // Use onseeked if available, fallback to oncanplay
-            this.video.onseeked = tryGenerate;
-            this.video.oncanplay = tryGenerate;
-            // If video is already ready, try immediately
-            if (this.video.readyState >= 2) {
-                tryGenerate();
-            }
-            console.debug('[VideoNode] Video loaded', {
-                filename: this.properties.filename,
-                hash: this.properties.hash,
-                width: this.video.videoWidth,
-                height: this.video.videoHeight,
-                aspectRatio: this.aspectRatio,
-                shouldResetAspect: shouldResetAspect
-            });
-            if (this.graph && this.graph.canvas) {
-                this.graph.canvas.dirty_canvas = true;
-                this.graph.canvas.draw();
-            }
-            // Start playback
-            this.video.play().catch(e => console.warn('Video playback failed:', e));
-        };
-        this.video.src = src;
-    }
-
-    generateThumbnails() {
-        if (!this.video || !this.video.videoWidth || !this.video.videoHeight) return;
-        this.thumbnails = {};
-        for (const thumbSize of this._thumbnailSizes) {
-            const canvas = document.createElement('canvas');
-            const ctx = canvas.getContext('2d');
-            let tw = this.video.videoWidth, th = this.video.videoHeight;
-            if (!tw || !th) { tw = th = 1; }
-            if (tw > th && tw > thumbSize) {
-                th = Math.round(th * (thumbSize / tw));
-                tw = thumbSize;
-            } else if (th > tw && th > thumbSize) {
-                tw = Math.round(tw * (thumbSize / th));
-                th = thumbSize;
-            } else if (tw > thumbSize) {
-                tw = th = thumbSize;
-            }
-            canvas.width = tw;
-            canvas.height = th;
-            ctx.imageSmoothingEnabled = true;
-            ctx.imageSmoothingQuality = 'high';
-            try {
-                ctx.drawImage(this.video, 0, 0, tw, th);
-            } catch (e) {}
-            this.thumbnails[thumbSize] = canvas;
-        }
-    }
-
-    getBestThumbnail(targetWidth, targetHeight) {
-        if (!this.video.videoWidth || !this.video.videoHeight) return null;
-        for (const size of this._thumbnailSizes) {
-            if (size >= targetWidth && size >= targetHeight) {
-                return this.thumbnails[size];
-            }
-        }
-        return this.thumbnails[Math.max(...this._thumbnailSizes)];
-    }
-
-    onResize() {
-        const dw = Math.abs(this.size[0] - this._prev_size[0]);
-        const dh = Math.abs(this.size[1] - this._prev_size[1]);
-        const isOriginalAspect = this.aspectRatio === this.originalAspect;
-        if (isOriginalAspect) {
-            if (dw > dh) {
-                this.size[1] = this.size[0] / this.aspectRatio;
+            this.markDirty();
+            
+            // Start playback only if not paused
+            if (!this.properties.paused) {
+                this.play();  // Auto-play by default
             } else {
-                this.size[0] = this.size[1] * this.aspectRatio;
+                this.pause(); // Explicitly pause if paused
             }
-        } else {
-            this.aspectRatio = this.size[0] / this.size[1];
-        }
-        this._prev_size = this.size.slice();
-    }
-
-    onDrawForeground(ctx) {
-        if (!this.size || this.size.length !== 2 || !this.size.every(Number.isFinite)) {
-            this.size = [200, 200];
-        }
-        if (!Number.isFinite(this.properties.scale)) {
-            this.properties.scale = 1.0;
-        }
-        if (!this.video && this.properties && this.properties.src) {
-            this.setVideo(this.properties.src, this.properties.filename, this.properties.hash);
-        }
-        if (!this.video || !this.video.videoWidth || !this.video.videoHeight) {
-            ctx.save();
-            ctx.fillStyle = '#cccccc';
-            ctx.fillRect(0, 0, this.size[0], this.size[1]);
-            ctx.fillStyle = '#666666';
-            ctx.font = '16px sans-serif';
-            ctx.textAlign = 'center';
-            ctx.textBaseline = 'middle';
-            ctx.fillText('Loading…', this.size[0] / 2, this.size[1] / 2);
-            ctx.restore();
-            return;
-        }
-        let scale = 1, dpr = 1;
-        if (this.graph && this.graph.canvas) {
-            scale = this.graph.canvas.scale || 1;
-            dpr = this.graph.canvas.dpr || window.devicePixelRatio || 1;
-        }
-        const screenW = this.size[0] * scale * dpr;
-        const screenH = this.size[1] * scale * dpr;
-        const w = this.size[0];
-        const h = this.size[1];
-        if (screenW < 32 || screenH < 32) {
-            ctx.save();
-            ctx.fillStyle = '#888';
-            ctx.fillRect(0, 0, w, h);
-            ctx.restore();
-            return;
-        } else if (screenW < 64 || screenH < 64) {
-            const targetWidth = Math.round(w * this.properties.scale);
-            const targetHeight = Math.round(h * this.properties.scale);
-            const thumbnail = this.getBestThumbnail(targetWidth, targetHeight);
-            if (thumbnail instanceof HTMLCanvasElement) {
-                ctx.imageSmoothingEnabled = true;
-                ctx.imageSmoothingQuality = 'high';
-                ctx.drawImage(thumbnail, 0, 0, w * this.properties.scale, h * this.properties.scale);
-            } else {
-                ctx.save();
-                ctx.fillStyle = '#888';
-                ctx.fillRect(0, 0, w, h);
-                ctx.restore();
-            }
-            return;
-        } else {
-            ctx.imageSmoothingEnabled = true;
-            ctx.imageSmoothingQuality = 'high';
-            ctx.drawImage(this.video, 0, 0, w * this.properties.scale, h * this.properties.scale);
-            if (!this.userPaused && this.video.paused) {
-                this.video.play().catch(()=>{});
-            }
-        }
-        // Remove in-node title drawing here (was previously drawing title inside the node)
-    }
-
-    onExecute() {
-        if (this.outputs && this.outputs[0]) {
-            this.setOutputData(0, this.properties.src);
+            
+        } catch (error) {
+            console.error('Failed to load video:', error);
+            this.loadingState = 'error';
         }
     }
     
-    setOutputData(index, data) {
-        // Placeholder for output data
+    loadVideoAsync(src) {
+        return new Promise((resolve, reject) => {
+            const video = document.createElement('video');
+            video.muted = this.properties.muted;
+            video.loop = this.properties.loop;
+            video.autoplay = this.properties.autoplay && !this.properties.paused;  // Don't autoplay if paused
+            video.playsInline = true; // Better mobile support
+            video.crossOrigin = 'anonymous'; // For canvas drawing
+            
+            video.onloadedmetadata = () => {
+                // Ensure video dimensions are available
+                if (video.videoWidth > 0 && video.videoHeight > 0) {
+                    resolve(video);
+                } else {
+                    reject(new Error('Video dimensions not available'));
+                }
+            };
+            
+            video.onerror = () => reject(new Error('Failed to load video'));
+            video.src = src;
+        });
+    }
+    
+    onDblClick(event) {
+        // Get mouse position from canvas
+        const canvas = this.graph?.canvas;
+        if (!canvas || !this.video) return false;
+        
+        const mousePos = canvas.mouseState?.graph;
+        if (!mousePos) return false;
+        
+        const inBounds = this.containsPoint(mousePos[0], mousePos[1]);
+        if (inBounds) {
+            const scale = canvas.viewport?.scale || 1;
+            const screenWidth = this.size[0] * scale;
+            const useThumbnail = screenWidth < CONFIG.PERFORMANCE.THUMBNAIL_THRESHOLD;
+            
+            if (!useThumbnail) {
+                this.togglePlayback();
+                this.markDirty();
+                return true;  // Event handled
+            }
+        }
+        return false;
+    }
+
+    async generateThumbnails() {
+        if (!this.video?.videoWidth || !this.video?.videoHeight || this.thumbnailGenerated) {
+            return;
+        }
+        
+        try {
+            // Wait for video to be ready for frame capture
+            await this.ensureVideoReady();
+            
+            // Seek to first frame for thumbnail
+            this.video.currentTime = 0;
+            await this.waitForSeek();
+            
+            this.thumbnails.clear();
+            
+            for (const size of this.thumbnailSizes) {
+                const canvas = Utils.createCanvas(1, 1);
+                const ctx = canvas.getContext('2d');
+                
+                // Calculate dimensions maintaining aspect ratio
+                let width = this.video.videoWidth;
+                let height = this.video.videoHeight;
+                
+                if (width > height && width > size) {
+                    height = Math.round(height * (size / width));
+                    width = size;
+                } else if (height > width && height > size) {
+                    width = Math.round(width * (size / height));
+                    height = size;
+                } else if (Math.max(width, height) > size) {
+                    width = height = size;
+                }
+                
+                canvas.width = width;
+                canvas.height = height;
+                
+                ctx.imageSmoothingEnabled = true;
+                ctx.imageSmoothingQuality = CONFIG.THUMBNAILS.QUALITY;
+                
+                try {
+                    ctx.drawImage(this.video, 0, 0, width, height);
+                    this.thumbnails.set(size, canvas);
+                } catch (error) {
+                    console.warn('Failed to generate thumbnail for size', size, error);
+                }
+            }
+            
+            this.thumbnailGenerated = true;
+            
+        } catch (error) {
+            console.warn('Failed to generate video thumbnails:', error);
+        }
+    }
+    
+    ensureVideoReady() {
+        return new Promise((resolve) => {
+            if (this.video.readyState >= 2) {
+                resolve();
+            } else {
+                const onCanPlay = () => {
+                    this.video.removeEventListener('canplay', onCanPlay);
+                    resolve();
+                };
+                this.video.addEventListener('canplay', onCanPlay);
+            }
+        });
+    }
+    
+    waitForSeek() {
+        return new Promise((resolve) => {
+            const onSeeked = () => {
+                this.video.removeEventListener('seeked', onSeeked);
+                resolve();
+            };
+            this.video.addEventListener('seeked', onSeeked);
+            
+            // Fallback timeout
+            setTimeout(resolve, 100);
+        });
+    }
+    
+    getBestThumbnail(targetWidth, targetHeight) {
+        if (this.thumbnails.size === 0) return null;
+        
+        // Find the smallest thumbnail that's still larger than target
+        for (const size of this.thumbnailSizes) {
+            if (size >= targetWidth && size >= targetHeight) {
+                return this.thumbnails.get(size);
+            }
+        }
+        
+        // Return largest available if none are big enough
+        const maxSize = Math.max(...this.thumbnailSizes);
+        return this.thumbnails.get(maxSize);
+    }
+    
+    onResize() {
+        if (this.aspectRatio === this.originalAspect) {
+            // Maintain original aspect ratio
+            this.size[1] = this.size[0] / this.aspectRatio;
+        } else {
+            // Update aspect ratio for non-uniform scaling
+            this.aspectRatio = this.size[0] / this.size[1];
+        }
+    }
+    
+    onDrawForeground(ctx) {
+        this.validate();
+        
+        if (this.loadingState === 'loading' || this.loadingState === 'idle') {
+            this.drawPlaceholder(ctx, 'Loading…');
+            return;
+        }
+        
+        if (this.loadingState === 'error') {
+            this.drawPlaceholder(ctx, 'Error');
+            return;
+        }
+        
+        if (!this.video) return;
+        
+        const scale = this.graph?.canvas?.viewport?.scale || 1;
+        const screenWidth = this.size[0] * scale;
+        const screenHeight = this.size[1] * scale;
+        const useThumbnail = screenWidth < CONFIG.PERFORMANCE.THUMBNAIL_THRESHOLD || 
+                            screenHeight < CONFIG.PERFORMANCE.THUMBNAIL_THRESHOLD;
+        
+        try {
+            if (useThumbnail) {
+                const thumbnail = this.getBestThumbnail(this.size[0], this.size[1]);
+                if (thumbnail) {
+                    ctx.imageSmoothingEnabled = true;
+                    ctx.imageSmoothingQuality = CONFIG.THUMBNAILS.QUALITY;
+                    ctx.drawImage(thumbnail, 0, 0, this.size[0], this.size[1]);
+                } else {
+                    // Fallback to video if thumbnail not available
+                    this.drawVideo(ctx);
+                }
+            } else {
+                this.drawVideo(ctx);
+                this.managePlayback();
+            }
+        } catch (error) {
+            console.warn('Video drawing error:', error);
+            this.drawPlaceholder(ctx, 'Video Error');
+        }
+        
+        // Draw title if not using thumbnail
+        if (!useThumbnail) {
+            this.drawTitle(ctx);
+        }
+        
+        // // Draw playback controls indicator if paused
+        // if (!useThumbnail && (this.video.paused || this.userPaused)) {
+        //     this.drawPlaybackIndicator(ctx);
+        // }
+    }
+    
+    drawVideo(ctx) {
+        if (this.video.readyState >= 2) {
+            ctx.imageSmoothingEnabled = true;
+            ctx.imageSmoothingQuality = CONFIG.THUMBNAILS.QUALITY;
+            ctx.drawImage(this.video, 0, 0, this.size[0], this.size[1]);
+        }
+    }
+    
+    managePlayback() {
+        // Continue video playback if not paused
+        if (!this.properties.paused && this.video.paused) {
+            this.video.play().catch(() => {
+                // Autoplay might be blocked, that's okay
+            });
+        }
+    }
+    
+    drawPlaybackIndicator(ctx) {
+        ctx.save();
+        
+        // Semi-transparent overlay
+        ctx.fillStyle = 'rgba(0, 0, 0, 0.3)';
+        ctx.fillRect(0, 0, this.size[0], this.size[1]);
+        
+        // Play/pause icon
+        const centerX = this.size[0] / 2;
+        const centerY = this.size[1] / 2;
+        const iconSize = Math.min(this.size[0], this.size[1]) * 0.1;
+        
+        ctx.fillStyle = 'rgba(255, 255, 255, 0.8)';
+        
+        if (this.video.paused || this.userPaused) {
+            // Play triangle
+            ctx.beginPath();
+            ctx.moveTo(centerX - iconSize, centerY - iconSize);
+            ctx.lineTo(centerX + iconSize, centerY);
+            ctx.lineTo(centerX - iconSize, centerY + iconSize);
+            ctx.closePath();
+            ctx.fill();
+        } else {
+            // Pause bars
+            const barWidth = iconSize * 0.6;
+            const barGap = iconSize * 0.4;
+            ctx.fillRect(centerX - barGap / 2 - barWidth, centerY - iconSize, barWidth, iconSize * 2);
+            ctx.fillRect(centerX + barGap / 2, centerY - iconSize, barWidth, iconSize * 2);
+        }
+        
+        ctx.restore();
+    }
+    
+    // Video control methods
+    play() {
+        this.properties.paused = false;
+        this.userPaused = false;  // Keep for backward compatibility
+        if (this.video) {
+            this.video.play().catch(console.warn);
+        }
+    }
+    
+    pause() {
+        this.properties.paused = true;
+        this.userPaused = true;  // Keep for backward compatibility
+        if (this.video) {
+            this.video.pause();
+        }
+    }
+    
+    togglePlayback() {
+        if (this.properties.paused || this.video?.paused) {
+            this.play();
+        } else {
+            this.pause();
+        }
+    }
+    
+    seek(time) {
+        if (this.video) {
+            this.video.currentTime = time;
+        }
+    }
+    
+    // Updated containsPoint: Keep pure, no side effects
+    containsPoint(x, y) {
+        return super.containsPoint(x, y);
+    }
+    
+    onRemoved() {
+        super.onRemoved();
+        
+        // Clean up video resources
+        if (this.video) {
+            this.video.pause();
+            this.video.src = '';
+            this.video = null;
+        }
+        
+        // Clear thumbnails
+        this.thumbnails.clear();
+    }
+    
+    // Get video metadata
+    getVideoInfo() {
+        if (!this.video) return null;
+        
+        return {
+            duration: this.video.duration,
+            currentTime: this.video.currentTime,
+            width: this.video.videoWidth,
+            height: this.video.videoHeight,
+            paused: this.video.paused,
+            muted: this.video.muted,
+            loop: this.video.loop,
+            readyState: this.video.readyState
+        };
     }
 }

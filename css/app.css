@@ -53,3 +53,16 @@ body, html {
     border: 1px solid #666;
     cursor: se-resize;
 }
+
+.properties-panel {
+    font-family: Arial, sans-serif;
+    user-select: none;
+}
+
+.drop-active {
+    background-color: rgba(68, 170, 255, 0.1);
+}
+
+.drop-overlay {
+    font-family: Arial, sans-serif;
+}

@@ -2,24 +2,36 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>ImageCanvas Prototype</title>
-    <!-- LiteGraph library CSS (if using official library) -->
-    <!-- <link rel="stylesheet" href="css/litegraph.css"> -->
-    
-    <!-- Custom application styles -->
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ImageCanvas - Optimized</title>
     <link rel="stylesheet" href="css/app.css">
 </head>
 <body>
     <canvas id="mycanvas"></canvas>
     
-    <!-- If using official LiteGraph library, uncomment this -->
-    <!-- <script src="js/litegraph.js"></script> -->
-    
-    <!-- Application modules -->
+    <!-- Core utilities -->
+    <script src="js/utils/config.js"></script>
+    <script src="js/utils/utils.js"></script>
+    <script src="js/utils/cache.js"></script>
     <script src="js/utils/state.js"></script>
+    
+    <!-- Core systems -->
+    <script src="js/core/animation.js"></script>
+    <script src="js/core/viewport.js"></script>
+    <script src="js/core/selection.js"></script>
+    <script src="js/core/handles.js"></script>
+    <script src="js/core/alignment.js"></script>
+    
+    <!-- Node classes -->
+    <script src="js/nodes/base-node.js"></script>
     <script src="js/nodes/image-node.js"></script>
     <script src="js/nodes/video-node.js"></script>
-    <script src="js/nodes/gui-nodes.js"></script>
+    <script src="js/nodes/text-node.js"></script>
+    
+    <!-- Main application -->
+    <script src="js/graph.js"></script>
+    <script src="js/canvas.js"></script>
+    <script src="js/dragdrop.js"></script>
     <script src="js/app.js"></script>
 </body>
 </html>
