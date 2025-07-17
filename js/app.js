@@ -17,8 +17,9 @@ class ImageCanvasApp {
         console.log('Initializing Image Canvas App...');
         
         try {
-            // Initialize systems
+            // Initialize caching systems
             await window.imageCache.init();
+            window.thumbnailCache = new ThumbnailCache();
             await this.stateManager.init();
             
             // Connect state manager to canvas
@@ -112,6 +113,12 @@ class ImageCanvasApp {
         console.log('- Ctrl/Cmd+Shift+drag for grid alignment');
         console.log('- 1 key for horizontal alignment');
         console.log('- 2 key for vertical alignment');
+        console.log('');
+        console.log('🔧 Debug Commands:');
+        console.log('- window.thumbnailCache.getStats() - show thumbnail cache stats');
+        console.log('- window.imageCache - access image cache');
+        console.log('- window.app - access main app instance');
+        console.log('- window.lcanvas - access canvas instance');
     }
 }
 
@@ -154,6 +161,7 @@ class NodeFactory {
 
 // Global instances
 window.imageCache = new ImageCache();
+window.thumbnailCache = new ThumbnailCache();
 let app = null;
 
 // Custom LiteGraph compatibility object

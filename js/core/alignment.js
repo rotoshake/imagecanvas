@@ -498,6 +498,9 @@ class AutoAlignmentManager {
                     }
                 }
                 
+                // Invalidate bounding box cache when animation completes
+                this.selection.invalidateBoundingBox();
+                
                 if (!this.autoAlignMode) {
                     // Push undo state when completely finished
                     this.canvas.pushUndoState();
@@ -562,6 +565,9 @@ class AutoAlignmentManager {
                         delete node._gridAnimVel;
                     }
                 }
+                
+                // Invalidate bounding box cache when grid alignment completes
+                this.selection.invalidateBoundingBox();
                 
                 this.gridAlignAnimating = false;
                 this.gridAlignAnimNodes = null;
@@ -664,6 +670,9 @@ class AutoAlignmentManager {
         this.gridAlignTargets = null;
         this.gridAlignAnimNodes = null;
         this.gridAlignAnimTargets = null;
+        
+        // Invalidate bounding box cache when stopping all alignment operations
+        this.selection.invalidateBoundingBox();
         
         this.canvas.dirty_canvas = true;
     }

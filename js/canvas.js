@@ -177,6 +177,8 @@ class LGraphCanvas {
         if (this.alignmentManager) {
             if (this.alignmentManager.gridAlignMode && this.alignmentManager.gridAlignDragging) {
                 this.alignmentManager.updateGridAlign(this.mouseState.graph);
+                // Invalidate bounding box cache during grid alignment dragging
+                this.selection.invalidateBoundingBox();
                 this.mouseState.last = [x, y];
                 this.dirty_canvas = true;
                 return;
@@ -264,6 +266,9 @@ class LGraphCanvas {
             isFinite(newOffset[1]) ? newOffset[1] : currentOffset[1]
         ];
         
+        // Notify viewport of movement for LOD optimization
+        this.viewport.notifyMovement();
+        
         // Update text editing overlay if active
         if (this._editingTextInput && this._editingTextNode) {
             this.positionTextEditingOverlay(this._editingTextInput, this._editingTextNode);
@@ -271,7 +276,6 @@ class LGraphCanvas {
         }
         
         // Clear preload queue during zoom - will be repopulated with new nearby nodes
-        console.log(`🔍 Zoom detected - clearing preload queue for fresh prioritization`);
         this.clearPreloadQueue();
         
         this.dirty_canvas = true;
@@ -507,9 +511,10 @@ class LGraphCanvas {
         this.interactionState.resizing.type = resizeHandle.type;
         this.interactionState.resizing.node = resizeHandle.node;
         this.interactionState.resizing.nodes = new Set(resizeHandle.nodes || [resizeHandle.node]);
+        this.interactionState.resizing.isMultiContext = resizeHandle.isMultiContext || false;
         
-        // Store initial bounding box for multi-resize
-        if (resizeHandle.type === 'multi-resize') {
+        // Store initial bounding box for multi-resize or single-resize in multi-context
+        if (resizeHandle.type === 'multi-resize' || resizeHandle.isMultiContext) {
             this.interactionState.resizing.initialBBox = this.selection.getBoundingBox();
         }
         
@@ -675,64 +680,108 @@ class LGraphCanvas {
         const initial = this.interactionState.resizing.initial.get(node.id);
         if (!initial) return;
         
-        const newWidth = Math.max(50, mouseX - initial.pos[0]);
-        const newHeight = Math.max(50, mouseY - initial.pos[1]);
+        // Calculate new size and position with proper anchor point
+        let newWidth, newHeight, newPosX, newPosY;
         
-        // Check if we're in multi-selection context
-        const isMultiSelection = this.selection.size() > 1;
-        
-        if (isMultiSelection) {
-            // Multi-selection: apply delta to all selected nodes
-            if (ctrl && shift) {
-                // Ctrl+Shift: Match all nodes to dragged node's size and aspect ratio
-                const targetWidth = newWidth;
-                const targetHeight = shift ? newHeight : newWidth / initial.aspect;
-                const targetAspect = targetWidth / targetHeight;
-                
-                for (const selectedNode of this.selection.getSelectedNodes()) {
-                    selectedNode.size[0] = targetWidth;
-                    selectedNode.size[1] = targetHeight;
-                    selectedNode.aspectRatio = targetAspect;
-                    if (selectedNode.onResize) selectedNode.onResize();
-                }
-            } else {
-                // Normal multi-selection scaling: apply delta to all
-                const scaleX = newWidth / initial.size[0];
-                const scaleY = shift ? (newHeight / initial.size[1]) : scaleX;
-                
-                for (const selectedNode of this.selection.getSelectedNodes()) {
-                    const nodeInitial = this.interactionState.resizing.initial.get(selectedNode.id);
-                    if (!nodeInitial) continue;
-                    
-                    selectedNode.size[0] = Math.max(50, nodeInitial.size[0] * scaleX);
-                    selectedNode.size[1] = Math.max(50, nodeInitial.size[1] * scaleY);
-                    selectedNode.aspectRatio = selectedNode.size[0] / selectedNode.size[1];
-                    if (selectedNode.onResize) selectedNode.onResize();
-                }
-                // Invalidate bounding box cache after batch resize
-                this.selection.invalidateBoundingBox();
-            }
+        if (node.rotation && node.rotation !== 0) {
+            // For rotated nodes, resize from the opposite corner (top-left) as anchor
+            const angle = node.rotation * Math.PI / 180;
+            const cos = Math.cos(angle);
+            const sin = Math.sin(angle);
+            
+            // Calculate the top-left corner position in world coordinates (our anchor point)
+            const anchorLocalX = -initial.size[0] / 2;
+            const anchorLocalY = -initial.size[1] / 2;
+            const centerX = initial.pos[0] + initial.size[0] / 2;
+            const centerY = initial.pos[1] + initial.size[1] / 2;
+            
+            const anchorX = centerX + anchorLocalX * cos - anchorLocalY * sin;
+            const anchorY = centerY + anchorLocalX * sin + anchorLocalY * cos;
+            
+            // Transform mouse position to local coordinate system relative to anchor
+            const dx = mouseX - anchorX;
+            const dy = mouseY - anchorY;
+            
+            // Rotate to get local coordinates
+            const localDx = dx * cos + dy * sin;
+            const localDy = -dx * sin + dy * cos;
+            
+            // Calculate new size (ensuring positive values)
+            newWidth = Math.max(50, Math.abs(localDx));
+            newHeight = Math.max(50, Math.abs(localDy));
+            
+            // Calculate new position to keep anchor point fixed
+            const newCenterX = anchorX + (newWidth / 2) * cos - (newHeight / 2) * sin;
+            const newCenterY = anchorY + (newWidth / 2) * sin + (newHeight / 2) * cos;
+            
+            newPosX = newCenterX - newWidth / 2;
+            newPosY = newCenterY - newHeight / 2;
         } else {
-            // Single node: original behavior
-            if (shift) {
-                // Non-uniform scaling
-                node.size[0] = newWidth;
-                node.size[1] = newHeight;
-                node.aspectRatio = node.size[0] / node.size[1];
-            } else {
-                // Maintain aspect ratio
-                node.size[0] = newWidth;
-                node.size[1] = newWidth / initial.aspect;
-                node.aspectRatio = initial.aspect;
-            }
-            
-            if (node.onResize) {
-                node.onResize();
-            }
-            
-            // Invalidate bounding box cache after single node resize
-            this.selection.invalidateBoundingBox();
+            // No rotation, use simple calculation with top-left anchor
+            newWidth = Math.max(50, mouseX - initial.pos[0]);
+            newHeight = Math.max(50, mouseY - initial.pos[1]);
+            newPosX = initial.pos[0]; // Keep top-left fixed
+            newPosY = initial.pos[1];
         }
+        
+        // Check if this is a single-resize in multi-selection context
+        // In this case, we should scale all selected nodes as a group
+        const isMultiContext = this.interactionState.resizing.isMultiContext;
+        
+        if (isMultiContext) {
+            // Single handle drag in multi-selection: scale all selected nodes as group
+            this.updateMultiResizeFromSingleHandle(mouseX, mouseY, shift, ctrl, node, initial);
+            return;
+        }
+        
+        // Individual node resize (single selection or not in multi-context)
+        // Single node: update size and position with anchor point
+        if (shift) {
+            // Non-uniform scaling
+            node.size[0] = newWidth;
+            node.size[1] = newHeight;
+            node.aspectRatio = node.size[0] / node.size[1];
+        } else {
+            // Maintain aspect ratio
+            const aspectHeight = newWidth / initial.aspect;
+            node.size[0] = newWidth;
+            node.size[1] = aspectHeight;
+            node.aspectRatio = initial.aspect;
+            
+            // Recalculate position for aspect-constrained resize if rotated
+            if (node.rotation && node.rotation !== 0) {
+                const angle = node.rotation * Math.PI / 180;
+                const cos = Math.cos(angle);
+                const sin = Math.sin(angle);
+                
+                // Calculate anchor point again
+                const anchorLocalX = -initial.size[0] / 2;
+                const anchorLocalY = -initial.size[1] / 2;
+                const centerX = initial.pos[0] + initial.size[0] / 2;
+                const centerY = initial.pos[1] + initial.size[1] / 2;
+                
+                const anchorX = centerX + anchorLocalX * cos - anchorLocalY * sin;
+                const anchorY = centerY + anchorLocalX * sin + anchorLocalY * cos;
+                
+                // Recalculate position with new aspect-constrained height
+                const newCenterX = anchorX + (newWidth / 2) * cos - (aspectHeight / 2) * sin;
+                const newCenterY = anchorY + (newWidth / 2) * sin + (aspectHeight / 2) * cos;
+                
+                newPosX = newCenterX - newWidth / 2;
+                newPosY = newCenterY - aspectHeight / 2;
+            }
+        }
+        
+        // Update position (for both rotated and non-rotated nodes)
+        node.pos[0] = newPosX;
+        node.pos[1] = newPosY;
+        
+        if (node.onResize) {
+            node.onResize();
+        }
+        
+        // Invalidate bounding box cache after single node resize
+        this.selection.invalidateBoundingBox();
     }
     
     updateMultiResize(mouseX, mouseY, shift, ctrl) {
@@ -747,9 +796,8 @@ class LGraphCanvas {
         let scaleY = newHeight / bh;
         
         if (!shift) {
-            // Uniform scaling - use minimum scale to maintain proportions
-            const scale = Math.min(scaleX, scaleY);
-            scaleX = scaleY = scale;
+            // Uniform scaling - use X scale (drag direction) to maintain proportions
+            scaleY = scaleX;
         }
         
         // Apply scaling to all selected nodes relative to bounding box
@@ -772,6 +820,112 @@ class LGraphCanvas {
         }
         
         // Invalidate bounding box cache after multi-resize
+        this.selection.invalidateBoundingBox();
+    }
+    
+    updateMultiResizeFromSingleHandle(mouseX, mouseY, shift, ctrl, draggedNode, draggedInitial) {
+        // This method handles when you drag an individual node handle in multi-selection context
+        // Each node scales by the same factor, but from its own anchor point (delta scaling)
+        
+        // Calculate how much the dragged node would resize using the same logic as individual resize
+        let scaleX, scaleY;
+        
+        if (draggedNode.rotation && draggedNode.rotation !== 0) {
+            // For rotated dragged node, transform mouse position to local coordinates
+            const angle = draggedNode.rotation * Math.PI / 180;
+            const cos = Math.cos(angle);
+            const sin = Math.sin(angle);
+            
+            // Calculate the top-left corner position in world coordinates (anchor point)
+            const anchorLocalX = -draggedInitial.size[0] / 2;
+            const anchorLocalY = -draggedInitial.size[1] / 2;
+            const centerX = draggedInitial.pos[0] + draggedInitial.size[0] / 2;
+            const centerY = draggedInitial.pos[1] + draggedInitial.size[1] / 2;
+            
+            const anchorX = centerX + anchorLocalX * cos - anchorLocalY * sin;
+            const anchorY = centerY + anchorLocalX * sin + anchorLocalY * cos;
+            
+            // Transform mouse position to local coordinate system relative to anchor
+            const dx = mouseX - anchorX;
+            const dy = mouseY - anchorY;
+            
+            // Rotate to get local coordinates
+            const localDx = dx * cos + dy * sin;
+            const localDy = -dx * sin + dy * cos;
+            
+            // Calculate new size based on local coordinates
+            const newWidth = Math.max(50, Math.abs(localDx));
+            const newHeight = Math.max(50, Math.abs(localDy));
+            
+            // Calculate scale factors
+            scaleX = newWidth / draggedInitial.size[0];
+            scaleY = newHeight / draggedInitial.size[1];
+        } else {
+            // No rotation on dragged node - simple calculation
+            const newWidth = Math.max(50, mouseX - draggedInitial.pos[0]);
+            const newHeight = Math.max(50, mouseY - draggedInitial.pos[1]);
+            
+            scaleX = newWidth / draggedInitial.size[0];
+            scaleY = newHeight / draggedInitial.size[1];
+        }
+        
+        if (!shift) {
+            // Uniform scaling - use X scale to maintain proportions
+            scaleY = scaleX;
+        }
+        
+        // Apply the same scale factors to all selected nodes, each from its own anchor
+        for (const node of this.selection.selectedNodes.values()) {
+            const initial = this.interactionState.resizing.initial.get(node.id);
+            if (!initial) continue;
+            
+            // Calculate new size using the same scale factors
+            const newWidth = Math.max(50, initial.size[0] * scaleX);
+            const newHeight = Math.max(50, initial.size[1] * scaleY);
+            
+            // For delta scaling, handle position based on rotation
+            let newPosX, newPosY;
+            
+            if (node.rotation && node.rotation !== 0) {
+                // For rotated nodes, maintain anchor point behavior (same as individual resize)
+                const angle = node.rotation * Math.PI / 180;
+                const cos = Math.cos(angle);
+                const sin = Math.sin(angle);
+                
+                // Calculate the top-left corner position in world coordinates (our anchor point)
+                const anchorLocalX = -initial.size[0] / 2;
+                const anchorLocalY = -initial.size[1] / 2;
+                const centerX = initial.pos[0] + initial.size[0] / 2;
+                const centerY = initial.pos[1] + initial.size[1] / 2;
+                
+                const anchorX = centerX + anchorLocalX * cos - anchorLocalY * sin;
+                const anchorY = centerY + anchorLocalX * sin + anchorLocalY * cos;
+                
+                // Calculate new position to keep anchor point fixed
+                const newCenterX = anchorX + (newWidth / 2) * cos - (newHeight / 2) * sin;
+                const newCenterY = anchorY + (newWidth / 2) * sin + (newHeight / 2) * cos;
+                
+                newPosX = newCenterX - newWidth / 2;
+                newPosY = newCenterY - newHeight / 2;
+            } else {
+                // No rotation: anchor point is simply the top-left corner - keep it exactly the same
+                newPosX = initial.pos[0]; // Keep top-left fixed - no change!
+                newPosY = initial.pos[1]; // Keep top-left fixed - no change!
+            }
+            
+            // Update node properties
+            node.size[0] = newWidth;
+            node.size[1] = newHeight;
+            node.pos[0] = newPosX;
+            node.pos[1] = newPosY;
+            node.aspectRatio = node.size[0] / node.size[1];
+            
+            if (node.onResize) {
+                node.onResize();
+            }
+        }
+        
+        // Invalidate bounding box cache after multi-selection resize
         this.selection.invalidateBoundingBox();
     }
     
@@ -821,6 +975,9 @@ class LGraphCanvas {
                 
                 node.rotation = newRotation % 360;
             }
+            
+            // Invalidate bounding box cache during rotation
+            this.selection.invalidateBoundingBox();
         } else {
             // Multi-rotation: rotate around group center
             
@@ -852,6 +1009,9 @@ class LGraphCanvas {
                 // Rotate node itself (no snapping for individual rotation in group mode)
                 node.rotation = (initialState.rotation + deltaDegrees) % 360;
             }
+            
+            // Invalidate bounding box cache during multi-rotation
+            this.selection.invalidateBoundingBox();
         }
     }
     
@@ -1331,6 +1491,13 @@ class LGraphCanvas {
                         node.setVideo(cached, nodeData.properties.filename, nodeData.properties.hash);
                     } else if (node.setImage) {
                         node.setImage(cached, nodeData.properties.filename, nodeData.properties.hash);
+                    }
+                } else {
+                    // If thumbnails already exist for this hash, set loading state to complete
+                    // This prevents showing loading rings for duplicated nodes
+                    if (window.thumbnailCache && window.thumbnailCache.hasThumbnails(nodeData.properties.hash)) {
+                        node.loadingState = 'loaded';
+                        node.loadingProgress = 1.0;
                     }
                 }
             }
@@ -1869,10 +2036,8 @@ class LGraphCanvas {
         ctx.strokeRect(0, 0, node.size[0], node.size[1]);
         
         // Draw handles if node is large enough and not during alignment animations
-        // For performance: limit individual handles when many nodes are selected
         const shouldDrawHandles = this.handleDetector.shouldShowHandles(node) && 
-                                 (!this.alignmentManager || !this.alignmentManager.isAnimating()) &&
-                                 (this.selection.size() <= 5); // Only draw individual handles for 5 or fewer nodes
+                                 (!this.alignmentManager || !this.alignmentManager.isAnimating());
         
         if (shouldDrawHandles) {
             this.drawNodeHandles(ctx, node);

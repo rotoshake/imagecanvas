@@ -90,3 +90,4 @@ To add a new node type:
 - State includes node positions, properties, and canvas view
 - The application handles high-DPI displays automatically
 - File reading is done through FileReader API (no server required)
+- Supports MOV video files (QuickTime container with MP4/H.264 content)

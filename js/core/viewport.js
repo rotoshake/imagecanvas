@@ -12,6 +12,11 @@ class ViewportManager {
         // Validation bounds
         this.maxOffset = 1000000; // Prevent extreme offset values
         
+        // Movement tracking for LOD optimization
+        this.isAnimating = false;
+        this.lastMovementTime = 0;
+        this.movementTimeout = null;
+        
         this.setupEventListeners();
         this.validateState();
     }
@@ -260,5 +265,21 @@ class ViewportManager {
             viewport: this.getViewport(),
             canvasSize: this.getScreenBounds()
         };
+    }
+
+    notifyMovement() {
+        // Track when viewport is moving for LOD optimization
+        this.lastMovementTime = performance.now();
+        
+        // Clear existing timeout
+        if (this.movementTimeout) {
+            clearTimeout(this.movementTimeout);
+        }
+        
+        // Set isAnimating flag and clear it after movement stops
+        this.isAnimating = true;
+        this.movementTimeout = setTimeout(() => {
+            this.isAnimating = false;
+        }, 100); // Consider movement stopped after 100ms of no updates
     }
 }

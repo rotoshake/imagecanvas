@@ -107,16 +107,46 @@ class BaseNode {
     
     // Drawing utilities
     drawPlaceholder(ctx, text) {
-        ctx.save();
-        ctx.fillStyle = '#cccccc';
+        ctx.fillStyle = '#444';
         ctx.fillRect(0, 0, this.size[0], this.size[1]);
         
-        ctx.fillStyle = '#666666';
-        ctx.font = '16px sans-serif';
+        ctx.fillStyle = '#888';
+        ctx.font = '14px Arial';
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
         ctx.fillText(text, this.size[0] / 2, this.size[1] / 2);
-        ctx.restore();
+    }
+    
+    drawProgressRing(ctx, progress = 0) {
+        // Draw semi-transparent background
+        ctx.fillStyle = '#333';
+        ctx.fillRect(0, 0, this.size[0], this.size[1]);
+        
+        const centerX = this.size[0] / 2;
+        const centerY = this.size[1] / 2;
+        const radius = Math.min(this.size[0], this.size[1]) * 0.15; // 15% of smallest dimension
+        
+        // Make line width screen-space aware
+        const scale = this.graph?.canvas?.viewport?.scale || 1;
+        const lineWidth = 3 / scale; // Consistent thickness regardless of zoom
+        
+        // Draw background ring
+        ctx.beginPath();
+        ctx.arc(centerX, centerY, radius, 0, Math.PI * 2);
+        ctx.strokeStyle = 'rgba(255, 255, 255, 0.2)';
+        ctx.lineWidth = lineWidth;
+        ctx.stroke();
+        
+        // Draw progress ring (radial fill)
+        if (progress > 0) {
+            ctx.beginPath();
+            // Start from top (-PI/2) and fill clockwise
+            const endAngle = -Math.PI / 2 + (progress * Math.PI * 2);
+            ctx.arc(centerX, centerY, radius, -Math.PI / 2, endAngle);
+            ctx.strokeStyle = 'rgba(255, 255, 255, 0.9)';
+            ctx.lineWidth = lineWidth;
+            ctx.stroke();
+        }
     }
     
     drawTitle(ctx) {

@@ -237,6 +237,29 @@ class HandleDetector {
         if (handle) {
             switch (handle.handleType) {
                 case 'resize':
+                    // For single node resize, adjust cursor based on rotation
+                    if (handle.type === 'single-resize' && handle.node && handle.node.rotation) {
+                        const rotation = ((handle.node.rotation % 360) + 360) % 360; // Normalize to 0-360
+                        
+                        // Map rotation to 8 cursor directions (every 45 degrees)
+                        if (rotation >= 337.5 || rotation < 22.5) {
+                            return 'se-resize'; // 0°
+                        } else if (rotation >= 22.5 && rotation < 67.5) {
+                            return 's-resize'; // 45°
+                        } else if (rotation >= 67.5 && rotation < 112.5) {
+                            return 'sw-resize'; // 90°
+                        } else if (rotation >= 112.5 && rotation < 157.5) {
+                            return 'w-resize'; // 135°
+                        } else if (rotation >= 157.5 && rotation < 202.5) {
+                            return 'nw-resize'; // 180°
+                        } else if (rotation >= 202.5 && rotation < 247.5) {
+                            return 'n-resize'; // 225°
+                        } else if (rotation >= 247.5 && rotation < 292.5) {
+                            return 'ne-resize'; // 270°
+                        } else {
+                            return 'e-resize'; // 315°
+                        }
+                    }
                     return 'se-resize';
                 case 'rotation':
                     return 'pointer';

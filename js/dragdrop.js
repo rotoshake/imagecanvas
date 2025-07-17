@@ -8,7 +8,7 @@ class DragDropManager {
         this.graph = graph;
         this.acceptedTypes = new Set([
             'image/jpeg', 'image/jpg', 'image/png', 'image/webp', 'image/bmp',
-            'video/mp4', 'video/webm', 'video/ogg',
+            'video/mp4', 'video/webm', 'video/ogg', 'video/quicktime',
             'image/gif' // Treat GIF as video
         ]);
         
@@ -76,7 +76,7 @@ class DragDropManager {
         // Filter valid files
         const validFiles = files.filter(file => this.isValidFile(file));
         if (validFiles.length === 0) {
-            this.showErrorMessage('No supported files found. Supported formats: Images (JPG, PNG, WebP, BMP) and Videos (MP4, WebM, OGG, GIF)');
+            this.showErrorMessage('No supported files found. Supported formats: Images (JPG, PNG, WebP, BMP) and Videos (MP4, WebM, OGG, MOV, GIF)');
             return;
         }
         
@@ -117,19 +117,40 @@ class DragDropManager {
         const newNodes = [];
         const cascadeOffset = 40; // Offset for multiple files
         
+        // Show initial loading message
+        const progressNotification = this.showProgressMessage(0, files.length);
+        
+        // Process files one by one to maintain UI responsiveness
         for (let i = 0; i < files.length; i++) {
             const file = files[i];
             
             try {
+                // Update progress
+                this.updateProgressMessage(progressNotification, i, files.length, file.name);
+                
+                // Yield control to keep UI responsive - use requestAnimationFrame for better timing
+                await new Promise(resolve => requestAnimationFrame(resolve));
+                
                 const node = await this.createNodeFromFile(file, dropPos, i * cascadeOffset);
                 if (node) {
                     this.graph.add(node);
                     newNodes.push(node);
+                    
+                    // Trigger redraw to show new node immediately
+                    if (this.graph.canvas) {
+                        this.graph.canvas.dirty_canvas = true;
+                    }
+                    
+                    // Additional yield after adding each node for smoother experience
+                    await new Promise(resolve => requestAnimationFrame(resolve));
                 }
             } catch (error) {
                 console.error('Failed to create node from file:', file.name, error);
             }
         }
+        
+        // Update final progress
+        this.updateProgressMessage(progressNotification, files.length, files.length, 'Complete!');
         
         // Select all new nodes
         if (newNodes.length > 0) {
@@ -141,7 +162,12 @@ class DragDropManager {
             }
         }
         
-        this.showSuccessMessage(`Added ${newNodes.length} of ${files.length} files`);
+        // Hide progress notification after a short delay
+        setTimeout(() => {
+            if (progressNotification && progressNotification.remove) {
+                progressNotification.remove();
+            }
+        }, 1000);
     }
     
     async createNodeFromFile(file, basePos, offset) {
@@ -229,7 +255,7 @@ class DragDropManager {
             <div class="drop-indicator">
                 <div class="drop-icon">📁</div>
                 <div class="drop-text">Drop images or videos here</div>
-                <div class="drop-subtext">Supported: JPG, PNG, WebP, BMP, MP4, WebM, GIF</div>
+                <div class="drop-subtext">Supported: JPG, PNG, WebP, BMP, MP4, WebM, MOV, GIF</div>
             </div>
         `;
         
@@ -284,6 +310,64 @@ class DragDropManager {
     
     showSuccessMessage(message) {
         this.showMessage(message, 'success');
+    }
+    
+    showProgressMessage(current, total) {
+        const notification = document.createElement('div');
+        notification.className = 'drag-drop-progress';
+        
+        // Style the notification
+        Object.assign(notification.style, {
+            position: 'fixed',
+            top: '20px',
+            right: '20px',
+            padding: '16px 24px',
+            borderRadius: '8px',
+            color: 'white',
+            backgroundColor: '#339af0',
+            fontFamily: 'Arial, sans-serif',
+            fontSize: '14px',
+            zIndex: '10000',
+            opacity: '0',
+            transform: 'translateY(-20px)',
+            transition: 'all 0.3s ease',
+            maxWidth: '320px',
+            wordWrap: 'break-word',
+            boxShadow: '0 4px 12px rgba(0,0,0,0.3)'
+        });
+        
+        document.body.appendChild(notification);
+        
+        // Animate in
+        requestAnimationFrame(() => {
+            notification.style.opacity = '1';
+            notification.style.transform = 'translateY(0)';
+        });
+        
+        return notification;
+    }
+    
+    updateProgressMessage(notification, current, total, filename = '') {
+        const percentage = Math.round((current / total) * 100);
+        const progressBar = '█'.repeat(Math.floor(percentage / 5)) + '░'.repeat(20 - Math.floor(percentage / 5));
+        
+        notification.innerHTML = `
+            <div style="margin-bottom: 8px;">Loading images: ${current}/${total} (${percentage}%)</div>
+            <div style="font-family: monospace; font-size: 12px; margin-bottom: 8px;">${progressBar}</div>
+            <div style="font-size: 12px; opacity: 0.8; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${filename}</div>
+        `;
+    }
+    
+    hideProgressMessage(notification) {
+        if (notification && notification.parentNode) {
+            notification.style.opacity = '0';
+            notification.style.transform = 'translateY(-20px)';
+            setTimeout(() => {
+                if (notification.parentNode) {
+                    notification.parentNode.removeChild(notification);
+                }
+            }, 300);
+        }
     }
     
     showMessage(message, type = 'info') {

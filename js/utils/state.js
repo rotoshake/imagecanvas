@@ -110,6 +110,24 @@ class StateManager {
         };
     }
     
+    serializeUndoState(graph, canvas) {
+        // Undo states don't include viewport - only node changes
+        return {
+            nodes: graph.nodes.map(node => ({
+                id: node.id,
+                type: node.type,
+                pos: [...node.pos],
+                size: [...node.size],
+                aspectRatio: node.aspectRatio,
+                rotation: node.rotation,
+                properties: this.serializeProperties(node),
+                flags: { ...node.flags },
+                title: node.title
+            })),
+            timestamp: Date.now()
+        };
+    }
+    
     serializeProperties(node) {
         if (node.type === 'media/image' || node.type === 'media/video') {
             // Only store hash and filename, not the data URL
@@ -277,7 +295,7 @@ class StateManager {
                 this.undoStack = [];
             }
             
-            const state = this.serializeState(graph, canvas);
+            const state = this.serializeUndoState(graph, canvas); // Use undo-specific serialization
             const stateString = JSON.stringify(state);
             
             this.undoStack.push(stateString);
