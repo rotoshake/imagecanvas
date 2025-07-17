@@ -36,6 +36,14 @@ class ImageCanvasApp {
             // Load saved state
             await this.stateManager.loadState(this.graph, this.graphCanvas);
             
+            // Initialize collaborative features (Phase 2)
+            if (typeof CollaborativeManager !== 'undefined') {
+                this.collaborativeManager = new CollaborativeManager(this);
+                console.log('🤝 Collaborative features initialized');
+            } else {
+                console.log('📱 Running in single-user mode (collaborative features not loaded)');
+            }
+            
             // Setup auto-save
             this.setupAutoSave();
             
@@ -119,6 +127,12 @@ class ImageCanvasApp {
         console.log('- window.imageCache - access image cache');
         console.log('- window.app - access main app instance');
         console.log('- window.lcanvas - access canvas instance');
+        console.log('');
+        console.log('🤝 Collaborative Features (Phase 2):');
+        console.log('- Real-time multi-user editing with conflict resolution');
+        console.log('- Live cursor and selection sharing');
+        console.log('- Operational transformation for seamless collaboration');
+        console.log('- Check the collaboration panel (top-right) for connection status');
     }
 }
 

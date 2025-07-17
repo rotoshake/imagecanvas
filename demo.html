@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ImageCanvas Collaborative Demo</title>
+    <link rel="stylesheet" href="css/app.css">
+    <style>
+        body {
+            background: #111;
+            color: #ccc;
+        }
+        
+        .demo-header {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            background: rgba(0, 0, 0, 0.9);
+            padding: 10px 20px;
+            border-bottom: 1px solid #333;
+            z-index: 9999;
+        }
+        
+        .demo-header h1 {
+            margin: 0;
+            font-size: 18px;
+            color: #7ed321;
+        }
+        
+        .demo-header p {
+            margin: 5px 0 0 0;
+            font-size: 12px;
+            color: #999;
+        }
+        
+        #mycanvas {
+            margin-top: 60px;
+            height: calc(100vh - 60px);
+        }
+        
+        .demo-instructions {
+            position: fixed;
+            bottom: 10px;
+            left: 10px;
+            background: rgba(0, 0, 0, 0.8);
+            padding: 10px;
+            border-radius: 5px;
+            font-size: 11px;
+            max-width: 300px;
+        }
+    </style>
+</head>
+<body>
+    <div class="demo-header">
+        <h1>🚀 ImageCanvas Phase 2: Collaborative Demo</h1>
+        <p>Real-time multi-user image/video canvas with operational transformation</p>
+    </div>
+    
+    <canvas id="mycanvas"></canvas>
+    
+    <div class="demo-instructions">
+        <strong>🎯 Demo Features:</strong><br>
+        • Drag & drop images/videos to test real-time sync<br>
+        • Open multiple browser tabs to simulate users<br>
+        • Watch live cursor tracking and selections<br>
+        • Try collaborative editing with conflict resolution<br>
+        <br>
+        <strong>⚡ Phase 2 Highlights:</strong><br>
+        • SQLite + Socket.IO backend<br>
+        • Operational transformation<br>
+        • Real-time presence indicators<br>
+        • Seamless offline/online transitions
+    </div>
+    
+    <!-- Core utilities -->
+    <script src="js/utils/config.js"></script>
+    <script src="js/utils/utils.js"></script>
+    <script src="js/utils/cache.js"></script>
+    <script src="js/utils/state.js"></script>
+    
+    <!-- Core systems -->
+    <script src="js/core/animation.js"></script>
+    <script src="js/core/viewport.js"></script>
+    <script src="js/core/selection.js"></script>
+    <script src="js/core/handles.js"></script>
+    <script src="js/core/alignment.js"></script>
+    
+    <!-- Node classes -->
+    <script src="js/nodes/base-node.js"></script>
+    <script src="js/nodes/image-node.js"></script>
+    <script src="js/nodes/video-node.js"></script>
+    <script src="js/nodes/text-node.js"></script>
+    
+    <!-- Main application -->
+    <script src="js/graph.js"></script>
+    <script src="js/canvas.js"></script>
+    <script src="js/dragdrop.js"></script>
+    
+    <!-- Collaborative features (Phase 2) -->
+    <script src="http://localhost:3000/socket.io/socket.io.js"></script>
+    <script src="js/collaborative.js"></script>
+    
+    <script src="js/app.js"></script>
+    
+    <script>
+        // Demo-specific enhancements
+        window.addEventListener('load', () => {
+            console.log('🎬 ImageCanvas Collaborative Demo loaded!');
+            console.log('');
+            console.log('📋 To test collaboration:');
+            console.log('1. Open multiple browser tabs with this page');
+            console.log('2. Drag & drop images to see real-time sync');
+            console.log('3. Move nodes to see live updates');
+            console.log('4. Check the collaboration panel (top-right)');
+            console.log('');
+            console.log('🔧 Server endpoints:');
+            console.log('- Collaborative server: http://localhost:3000');
+            console.log('- WebSocket test: http://localhost:3000/test-websocket');
+            console.log('- Health check: http://localhost:3000/health');
+        });
+    </script>
+</body>
+</html> 
