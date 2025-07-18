@@ -1250,3 +1250,150 @@ handleSpecialPropertyUpdate(node, propertyName, value) {
 ✅ **Performance Optimized**: Efficient update mechanisms
 
 The ImageCanvas collaborative platform now provides complete real-time synchronization for all node types with enterprise-grade reliability, ensuring seamless multi-user editing experiences across text, video, and image content. 
+
+# July 2025: Enhanced Video Collaborative Controls & Multi-Node Property Sync
+
+## Latest Enhancements Summary
+Following the successful resolution of collaborative sync issues in February 2025, additional refinements were made to the video collaboration system, focusing on enhanced property broadcasting and multi-node control capabilities.
+
+### Enhanced Video Node Collaborative Methods
+
+**Individual Property Broadcasting:**
+- `setLoop(loop)` - Sets loop property with collaborative broadcast
+- `setMuted(muted)` - Sets mute property with collaborative broadcast  
+- `setAutoplay(autoplay)` - Sets autoplay property with collaborative broadcast
+- `togglePlayback()` - Enhanced to broadcast play/pause state changes
+
+**Technical Implementation:**
+```javascript
+setLoop(loop) {
+    this.properties.loop = loop;
+    if (this.video) {
+        this.video.loop = loop;
+    }
+    
+    // Broadcast loop change for collaboration
+    if (this.graph?.canvas?.broadcastNodePropertyUpdate) {
+        this.graph.canvas.broadcastNodePropertyUpdate(this.id, 'loop', loop);
+    }
+}
+```
+
+### Multi-Video Selection Controls
+
+**Enhanced Multi-Video Support:**
+- Double-click on one video in a multi-selection now controls all selected videos
+- State synchronization across multiple video nodes simultaneously
+- Consistent playback control for grouped video editing workflows
+
+**Implementation:**
+```javascript
+// In onDoubleClick - special handling for video nodes with multi-selection
+if (node.type === 'media/video' && this.selection.size() > 1) {
+    // Toggle the clicked video and get its new state
+    const clickedVideoState = node.properties.paused;
+    
+    // Apply same state to all other selected video nodes
+    const selectedNodes = this.selection.getSelectedNodes();
+    for (const selectedNode of selectedNodes) {
+        if (selectedNode.type === 'media/video' && selectedNode.id !== node.id) {
+            clickedVideoState ? selectedNode.pause() : selectedNode.play();
+            this.broadcastVideoToggle(selectedNode.id, clickedVideoState);
+        }
+    }
+}
+```
+
+### Real-Time Property Update System
+
+**New Operation Type: `node_property_update`**
+- Supports both single and multi-node property updates
+- Handles node-specific property behaviors automatically
+- Integrates with existing sequence tracking and conflict resolution
+- Optimized for real-time property changes during editing
+
+**Broadcasting Architecture:**
+```javascript
+broadcastNodePropertyUpdate(nodeIds, propertyName, values) {
+    if (Array.isArray(nodeIds) && Array.isArray(values)) {
+        // Multi-node property update
+        this.collaborativeManager.sendOperation('node_property_update', {
+            nodeIds: nodeIds,
+            propertyName: propertyName,
+            values: values
+        });
+    } else {
+        // Single node property update  
+        this.collaborativeManager.sendOperation('node_property_update', {
+            nodeId: nodeIds,
+            propertyName: propertyName,
+            value: values
+        });
+    }
+}
+```
+
+### Video State Management Improvements
+
+**Enhanced Video Element Integration:**
+- Direct video element property synchronization for loop, mute, autoplay
+- Proper handling of HTML5 video element state changes
+- Backward compatibility with existing `userPaused` flag system
+- Graceful handling of autoplay restrictions
+
+**State Synchronization:**
+```javascript
+handleSpecialPropertyUpdate(node, propertyName, value) {
+    if (node.type === 'media/video' && node.video) {
+        if (propertyName === 'paused') {
+            value ? node.video.pause() : node.video.play().catch(() => {});
+        } else if (propertyName === 'loop') {
+            node.video.loop = value;
+        } else if (propertyName === 'muted') {
+            node.video.muted = value;
+        }
+    }
+}
+```
+
+## Technical Accomplishments
+
+### Performance Optimizations
+✅ **Efficient Property Updates**: Individual property broadcasting vs full node sync  
+✅ **Multi-Node Operations**: Batch property updates for selected node groups  
+✅ **Real-time Responsiveness**: Debounced property updates prevent excessive broadcasts  
+✅ **Backward Compatibility**: Maintains compatibility with existing video controls
+
+### Collaboration Features  
+✅ **Complete Video Property Sync**: All video controls (play/pause, loop, mute, autoplay)  
+✅ **Multi-Video Group Control**: Simultaneous control of multiple selected videos  
+✅ **Real-time Property Broadcasting**: Live property updates across all users  
+✅ **Type-Safe Operations**: Node-specific property handling and validation
+
+### User Experience Improvements
+✅ **Intuitive Multi-Selection**: Natural video control behavior for grouped selections  
+✅ **Consistent State Management**: Reliable video state synchronization  
+✅ **Professional Workflow**: Enhanced support for video editing workflows  
+✅ **Seamless Integration**: Property updates integrated with existing undo/redo system
+
+## Final Collaborative System State
+
+**Complete Real-Time Collaboration Support:**
+- ✅ **Text Nodes**: Live text editing, font changes, color updates, auto-resize sync
+- ✅ **Image Nodes**: Transform operations, property updates, multi-selection support  
+- ✅ **Video Nodes**: Full playback controls, property sync, multi-video operations
+- ✅ **Node Operations**: Create, move, resize, rotate, delete, align, duplicate
+- ✅ **Selection Management**: Multi-user selection awareness and coordination
+- ✅ **Property Broadcasting**: Real-time individual property updates
+- ✅ **State Management**: Comprehensive sync with conflict resolution
+- ✅ **Performance**: Optimized for professional multi-user workflows
+
+### Architecture Maturity
+The ImageCanvas collaborative platform has reached enterprise-grade maturity with:
+- **Complete Feature Coverage**: All node types and operations fully synchronized
+- **Professional Workflows**: Multi-node operations and group controls
+- **Robust Error Handling**: Comprehensive sync failure recovery and retry mechanisms  
+- **Performance Optimization**: Efficient property-level updates and smart caching
+- **User Experience**: Intuitive multi-user editing with real-time feedback
+
+ImageCanvas now provides a complete real-time collaborative editing experience for professional media manipulation workflows, supporting simultaneous multi-user editing with enterprise-grade reliability and performance. 

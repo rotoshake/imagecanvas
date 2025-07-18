@@ -523,6 +523,9 @@ class CollaborativeManager {
                 case 'selection_change':
                     this.applySelectionChange(operationData);
                     break;
+                case 'layer_order_change':
+                    this.applyLayerOrderChange(operationData);
+                    break;
                 default:
                     console.warn('Unknown operation type:', type);
             }
@@ -760,17 +763,48 @@ class CollaborativeManager {
     }
     
     loadNodeMedia(node, nodeData) {
-        // Load media from server or cache
-        if (nodeData.properties.hash) {
-            // Use server filename if available, otherwise try original filename
-            const filename = nodeData.properties.serverFilename || nodeData.properties.filename;
-            const serverUrl = `http://localhost:3000/uploads/${filename}`;
-            
-            if (node.type === 'media/video' && node.setVideo) {
-                node.setVideo(serverUrl, nodeData.properties.filename, nodeData.properties.hash);
-            } else if (node.type === 'media/image' && node.setImage) {
-                node.setImage(serverUrl, nodeData.properties.filename, nodeData.properties.hash);
+        const hash = nodeData.properties.hash;
+        const filename = nodeData.properties.filename;
+        const isVideo = nodeData.type === 'media/video';
+        
+        if (!hash) return;
+        
+        // Try to get from cache first
+        if (window.imageCache) {
+            const cached = window.imageCache.get(hash);
+            if (cached) {
+                if (isVideo && node.setVideo) {
+                    node.setVideo(cached, filename, hash);
+                } else if (node.setImage) {
+                    node.setImage(cached, filename, hash);
+                }
+                return;
             }
+        }
+        
+        // Set loading state
+        if (window.thumbnailCache && window.thumbnailCache.hasThumbnails(hash)) {
+            node.loadingState = 'loaded';
+            node.loadingProgress = 1.0;
+        } else {
+            node.loadingState = 'loading';
+            node.loadingProgress = 0;
+        }
+        
+        // Load from server
+        const serverFilename = nodeData.properties.serverFilename || filename;
+        const serverUrl = `http://localhost:3000/uploads/${serverFilename}`;
+        
+        if (isVideo && node.setVideo) {
+            node.setVideo(serverUrl, filename, hash).catch(() => {
+                console.warn('Failed to load collaborative video:', filename);
+                node.loadingState = 'error';
+            });
+        } else if (node.setImage) {
+            node.setImage(serverUrl, filename, hash).catch(() => {
+                console.warn('Failed to load collaborative image:', filename);
+                node.loadingState = 'error';
+            });
         }
     }
     
@@ -806,8 +840,21 @@ class CollaborativeManager {
                     this.graph.lastNodeId = node.id;
                 }
                 
+                // Handle media nodes that need to load content
+                if ((nodeData.type === 'media/image' || nodeData.type === 'media/video') && nodeData.properties.hash) {
+                    // Use the canvas's media loading logic for consistency
+                    if (this.canvas && this.canvas.loadMediaForNode) {
+                        this.canvas.loadMediaForNode(node, nodeData);
+                    } else {
+                        // Fallback to the local method
+                        this.loadNodeMedia(node, nodeData);
+                    }
+                }
+                
                 // Add to graph
                 this.graph.add(node);
+                
+                console.log('✅ Created collaborative node:', nodeData.title || nodeData.type);
             }
         }
     }
@@ -958,6 +1005,28 @@ class CollaborativeManager {
         // Mark node as dirty for re-rendering
         if (node.markDirty) {
             node.markDirty();
+        }
+    }
+    
+    applyLayerOrderChange(operationData) {
+        const { nodeIds, direction, newLayerOrder } = operationData;
+        
+        if (newLayerOrder && Array.isArray(newLayerOrder)) {
+            // Apply the complete new layer order
+            const reorderedNodes = [];
+            
+            // Reorder nodes according to the new layer order
+            for (const nodeId of newLayerOrder) {
+                const node = this.graph.getNodeById(nodeId);
+                if (node) {
+                    reorderedNodes.push(node);
+                }
+            }
+            
+            // Update the graph's nodes array with the new order
+            this.graph.nodes = reorderedNodes;
+            
+            console.log(`🔄 Applied layer order change for ${nodeIds.length} nodes (${direction})`);
         }
     }
     

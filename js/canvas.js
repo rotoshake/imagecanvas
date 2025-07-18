@@ -1264,16 +1264,40 @@ class LGraphCanvas {
     paste() {
         if (!this.clipboard || this.clipboard.length === 0) return;
         
-        const offset = 20;
+        // Get current mouse position in graph coordinates
+        const mouseGraphPos = this.mouseState?.graph || [0, 0];
         const newNodes = [];
+        
+        // Calculate the center of the clipboard content
+        let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+        for (const nodeData of this.clipboard) {
+            minX = Math.min(minX, nodeData.pos[0]);
+            minY = Math.min(minY, nodeData.pos[1]);
+            maxX = Math.max(maxX, nodeData.pos[0] + nodeData.size[0]);
+            maxY = Math.max(maxY, nodeData.pos[1] + nodeData.size[1]);
+        }
+        
+        const clipboardCenter = [(minX + maxX) / 2, (minY + maxY) / 2];
         
         for (const nodeData of this.clipboard) {
             const node = this.deserializeNode(nodeData);
             if (node) {
-                node.pos[0] += offset;
-                node.pos[1] += offset;
+                // Position relative to mouse instead of fixed offset
+                const offsetFromCenter = [
+                    nodeData.pos[0] - clipboardCenter[0],
+                    nodeData.pos[1] - clipboardCenter[1]
+                ];
+                
+                node.pos[0] = mouseGraphPos[0] + offsetFromCenter[0];
+                node.pos[1] = mouseGraphPos[1] + offsetFromCenter[1];
+                
                 this.graph.add(node);
                 newNodes.push(node);
+                
+                // Broadcast node creation for collaboration
+                if (this.collaborativeManager?.enableCollaboration) {
+                    this.broadcastNodeCreate(node);
+                }
             }
         }
         
@@ -1442,20 +1466,184 @@ class LGraphCanvas {
     
     moveSelectedUp() {
         const selected = this.selection.getSelectedNodes();
-        if (selected.length !== 1) return;
+        if (selected.length === 0) return;
         
-        this.graph.moveNodeUp(selected[0]);
         this.pushUndoState();
+        
+        if (selected.length === 1) {
+            // Single node: smart overlapping detection
+            this.moveNodeUpSmart(selected[0]);
+        } else {
+            // Multiple nodes: group layer movement
+            this.moveGroupUp(selected);
+        }
+        
+        // Broadcast layer order change for collaboration
+        this.broadcastLayerOrderChange(selected, 'up');
+        
         this.dirty_canvas = true;
     }
     
     moveSelectedDown() {
         const selected = this.selection.getSelectedNodes();
-        if (selected.length !== 1) return;
+        if (selected.length === 0) return;
         
-        this.graph.moveNodeDown(selected[0]);
         this.pushUndoState();
+        
+        if (selected.length === 1) {
+            // Single node: smart overlapping detection
+            this.moveNodeDownSmart(selected[0]);
+        } else {
+            // Multiple nodes: group layer movement
+            this.moveGroupDown(selected);
+        }
+        
+        // Broadcast layer order change for collaboration
+        this.broadcastLayerOrderChange(selected, 'down');
+        
         this.dirty_canvas = true;
+    }
+    
+    // ===================================
+    // SMART LAYER ORDERING
+    // ===================================
+    
+    getOverlappingNodes(targetNode) {
+        const [tx, ty, tw, th] = targetNode.getBoundingBox();
+        const overlapping = [];
+        
+        for (const node of this.graph.nodes) {
+            if (node === targetNode) continue;
+            
+            const [nx, ny, nw, nh] = node.getBoundingBox();
+            
+            // Check if bounding boxes overlap
+            if (tx < nx + nw && tx + tw > nx && ty < ny + nh && ty + th > ny) {
+                overlapping.push(node);
+            }
+        }
+        
+        overlapping.push(targetNode); // Include the target node itself
+        return overlapping;
+    }
+    
+    moveNodeUpSmart(node) {
+        const overlapping = this.getOverlappingNodes(node);
+        
+        if (overlapping.length <= 1) {
+            // No overlapping nodes, use regular movement
+            this.graph.moveNodeUp(node);
+            return;
+        }
+        
+        // Sort overlapping nodes by their current layer order (position in nodes array)
+        overlapping.sort((a, b) => this.graph.nodes.indexOf(a) - this.graph.nodes.indexOf(b));
+        
+        const currentIndex = overlapping.indexOf(node);
+        if (currentIndex < overlapping.length - 1) {
+            // Move to next position in overlapping group
+            const nextNode = overlapping[currentIndex + 1];
+            this.swapNodeLayers(node, nextNode);
+        }
+        // If already at top of overlapping group, do nothing
+    }
+    
+    moveNodeDownSmart(node) {
+        const overlapping = this.getOverlappingNodes(node);
+        
+        if (overlapping.length <= 1) {
+            // No overlapping nodes, use regular movement
+            this.graph.moveNodeDown(node);
+            return;
+        }
+        
+        // Sort overlapping nodes by their current layer order (position in nodes array)
+        overlapping.sort((a, b) => this.graph.nodes.indexOf(a) - this.graph.nodes.indexOf(b));
+        
+        const currentIndex = overlapping.indexOf(node);
+        if (currentIndex > 0) {
+            // Move to previous position in overlapping group
+            const prevNode = overlapping[currentIndex - 1];
+            this.swapNodeLayers(node, prevNode);
+        }
+        // If already at bottom of overlapping group, do nothing
+    }
+    
+    swapNodeLayers(nodeA, nodeB) {
+        const indexA = this.graph.nodes.indexOf(nodeA);
+        const indexB = this.graph.nodes.indexOf(nodeB);
+        
+        if (indexA !== -1 && indexB !== -1) {
+            [this.graph.nodes[indexA], this.graph.nodes[indexB]] = [this.graph.nodes[indexB], this.graph.nodes[indexA]];
+        }
+    }
+    
+    moveGroupUp(selectedNodes) {
+        // Sort selected nodes by current layer order
+        const sortedNodes = [...selectedNodes].sort((a, b) => 
+            this.graph.nodes.indexOf(a) - this.graph.nodes.indexOf(b)
+        );
+        
+        // Find the topmost selected node
+        const topNode = sortedNodes[sortedNodes.length - 1];
+        const topIndex = this.graph.nodes.indexOf(topNode);
+        
+        // Find next non-selected node above the group
+        let targetIndex = topIndex + 1;
+        while (targetIndex < this.graph.nodes.length && 
+               selectedNodes.includes(this.graph.nodes[targetIndex])) {
+            targetIndex++;
+        }
+        
+        if (targetIndex < this.graph.nodes.length) {
+            // Move entire group past the next non-selected node
+            this.moveGroupToPosition(sortedNodes, targetIndex + 1 - sortedNodes.length);
+        }
+        // If group is already at the top, do nothing
+    }
+    
+    moveGroupDown(selectedNodes) {
+        // Sort selected nodes by current layer order
+        const sortedNodes = [...selectedNodes].sort((a, b) => 
+            this.graph.nodes.indexOf(a) - this.graph.nodes.indexOf(b)
+        );
+        
+        // Find the bottommost selected node
+        const bottomNode = sortedNodes[0];
+        const bottomIndex = this.graph.nodes.indexOf(bottomNode);
+        
+        // Find next non-selected node below the group
+        let targetIndex = bottomIndex - 1;
+        while (targetIndex >= 0 && 
+               selectedNodes.includes(this.graph.nodes[targetIndex])) {
+            targetIndex--;
+        }
+        
+        if (targetIndex >= 0) {
+            // Move entire group behind the next non-selected node
+            this.moveGroupToPosition(sortedNodes, targetIndex);
+        }
+        // If group is already at the bottom, do nothing
+    }
+    
+    moveGroupToPosition(nodesToMove, insertIndex) {
+        // Remove all nodes from their current positions
+        const nodes = this.graph.nodes;
+        for (const node of nodesToMove) {
+            const index = nodes.indexOf(node);
+            if (index !== -1) {
+                nodes.splice(index, 1);
+                // Adjust insert index if we removed a node before it
+                if (index < insertIndex) {
+                    insertIndex--;
+                }
+            }
+        }
+        
+        // Insert all nodes at the new position in their original relative order
+        for (let i = 0; i < nodesToMove.length; i++) {
+            nodes.splice(insertIndex + i, 0, nodesToMove[i]);
+        }
     }
     
     createTextNodeAtCenter() {
@@ -1521,7 +1709,7 @@ class LGraphCanvas {
     }
     
     serializeNode(node) {
-        return {
+        const serialized = {
             type: node.type,
             pos: [...node.pos],
             size: [...node.size],
@@ -1531,6 +1719,77 @@ class LGraphCanvas {
             aspectRatio: node.aspectRatio,
             rotation: node.rotation
         };
+        
+        // Preserve original source for media nodes to enable proper duplication
+        if ((node.type === 'media/image' || node.type === 'media/video') && node.properties.src) {
+            serialized.properties.originalSrc = node.properties.src;
+        }
+        
+        return serialized;
+    }
+    
+    loadMediaForNode(node, nodeData) {
+        const hash = nodeData.properties.hash;
+        const filename = nodeData.properties.filename;
+        const isVideo = nodeData.type === 'media/video';
+        
+        // Try to get from cache first
+        if (window.imageCache) {
+            const cached = window.imageCache.get(hash);
+            if (cached) {
+                if (isVideo && node.setVideo) {
+                    node.setVideo(cached, filename, hash);
+                } else if (node.setImage) {
+                    node.setImage(cached, filename, hash);
+                }
+                return;
+            }
+        }
+        
+        // If thumbnails exist, we can at least show those while loading
+        if (window.thumbnailCache && window.thumbnailCache.hasThumbnails(hash)) {
+            node.loadingState = 'loaded';
+            node.loadingProgress = 1.0;
+        } else {
+            node.loadingState = 'loading';
+            node.loadingProgress = 0;
+        }
+        
+        // Try to load from collaborative server if available
+        if (this.collaborativeManager?.isConnected) {
+            const serverUrl = `http://localhost:3000/uploads/${nodeData.properties.serverFilename || filename}`;
+            
+            if (isVideo && node.setVideo) {
+                node.setVideo(serverUrl, filename, hash).catch(() => {
+                    console.warn('Failed to load video from server:', filename);
+                    node.loadingState = 'error';
+                });
+            } else if (node.setImage) {
+                node.setImage(serverUrl, filename, hash).catch(() => {
+                    console.warn('Failed to load image from server:', filename);
+                    node.loadingState = 'error';
+                });
+            }
+        } else {
+            // Single-user mode: try to find original source
+            const originalSrc = nodeData.properties.originalSrc || nodeData.properties.src;
+            if (originalSrc) {
+                if (isVideo && node.setVideo) {
+                    node.setVideo(originalSrc, filename, hash).catch(() => {
+                        console.warn('Failed to load video from original source:', filename);
+                        node.loadingState = 'error';
+                    });
+                } else if (node.setImage) {
+                    node.setImage(originalSrc, filename, hash).catch(() => {
+                        console.warn('Failed to load image from original source:', filename);
+                        node.loadingState = 'error';
+                    });
+                }
+            } else {
+                console.warn('No source available for duplicated media node:', filename);
+                node.loadingState = 'error';
+            }
+        }
     }
     
     deserializeNode(nodeData) {
@@ -1552,23 +1811,7 @@ class LGraphCanvas {
         
         // Load media content if available
         if ((nodeData.type === 'media/image' || nodeData.type === 'media/video') && nodeData.properties.hash) {
-            if (window.imageCache) {
-                const cached = window.imageCache.get(nodeData.properties.hash);
-                if (cached) {
-                    if (nodeData.type === 'media/video' && node.setVideo) {
-                        node.setVideo(cached, nodeData.properties.filename, nodeData.properties.hash);
-                    } else if (node.setImage) {
-                        node.setImage(cached, nodeData.properties.filename, nodeData.properties.hash);
-                    }
-                } else {
-                    // If thumbnails already exist for this hash, set loading state to complete
-                    // This prevents showing loading rings for duplicated nodes
-                    if (window.thumbnailCache && window.thumbnailCache.hasThumbnails(nodeData.properties.hash)) {
-                        node.loadingState = 'loaded';
-                        node.loadingProgress = 1.0;
-                    }
-                }
-            }
+            this.loadMediaForNode(node, nodeData);
         }
         
         return node;
@@ -2534,19 +2777,26 @@ class LGraphCanvas {
     broadcastNodeCreate(node) {
         if (!this.collaborativeManager?.enableCollaboration) return;
         
-        this.collaborativeManager.sendOperation('node_create', {
-            nodeData: {
-                id: node.id,
-                type: node.type,
-                pos: [...node.pos],
-                size: [...node.size],
-                title: node.title,
-                properties: { ...node.properties },
-                flags: { ...node.flags },
-                aspectRatio: node.aspectRatio || 1,
-                rotation: node.rotation || 0
+        const nodeData = {
+            id: node.id,
+            type: node.type,
+            pos: [...node.pos],
+            size: [...node.size],
+            title: node.title,
+            properties: { ...node.properties },
+            flags: { ...node.flags },
+            aspectRatio: node.aspectRatio || 1,
+            rotation: node.rotation || 0
+        };
+        
+        // Ensure serverFilename is preserved for collaborative media loading
+        if ((node.type === 'media/image' || node.type === 'media/video') && node.properties.hash) {
+            if (!nodeData.properties.serverFilename && nodeData.properties.filename) {
+                nodeData.properties.serverFilename = nodeData.properties.filename;
             }
-        });
+        }
+        
+        this.collaborativeManager.sendOperation('node_create', { nodeData });
     }
     
     broadcastNodeReset(nodeIds, resetType, values) {
@@ -2604,5 +2854,18 @@ class LGraphCanvas {
                 value: Array.isArray(values) ? values[0] : values
             });
         }
+    }
+    
+    broadcastLayerOrderChange(nodes, direction) {
+        if (!this.collaborativeManager?.enableCollaboration) return;
+        
+        const nodeIds = nodes.map(node => node.id);
+        const layerOrder = this.graph.nodes.map(node => node.id);
+        
+        this.collaborativeManager.sendOperation('layer_order_change', {
+            nodeIds: nodeIds,
+            direction: direction,
+            newLayerOrder: layerOrder
+        });
     }
 }

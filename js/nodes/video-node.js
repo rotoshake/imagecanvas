@@ -341,8 +341,7 @@ class VideoNode extends BaseNode {
             this.video = null;
         }
         
-        // Clear thumbnails
-        this.thumbnails.clear();
+        // Note: Thumbnails are managed by global cache, no individual cleanup needed
     }
     
     // Get video metadata
