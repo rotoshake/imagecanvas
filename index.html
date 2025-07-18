@@ -4,10 +4,17 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>ImageCanvas</title>
+    <link rel="icon" href="data:,">
     <link rel="stylesheet" href="css/app.css">
 </head>
 <body>
     <canvas id="mycanvas"></canvas>
+    
+    <!-- Debug save button -->
+    <button onclick="if(window.app?.collaborativeManager) { window.app.collaborativeManager.markModified(); console.log('Manual save triggered'); }" 
+            style="position: fixed; bottom: 20px; right: 20px; padding: 10px 20px; background: #4CAF50; color: white; border: none; border-radius: 4px; cursor: pointer; z-index: 1000;">
+        Save Canvas
+    </button>
     
     <!-- Core utilities -->
     <script src="js/utils/config.js"></script>
@@ -38,7 +45,7 @@
         // Try to load Socket.IO from the collaborative server
         (function() {
             const script = document.createElement('script');
-            script.src = 'http://localhost:3000/socket.io/socket.io.js';
+            script.src = CONFIG.SERVER.API_BASE + '/socket.io/socket.io.js';
             script.onerror = function() {
                 console.warn('Collaborative server not available. Running in standalone mode.');
                 window.COLLABORATIVE_MODE = false;
@@ -51,6 +58,9 @@
         })();
     </script>
     <script src="js/collaborative.js"></script>
+    
+    <!-- UI Components -->
+    <script src="js/ui/canvas-navigator.js"></script>
     
     <script src="js/app.js"></script>
 </body>

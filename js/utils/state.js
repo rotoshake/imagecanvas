@@ -70,11 +70,14 @@ class StateManager {
         }
     }
     
-    async loadState(graph, canvas) {
+    async loadState(graph, canvas, externalState = null) {
         try {
             let state;
             
-            if (this.db) {
+            if (externalState) {
+                // Use provided state data
+                state = externalState;
+            } else if (this.db) {
                 state = await this.getFromDB(this.stateKey);
             } else {
                 const saved = localStorage.getItem(this.stateKey);

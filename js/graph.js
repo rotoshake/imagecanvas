@@ -35,6 +35,15 @@ class LGraph {
         // Notify canvas of change
         if (this.canvas) {
             this.canvas.dirty_canvas = true;
+            
+            // Mark as having unsaved changes for auto-save
+            if (this.canvas.collaborativeManager) {
+                this.canvas.collaborativeManager.hasUnsavedChanges = true;
+                // Trigger debounced save
+                if (this.canvas.collaborativeManager.debouncedSave) {
+                    this.canvas.collaborativeManager.debouncedSave();
+                }
+            }
         }
         
         return node;
@@ -61,6 +70,15 @@ class LGraph {
             // Notify canvas of change
             if (this.canvas) {
                 this.canvas.dirty_canvas = true;
+                
+                // Mark as having unsaved changes for auto-save
+                if (this.canvas.collaborativeManager) {
+                    this.canvas.collaborativeManager.hasUnsavedChanges = true;
+                    // Trigger debounced save
+                    if (this.canvas.collaborativeManager.debouncedSave) {
+                        this.canvas.collaborativeManager.debouncedSave();
+                    }
+                }
             }
         }
     }

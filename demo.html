@@ -123,8 +123,23 @@
     <canvas id="mycanvas" width="1200" height="800"></canvas>
 
     <!-- Core Dependencies -->
-    <script src="http://localhost:3000/socket.io/socket.io.js"></script>
     <script src="js/utils/config.js"></script>
+    <script>
+        // Load Socket.IO dynamically using config
+        (function() {
+            const script = document.createElement('script');
+            script.src = CONFIG.SERVER.API_BASE + '/socket.io/socket.io.js';
+            script.onerror = function() {
+                console.error('Failed to load Socket.IO. Collaborative features disabled.');
+                window.COLLABORATIVE_MODE = false;
+            };
+            script.onload = function() {
+                console.log('Socket.IO loaded successfully.');
+                window.COLLABORATIVE_MODE = true;
+            };
+            document.head.appendChild(script);
+        })();
+    </script>
     <script src="js/utils/utils.js"></script>
     <script src="js/utils/cache.js"></script>
     <script src="js/utils/state.js"></script>
@@ -147,6 +162,10 @@
     <script src="js/canvas.js"></script>
     <script src="js/dragdrop.js"></script>
     <script src="js/collaborative.js"></script>
+    
+    <!-- UI Components -->
+    <script src="js/ui/canvas-navigator.js"></script>
+    
     <script src="js/app.js"></script>
 
     <script>
@@ -154,12 +173,42 @@
         window.addEventListener('load', () => {
             setTimeout(() => {
                 console.log('🎯 ImageCanvas Collaborative Demo Started');
-                console.log('🌐 Server: http://localhost:3000');
+                console.log('🌐 Server:', CONFIG.SERVER.API_BASE);
                 console.log('👥 Multi-user editing enabled');
                 console.log('📱 Open multiple tabs to test collaboration');
                 
                 if (window.app) {
                     console.log('✅ Application initialized successfully');
+                    
+                    // For demo, auto-create or join a demo canvas
+                    setTimeout(async () => {
+                        if (window.canvasNavigator) {
+                            // Check if demo canvas exists
+                            await window.canvasNavigator.loadCanvases();
+                            const demoCanvas = window.canvasNavigator.canvases.find(c => c.name === 'Demo Canvas');
+                            
+                            if (demoCanvas) {
+                                // Load existing demo canvas
+                                await window.canvasNavigator.loadCanvas(demoCanvas.id);
+                            } else {
+                                // Create new demo canvas
+                                const response = await fetch(CONFIG.ENDPOINTS.PROJECTS, {
+                                    method: 'POST',
+                                    headers: { 'Content-Type': 'application/json' },
+                                    body: JSON.stringify({
+                                        name: 'Demo Canvas',
+                                        ownerId: 1,
+                                        description: 'Collaborative demo canvas'
+                                    })
+                                });
+                                
+                                if (response.ok) {
+                                    const newCanvas = await response.json();
+                                    await window.canvasNavigator.loadCanvas(newCanvas.id);
+                                }
+                            }
+                        }
+                    }, 1000);
                 } else {
                     console.error('❌ Application failed to initialize');
                 }

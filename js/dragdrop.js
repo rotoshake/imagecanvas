@@ -212,7 +212,7 @@ class DragDropManager {
                 // Upload to server - this will broadcast to other users
                 const uploadResult = await collaborativeManager.uploadMedia(file, nodeData);
                 if (uploadResult) {
-                    const mediaUrl = `http://localhost:3000${uploadResult.mediaUrl}`;
+                    const mediaUrl = `${CONFIG.SERVER.API_BASE}${uploadResult.mediaUrl}`;
                     
                     // Update node with server data
                     node.properties.hash = uploadResult.fileInfo.file_hash;

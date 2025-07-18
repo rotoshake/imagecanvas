@@ -2,13 +2,50 @@
 // GLOBAL CONFIGURATION
 // ===================================
 
+// Determine environment
+const isDevelopment = window.location.hostname === 'localhost' || 
+                     window.location.hostname === '127.0.0.1';
+
+// Dynamic server configuration
+const serverHost = isDevelopment ? 'localhost' : window.location.hostname;
+const serverPort = 3000;
+const serverProtocol = window.location.protocol === 'https:' ? 'https' : 'http';
+const wsProtocol = window.location.protocol === 'https:' ? 'wss' : 'ws';
+
 const CONFIG = {
+    // Server configuration
+    SERVER: {
+        HOST: serverHost,
+        PORT: serverPort,
+        PROTOCOL: serverProtocol,
+        WS_PROTOCOL: wsProtocol,
+        API_BASE: `${serverProtocol}://${serverHost}:${serverPort}`,
+        WS_URL: `${wsProtocol}://${serverHost}:${serverPort}`
+    },
+    
+    // Collaboration settings
+    COLLABORATION: {
+        ENABLED: true,
+        SYNC_INTERVAL: 30000, // 30 seconds
+        HEARTBEAT_INTERVAL: 5000, // 5 seconds
+        CURSOR_THROTTLE: 50, // ms
+        OPERATION_TIMEOUT: 5000, // 5 seconds
+        MAX_RECONNECT_ATTEMPTS: 5,
+        RECONNECT_DELAY: 1000, // 1 second, doubles each attempt
+        USER_COLORS: [
+            '#FF6B6B', '#4ECDC4', '#45B7D1', '#96CEB4', '#FECA57',
+            '#DDA0DD', '#98D8C8', '#F7DC6F', '#BB8FCE', '#85C1E2',
+            '#F8B739', '#6C5CE7', '#A29BFE', '#FD79A8', '#FDCB6E'
+        ]
+    },
+    
     CANVAS: {
         DEFAULT_SCALE: 1.0,
         MIN_SCALE: 0.05,
         MAX_SCALE: 10.0,
         GRID_SIZE: 20,
-        MIN_GRID_SCALE: 0.5
+        MIN_GRID_SCALE: 0.5,
+        AUTO_SAVE_INTERVAL: 5000 // 5 seconds backup save
     },
     
     PERFORMANCE: {
@@ -47,3 +84,28 @@ const CONFIG = {
         QUALITY: 'high'
     }
 };
+
+// API endpoint helpers
+CONFIG.ENDPOINTS = {
+    // Projects
+    PROJECTS: `${CONFIG.SERVER.API_BASE}/projects`,
+    PROJECT: (id) => `${CONFIG.SERVER.API_BASE}/projects/${id}`,
+    PROJECT_CANVAS: (id) => `${CONFIG.SERVER.API_BASE}/projects/${id}/canvas`,
+    USER_PROJECTS: (userId) => `${CONFIG.SERVER.API_BASE}/projects/user/${userId}`,
+    
+    // Media
+    UPLOAD: `${CONFIG.SERVER.API_BASE}/upload`,
+    UPLOADS: `${CONFIG.SERVER.API_BASE}/uploads`,
+    
+    // Health
+    HEALTH: `${CONFIG.SERVER.API_BASE}/health`,
+    WS_TEST: `${CONFIG.SERVER.API_BASE}/test-websocket`
+};
+
+// Helper to get user color
+CONFIG.getUserColor = function(index) {
+    return CONFIG.COLLABORATION.USER_COLORS[index % CONFIG.COLLABORATION.USER_COLORS.length];
+};
+
+// Make CONFIG globally available
+window.CONFIG = CONFIG;
