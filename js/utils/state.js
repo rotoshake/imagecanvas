@@ -129,14 +129,38 @@ class StateManager {
     }
     
     serializeProperties(node) {
-        if (node.type === 'media/image' || node.type === 'media/video') {
-            // Only store hash and filename, not the data URL
+        if (node.type === 'media/image') {
+            // Image nodes: store hash, filename, and any other properties
             return {
                 hash: node.properties.hash,
-                filename: node.properties.filename
+                filename: node.properties.filename,
+                serverFilename: node.properties.serverFilename,
+                ...Object.fromEntries(
+                    Object.entries(node.properties).filter(([key]) => 
+                        !['hash', 'filename', 'serverFilename', 'src'].includes(key)
+                    )
+                )
             };
+        } else if (node.type === 'media/video') {
+            // Video nodes: store hash, filename, and all video properties (loop, muted, autoplay, paused, etc.)
+            return {
+                hash: node.properties.hash,
+                filename: node.properties.filename,
+                serverFilename: node.properties.serverFilename,
+                loop: node.properties.loop,
+                muted: node.properties.muted,
+                autoplay: node.properties.autoplay,
+                paused: node.properties.paused,
+                ...Object.fromEntries(
+                    Object.entries(node.properties).filter(([key]) => 
+                        !['hash', 'filename', 'serverFilename', 'src'].includes(key)
+                    )
+                )
+            };
+        } else {
+            // Text nodes and others: store all properties
+            return { ...node.properties };
         }
-        return { ...node.properties };
     }
     
     async deserializeState(state, graph, canvas) {
@@ -225,11 +249,11 @@ class StateManager {
         node.title = nodeData.title;
         
         // Update properties carefully for media nodes
-        if (node.type === 'media/image' || node.type === 'media/video') {
+        if (node.type === 'media/image') {
             const oldHash = node.properties.hash;
             const newHash = nodeData.properties.hash;
             
-                         // Only reload media if hash changed
+            // Only reload media if hash changed
             if (oldHash !== newHash) {
                 node.properties = { ...nodeData.properties };
                 if (newHash) {
@@ -237,7 +261,7 @@ class StateManager {
                 }
             } else {
                 // Preserve existing media objects, just update other properties
-                const mediaProperties = ['hash', 'filename'];
+                const mediaProperties = ['hash', 'filename', 'src'];
                 for (const [key, value] of Object.entries(nodeData.properties)) {
                     if (!mediaProperties.includes(key)) {
                         node.properties[key] = value;
@@ -245,12 +269,45 @@ class StateManager {
                 }
                 
                 // Ensure media is still loaded (in case it was lost)
-                if (newHash && (!node.img && !node.video)) {
+                if (newHash && !node.img) {
+                    this.loadNodeFromCache(node, node.type);
+                }
+            }
+        } else if (node.type === 'media/video') {
+            const oldHash = node.properties.hash;
+            const newHash = nodeData.properties.hash;
+            
+            // Only reload media if hash changed
+            if (oldHash !== newHash) {
+                node.properties = { ...nodeData.properties };
+                if (newHash) {
+                    this.loadNodeFromCache(node, node.type);
+                }
+            } else {
+                // Preserve existing media objects, update all other properties including video controls
+                const mediaProperties = ['hash', 'filename', 'src'];
+                for (const [key, value] of Object.entries(nodeData.properties)) {
+                    if (!mediaProperties.includes(key)) {
+                        node.properties[key] = value;
+                    }
+                }
+                
+                // Apply video state changes
+                if (node.video && typeof nodeData.properties.paused !== 'undefined') {
+                    if (nodeData.properties.paused) {
+                        node.video.pause();
+                    } else if (!nodeData.properties.paused && node.video.paused) {
+                        node.video.play().catch(() => {}); // Ignore autoplay restrictions
+                    }
+                }
+                
+                // Ensure media is still loaded (in case it was lost)
+                if (newHash && !node.video) {
                     this.loadNodeFromCache(node, node.type);
                 }
             }
         } else {
-            // Non-media nodes can have properties replaced
+            // Non-media nodes (including text) can have properties replaced
             node.properties = { ...nodeData.properties };
         }
     }

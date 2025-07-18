@@ -34,7 +34,22 @@
     <script src="js/dragdrop.js"></script>
     
     <!-- Collaborative features (Phase 2) -->
-    <script src="http://localhost:3000/socket.io/socket.io.js"></script>
+    <script>
+        // Try to load Socket.IO from the collaborative server
+        (function() {
+            const script = document.createElement('script');
+            script.src = 'http://localhost:3000/socket.io/socket.io.js';
+            script.onerror = function() {
+                console.warn('Collaborative server not available. Running in standalone mode.');
+                window.COLLABORATIVE_MODE = false;
+            };
+            script.onload = function() {
+                console.log('Socket.IO loaded successfully. Collaborative mode enabled.');
+                window.COLLABORATIVE_MODE = true;
+            };
+            document.head.appendChild(script);
+        })();
+    </script>
     <script src="js/collaborative.js"></script>
     
     <script src="js/app.js"></script>

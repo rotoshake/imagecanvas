@@ -278,6 +278,46 @@ class VideoNode extends BaseNode {
         } else {
             this.pause();
         }
+        
+        // Broadcast video toggle for collaboration
+        if (this.graph?.canvas?.broadcastVideoToggle) {
+            this.graph.canvas.broadcastVideoToggle(this.id, this.properties.paused);
+        }
+    }
+    
+    setLoop(loop) {
+        this.properties.loop = loop;
+        if (this.video) {
+            this.video.loop = loop;
+        }
+        
+        // Broadcast loop change for collaboration
+        if (this.graph?.canvas?.broadcastNodePropertyUpdate) {
+            this.graph.canvas.broadcastNodePropertyUpdate(this.id, 'loop', loop);
+        }
+    }
+    
+    setMuted(muted) {
+        this.properties.muted = muted;
+        if (this.video) {
+            this.video.muted = muted;
+        }
+        
+        // Broadcast muted change for collaboration
+        if (this.graph?.canvas?.broadcastNodePropertyUpdate) {
+            this.graph.canvas.broadcastNodePropertyUpdate(this.id, 'muted', muted);
+        }
+    }
+    
+    setAutoplay(autoplay) {
+        this.properties.autoplay = autoplay;
+        // Note: autoplay attribute can't be changed on existing video elements
+        // This will take effect on next video load
+        
+        // Broadcast autoplay change for collaboration
+        if (this.graph?.canvas?.broadcastNodePropertyUpdate) {
+            this.graph.canvas.broadcastNodePropertyUpdate(this.id, 'autoplay', autoplay);
+        }
     }
     
     seek(time) {

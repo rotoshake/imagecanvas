@@ -237,7 +237,7 @@ class LGraphCanvas {
     onMouseWheel(e) {
         e.preventDefault();
         
-        // Manual zoom implementation to avoid viewport validation issues
+        // Navigation zoom (intentionally NOT synced to other users)
         const zoomFactor = e.deltaY < 0 ? 1.1 : 0.9;
         
         // Get current values safely
@@ -288,9 +288,17 @@ class LGraphCanvas {
             // If multiple nodes are selected, reset all their rotations
             if (this.selection.size() > 1) {
                 const selectedNodes = this.selection.getSelectedNodes();
+                const nodeIds = [];
                 for (const node of selectedNodes) {
                     node.rotation = 0;
+                    nodeIds.push(node.id);
                 }
+                
+                // Broadcast reset operation for collaboration
+                if (nodeIds.length > 0) {
+                    this.broadcastNodeReset(nodeIds, 'rotation', nodeIds.map(() => 0));
+                }
+                
                 this.pushUndoState();
                 this.dirty_canvas = true;
             } else {
@@ -305,13 +313,25 @@ class LGraphCanvas {
             // If multiple nodes are selected, reset all their aspect ratios
             if (this.selection.size() > 1) {
                 const selectedNodes = this.selection.getSelectedNodes();
+                const nodeIds = [];
+                const originalAspects = [];
+                
                 for (const node of selectedNodes) {
                     if (node.originalAspect) {
                         node.aspectRatio = node.originalAspect;
                         node.size[1] = node.size[0] / node.originalAspect;
                         if (node.onResize) node.onResize();
+                        
+                        nodeIds.push(node.id);
+                        originalAspects.push(node.originalAspect);
                     }
                 }
+                
+                // Broadcast reset operation for collaboration
+                if (nodeIds.length > 0) {
+                    this.broadcastNodeReset(nodeIds, 'aspect_ratio', originalAspects);
+                }
+                
                 this.pushUndoState();
                 this.dirty_canvas = true;
             } else {
@@ -334,6 +354,9 @@ class LGraphCanvas {
                 // Get the new state of the clicked video
                 const clickedVideoState = node.properties.paused;
                 
+                // Broadcast the toggle for the clicked video
+                this.broadcastVideoToggle(node.id, clickedVideoState);
+                
                 // Apply the same state to all other selected video nodes
                 const selectedNodes = this.selection.getSelectedNodes();
                 for (const selectedNode of selectedNodes) {
@@ -343,6 +366,9 @@ class LGraphCanvas {
                         } else {
                             selectedNode.play();
                         }
+                        
+                        // Broadcast toggle for each video
+                        this.broadcastVideoToggle(selectedNode.id, clickedVideoState);
                     }
                 }
                 
@@ -587,6 +613,11 @@ class LGraphCanvas {
                     if (selectedNode.id === node.id) {
                         draggedDuplicate = duplicate;
                     }
+                    
+                    // Broadcast node creation for collaboration
+                    if (this.collaborativeManager?.enableCollaboration) {
+                        this.broadcastNodeCreate(duplicate);
+                    }
                 }
             }
         } else {
@@ -598,6 +629,11 @@ class LGraphCanvas {
                 this.graph.add(duplicate);
                 duplicates.push(duplicate);
                 draggedDuplicate = duplicate;
+                
+                // Broadcast node creation for collaboration
+                if (this.collaborativeManager?.enableCollaboration) {
+                    this.broadcastNodeCreate(duplicate);
+                }
             }
         }
         
@@ -1033,15 +1069,20 @@ class LGraphCanvas {
     finishInteractions() {
         const wasInteracting = this.isInteracting();
         
-        // Canvas pan
+        // Canvas pan (navigation - intentionally NOT synced to other users)
         if (this.interactionState.dragging.canvas) {
             this.interactionState.dragging.canvas = false;
-            this.debouncedSave(); // Save viewport state
+            this.debouncedSave(); // Save viewport state locally only
         }
         
         // Node drag
         if (this.interactionState.dragging.node) {
             const wasDuplication = this.interactionState.dragging.isDuplication;
+            
+            // Broadcast move operation for collaboration
+            if (this.collaborativeManager && wasInteracting) {
+                this.broadcastNodeMove();
+            }
             
             this.interactionState.dragging.node = null;
             this.interactionState.dragging.offsets.clear();
@@ -1056,6 +1097,11 @@ class LGraphCanvas {
         
         // Resize
         if (this.interactionState.resizing.active) {
+            // Broadcast resize operation for collaboration
+            if (this.collaborativeManager && wasInteracting) {
+                this.broadcastNodeResize();
+            }
+            
             this.interactionState.resizing.active = false;
             this.interactionState.resizing.node = null;
             this.interactionState.resizing.nodes.clear();
@@ -1066,6 +1112,11 @@ class LGraphCanvas {
         
         // Rotation
         if (this.interactionState.rotating.active) {
+            // Broadcast rotation operation for collaboration
+            if (this.collaborativeManager && wasInteracting) {
+                this.broadcastNodeRotation();
+            }
+            
             this.interactionState.rotating.active = false;
             this.interactionState.rotating.node = null;
             this.interactionState.rotating.nodes.clear();
@@ -1079,7 +1130,7 @@ class LGraphCanvas {
             this.interactionState.selecting.active = false;
         }
         
-        this.canvas.style.cursor = 'default';
+        this.dirty_canvas = true;
     }
     
     isInteracting() {
@@ -1248,6 +1299,11 @@ class LGraphCanvas {
                 duplicate.pos[1] += offset;
                 this.graph.add(duplicate);
                 duplicates.push(duplicate);
+                
+                // Broadcast node creation for collaboration
+                if (this.collaborativeManager?.enableCollaboration) {
+                    this.broadcastNodeCreate(duplicate);
+                }
             }
         }
         
@@ -1262,6 +1318,12 @@ class LGraphCanvas {
     deleteSelected() {
         const selected = this.selection.getSelectedNodes();
         if (selected.length === 0) return;
+        
+        // Broadcast deletion for collaboration
+        if (this.collaborativeManager?.enableCollaboration) {
+            const nodeIds = selected.map(node => node.id);
+            this.broadcastNodeDelete(nodeIds);
+        }
         
         this.pushUndoState();
         
@@ -1419,6 +1481,12 @@ class LGraphCanvas {
             }
             this.graph.add(node);
             this.selection.selectNode(node);
+            
+            // Broadcast text node creation for collaboration
+            if (this.collaborativeManager?.enableCollaboration) {
+                this.broadcastNodeCreate(node);
+            }
+            
             this.pushUndoState();
             this.dirty_canvas = true;
         }
@@ -1574,6 +1642,11 @@ class LGraphCanvas {
             node.properties.text = textarea.value;
             this.dirty_canvas = true;
             this.updateTextEditingOverlaySize(textarea, node);
+            
+            // Broadcast text changes in real-time for collaboration
+            if (this.collaborativeManager?.enableCollaboration) {
+                this.broadcastNodePropertyUpdate(node.id, 'text', textarea.value);
+            }
         });
 
         // Add to DOM and focus
@@ -1623,8 +1696,19 @@ class LGraphCanvas {
         node.stopEditing();
         
         // Auto-resize if needed
+        const oldSize = [...node.size];
         if (node.autoResize) {
             node.autoResize();
+        }
+        
+        // Broadcast final text state and any size changes for collaboration
+        if (this.collaborativeManager?.enableCollaboration) {
+            this.broadcastNodePropertyUpdate(node.id, 'text', textarea.value);
+            
+            // If size changed during auto-resize, broadcast that too
+            if (oldSize[0] !== node.size[0] || oldSize[1] !== node.size[1]) {
+                this.broadcastNodeResize();
+            }
         }
 
         // Cleanup
@@ -1660,18 +1744,34 @@ class LGraphCanvas {
                 node.aspectRatio = node.originalAspect;
                 node.size[1] = node.size[0] / node.originalAspect;
                 if (node.onResize) node.onResize();
+                
+                // Broadcast reset operation for collaboration
+                this.broadcastNodeReset([node.id], 'aspect_ratio', [node.originalAspect]);
+                
                 this.pushUndoState();
                 this.dirty_canvas = true;
             }
         } else if (resizeHandle.type === 'multi-resize') {
             // Reset all selected nodes to their individual original aspect ratios
+            const nodeIds = [];
+            const originalAspects = [];
+            
             for (const node of resizeHandle.nodes) {
                 if (node.originalAspect) {
                     node.aspectRatio = node.originalAspect;
                     node.size[1] = node.size[0] / node.originalAspect;
                     if (node.onResize) node.onResize();
+                    
+                    nodeIds.push(node.id);
+                    originalAspects.push(node.originalAspect);
                 }
             }
+            
+            // Broadcast reset operation for collaboration
+            if (nodeIds.length > 0) {
+                this.broadcastNodeReset(nodeIds, 'aspect_ratio', originalAspects);
+            }
+            
             this.pushUndoState();
             this.dirty_canvas = true;
         }
@@ -1680,9 +1780,19 @@ class LGraphCanvas {
     resetRotation(rotationHandle) {
         if (rotationHandle.type === 'single-rotation') {
             rotationHandle.node.rotation = 0;
+            
+            // Broadcast reset operation for collaboration
+            this.broadcastNodeReset([rotationHandle.node.id], 'rotation', [0]);
         } else {
+            const nodeIds = [];
             for (const node of rotationHandle.nodes) {
                 node.rotation = 0;
+                nodeIds.push(node.id);
+            }
+            
+            // Broadcast reset operation for collaboration
+            if (nodeIds.length > 0) {
+                this.broadcastNodeReset(nodeIds, 'rotation', nodeIds.map(() => 0));
             }
         }
         this.pushUndoState();
@@ -2323,5 +2433,176 @@ class LGraphCanvas {
                 button: this.mouseState.button
             }
         };
+    }
+    
+    // ===================================
+    // COLLABORATIVE OPERATIONS
+    // ===================================
+    
+    broadcastNodeMove() {
+        if (!this.collaborativeManager?.enableCollaboration) return;
+        
+        const selectedNodes = this.selection.getSelectedNodes();
+        if (selectedNodes.length === 0) return;
+        
+        if (selectedNodes.length === 1) {
+            // Single node move
+            const node = selectedNodes[0];
+            this.collaborativeManager.sendOperation('node_move', {
+                nodeId: node.id,
+                pos: [...node.pos]
+            });
+        } else {
+            // Multi-node move
+            const nodeIds = selectedNodes.map(node => node.id);
+            const positions = selectedNodes.map(node => [...node.pos]);
+            this.collaborativeManager.sendOperation('node_move', {
+                nodeIds: nodeIds,
+                positions: positions
+            });
+        }
+    }
+    
+    broadcastNodeResize() {
+        if (!this.collaborativeManager?.enableCollaboration) return;
+        
+        const selectedNodes = this.selection.getSelectedNodes();
+        if (selectedNodes.length === 0) return;
+        
+        if (selectedNodes.length === 1) {
+            // Single node resize
+            const node = selectedNodes[0];
+            this.collaborativeManager.sendOperation('node_resize', {
+                nodeId: node.id,
+                size: [...node.size],
+                pos: [...node.pos]
+            });
+        } else {
+            // Multi-node resize
+            const nodeIds = selectedNodes.map(node => node.id);
+            const sizes = selectedNodes.map(node => [...node.size]);
+            const positions = selectedNodes.map(node => [...node.pos]);
+            this.collaborativeManager.sendOperation('node_resize', {
+                nodeIds: nodeIds,
+                sizes: sizes,
+                positions: positions
+            });
+        }
+    }
+    
+    broadcastNodeRotation() {
+        if (!this.collaborativeManager?.enableCollaboration) return;
+        
+        const selectedNodes = this.selection.getSelectedNodes();
+        if (selectedNodes.length === 0) return;
+        
+        if (selectedNodes.length === 1) {
+            // Single node rotation
+            const node = selectedNodes[0];
+            this.collaborativeManager.sendOperation('node_rotate', {
+                nodeId: node.id,
+                rotation: node.rotation || 0,
+                pos: [...node.pos]
+            });
+        } else {
+            // Multi-node rotation
+            const nodeIds = selectedNodes.map(node => node.id);
+            const rotations = selectedNodes.map(node => node.rotation || 0);
+            const positions = selectedNodes.map(node => [...node.pos]);
+            this.collaborativeManager.sendOperation('node_rotate', {
+                nodeIds: nodeIds,
+                rotations: rotations,
+                positions: positions
+            });
+        }
+    }
+    
+    broadcastNodeDelete(nodeIds) {
+        if (!this.collaborativeManager?.enableCollaboration) return;
+        
+        if (nodeIds.length === 1) {
+            this.collaborativeManager.sendOperation('node_delete', {
+                nodeId: nodeIds[0]
+            });
+        } else {
+            this.collaborativeManager.sendOperation('node_delete', {
+                nodeIds: nodeIds
+            });
+        }
+    }
+    
+    broadcastNodeCreate(node) {
+        if (!this.collaborativeManager?.enableCollaboration) return;
+        
+        this.collaborativeManager.sendOperation('node_create', {
+            nodeData: {
+                id: node.id,
+                type: node.type,
+                pos: [...node.pos],
+                size: [...node.size],
+                title: node.title,
+                properties: { ...node.properties },
+                flags: { ...node.flags },
+                aspectRatio: node.aspectRatio || 1,
+                rotation: node.rotation || 0
+            }
+        });
+    }
+    
+    broadcastNodeReset(nodeIds, resetType, values) {
+        if (!this.collaborativeManager?.enableCollaboration) return;
+        
+        if (nodeIds.length === 1) {
+            this.collaborativeManager.sendOperation('node_reset', {
+                nodeId: nodeIds[0],
+                resetType: resetType,
+                value: values[0]
+            });
+        } else {
+            this.collaborativeManager.sendOperation('node_reset', {
+                nodeIds: nodeIds,
+                resetType: resetType,
+                values: values
+            });
+        }
+    }
+    
+    broadcastVideoToggle(nodeId, paused) {
+        if (!this.collaborativeManager?.enableCollaboration) return;
+        
+        this.collaborativeManager.sendOperation('video_toggle', {
+            nodeId: nodeId,
+            paused: paused
+        });
+    }
+    
+    broadcastAlignment(nodeIds, alignmentType, targetPositions) {
+        if (!this.collaborativeManager?.enableCollaboration) return;
+        
+        this.collaborativeManager.sendOperation('node_align', {
+            nodeIds: nodeIds,
+            alignmentType: alignmentType,
+            positions: targetPositions
+        });
+    }
+    
+    broadcastNodePropertyUpdate(nodeIds, propertyName, values) {
+        if (!this.collaborativeManager?.enableCollaboration) return;
+        
+        if (Array.isArray(nodeIds) && Array.isArray(values)) {
+            // Multi-node property update
+            this.collaborativeManager.sendOperation('node_property_update', {
+                nodeIds: nodeIds,
+                propertyName: propertyName,
+                values: values
+            });
+        } else {
+            // Single node property update
+            this.collaborativeManager.sendOperation('node_property_update', {
+                nodeId: Array.isArray(nodeIds) ? nodeIds[0] : nodeIds,
+                propertyName: propertyName,
+                value: Array.isArray(values) ? values[0] : values
+            });
+        }
     }
 }

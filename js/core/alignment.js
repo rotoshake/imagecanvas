@@ -489,13 +489,25 @@ class AutoAlignmentManager {
             
             if (allDone) {
                 // Animation complete
+                const nodeIds = [];
+                const finalPositions = [];
+                
                 for (const node of this.autoAlignAnimNodes) {
                     if (node._animPos) {
                         node.pos[0] = node._animPos[0];
                         node.pos[1] = node._animPos[1];
+                        
+                        nodeIds.push(node.id);
+                        finalPositions.push([...node.pos]);
+                        
                         delete node._animPos;
                         delete node._animVel;
                     }
+                }
+                
+                // Broadcast alignment operation for collaboration
+                if (nodeIds.length > 0 && this.canvas.broadcastAlignment) {
+                    this.canvas.broadcastAlignment(nodeIds, 'auto_align', finalPositions);
                 }
                 
                 // Invalidate bounding box cache when animation completes
@@ -557,13 +569,25 @@ class AutoAlignmentManager {
             }
             
             if (allDone) {
+                const nodeIds = [];
+                const finalPositions = [];
+                
                 for (const node of this.gridAlignAnimNodes) {
                     if (node._gridAnimPos) {
                         node.pos[0] = node._gridAnimPos[0];
                         node.pos[1] = node._gridAnimPos[1];
+                        
+                        nodeIds.push(node.id);
+                        finalPositions.push([...node.pos]);
+                        
                         delete node._gridAnimPos;
                         delete node._gridAnimVel;
                     }
+                }
+                
+                // Broadcast alignment operation for collaboration
+                if (nodeIds.length > 0 && this.canvas.broadcastAlignment) {
+                    this.canvas.broadcastAlignment(nodeIds, 'grid_align', finalPositions);
                 }
                 
                 // Invalidate bounding box cache when grid alignment completes

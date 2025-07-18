@@ -27,11 +27,21 @@ class TextNode extends BaseNode {
         this.properties.text = text;
         this.fitTextToBox();
         this.markDirty();
+        
+        // Broadcast text change for collaboration
+        if (this.graph?.canvas?.broadcastNodePropertyUpdate) {
+            this.graph.canvas.broadcastNodePropertyUpdate(this.id, 'text', text);
+        }
     }
     
     setFontSize(fontSize) {
         this.properties.fontSize = Utils.clamp(fontSize, 6, 200);
         this.markDirty();
+        
+        // Broadcast font size change for collaboration
+        if (this.graph?.canvas?.broadcastNodePropertyUpdate) {
+            this.graph.canvas.broadcastNodePropertyUpdate(this.id, 'fontSize', this.properties.fontSize);
+        }
     }
     
     setBackgroundColor(color, alpha = null) {
@@ -40,11 +50,24 @@ class TextNode extends BaseNode {
             this.properties.bgAlpha = Utils.clamp(alpha, 0, 1);
         }
         this.markDirty();
+        
+        // Broadcast background color changes for collaboration
+        if (this.graph?.canvas?.broadcastNodePropertyUpdate) {
+            this.graph.canvas.broadcastNodePropertyUpdate(this.id, 'bgColor', color);
+            if (alpha !== null) {
+                this.graph.canvas.broadcastNodePropertyUpdate(this.id, 'bgAlpha', this.properties.bgAlpha);
+            }
+        }
     }
     
     setTextColor(color) {
         this.properties.textColor = color;
         this.markDirty();
+        
+        // Broadcast text color change for collaboration
+        if (this.graph?.canvas?.broadcastNodePropertyUpdate) {
+            this.graph.canvas.broadcastNodePropertyUpdate(this.id, 'textColor', color);
+        }
     }
     
     onResize() {
@@ -361,6 +384,14 @@ class TextNode extends BaseNode {
             Object.assign(this.properties, style);
             this.fitTextToBox();
             this.markDirty();
+            
+            // Broadcast style changes for collaboration
+            if (this.graph?.canvas?.broadcastNodePropertyUpdate) {
+                // Broadcast each changed property
+                for (const [property, value] of Object.entries(style)) {
+                    this.graph.canvas.broadcastNodePropertyUpdate(this.id, property, value);
+                }
+            }
         }
     }
     

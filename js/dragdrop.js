@@ -187,18 +187,71 @@ class DragDropManager {
             basePos[1] - node.size[1] / 2 + offset
         ];
         
-        // Process file
+        // Check if collaborative features are available
+        const collaborativeManager = window.app?.collaborativeManager;
+        if (collaborativeManager && collaborativeManager.isConnected) {
+            console.log('📤 Using collaborative upload for:', file.name);
+            
+            // Prepare node data for collaborative upload
+            const nodeData = {
+                type: nodeType,
+                pos: node.pos,
+                size: node.size,
+                title: file.name,
+                properties: {
+                    filename: file.name,
+                    hash: null // Will be generated server-side
+                },
+                flags: { hide_title: true },
+                aspectRatio: 1,
+                rotation: 0,
+                projectId: collaborativeManager.currentProject?.id || 'demo-project'
+            };
+            
+            try {
+                // Upload to server - this will broadcast to other users
+                const uploadResult = await collaborativeManager.uploadMedia(file, nodeData);
+                if (uploadResult) {
+                    const mediaUrl = `http://localhost:3000${uploadResult.mediaUrl}`;
+                    
+                    // Update node with server data
+                    node.properties.hash = uploadResult.fileInfo.file_hash;
+                    node.properties.filename = uploadResult.fileInfo.original_name;
+                    node.properties.serverFilename = uploadResult.fileInfo.filename; // Store server filename
+                    
+                    // Load the media from server
+                    if (isVideo) {
+                        await node.setVideo(mediaUrl, file.name, uploadResult.fileInfo.file_hash);
+                    } else {
+                        await node.setImage(mediaUrl, file.name, uploadResult.fileInfo.file_hash);
+                    }
+                    
+                    console.log('✅ Collaborative upload successful');
+                    return node;
+                }
+            } catch (error) {
+                console.error('❌ Collaborative upload error:', error);
+            }
+            
+            // If we get here, collaborative upload failed
+            console.log('⚠️ Collaborative upload failed, falling back to local');
+        }
+        
+        // Fallback to local processing (original behavior)
+        console.log('📱 Using local processing for:', file.name);
+        
+        // Process file locally
         const dataURL = await this.fileToDataURL(file);
         const hash = await HashUtils.hashImageData(dataURL);
         
-        // Cache the media
+        // Cache the media locally
         window.imageCache.set(hash, dataURL);
         
         // Set node properties
         node.properties.hash = hash;
         node.properties.filename = file.name;
         
-        // Load the media
+        // Load the media locally
         if (isVideo) {
             await node.setVideo(dataURL, file.name, hash);
         } else {

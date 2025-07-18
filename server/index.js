@@ -5,6 +5,10 @@ const cors = require('cors');
 const compression = require('compression');
 const helmet = require('helmet');
 const path = require('path');
+const multer = require('multer');
+const sharp = require('sharp');
+const fs = require('fs').promises;
+const crypto = require('crypto');
 
 // Create placeholder modules if they don't exist yet
 let Database, CollaborationManager;
@@ -37,7 +41,7 @@ class ImageCanvasServer {
         this.server = http.createServer(this.app);
         this.io = socketIo(this.server, {
             cors: {
-                origin: ["http://localhost:8000", "http://127.0.0.1:8000"],
+                origin: ["http://localhost:8000", "http://127.0.0.1:8000", "http://localhost:8080", "http://127.0.0.1:8080"],
                 methods: ["GET", "POST"],
                 credentials: true
             }
@@ -48,6 +52,7 @@ class ImageCanvasServer {
         this.collaborationManager = null;
         
         this.setupMiddleware();
+        this.setupUpload();
         this.setupRoutes();
     }
     
@@ -60,7 +65,7 @@ class ImageCanvasServer {
         // Compression and CORS
         this.app.use(compression());
         this.app.use(cors({
-            origin: ["http://localhost:8000", "http://127.0.0.1:8000"],
+            origin: ["http://localhost:8000", "http://127.0.0.1:8000", "http://localhost:8080", "http://127.0.0.1:8080"],
             credentials: true
         }));
         
@@ -86,12 +91,146 @@ class ImageCanvasServer {
                 status: 'ok', 
                 timestamp: Date.now(),
                 version: '2.0.0-alpha',
-                features: {
-                    database: this.db ? 'ready' : 'placeholder',
-                    collaboration: this.collaborationManager ? 'ready' : 'placeholder',
-                    websockets: 'ready'
-                }
+                features: ['collaboration', 'file-upload', 'thumbnails']
             });
+        });
+
+        // WebSocket test page
+        this.app.get('/test-websocket', (req, res) => {
+            res.send(`
+                <!DOCTYPE html>
+                <html>
+                <head><title>WebSocket Test</title></head>
+                <body>
+                    <h1>ImageCanvas WebSocket Test</h1>
+                    <div id="status">Connecting...</div>
+                    <script src="/socket.io/socket.io.js"></script>
+                    <script>
+                        const socket = io();
+                        const status = document.getElementById('status');
+                        
+                        socket.on('connect', () => {
+                            status.textContent = 'Connected! Socket ID: ' + socket.id;
+                            status.style.color = 'green';
+                        });
+                        
+                        socket.on('disconnect', () => {
+                            status.textContent = 'Disconnected';
+                            status.style.color = 'red';
+                        });
+                    </script>
+                </body>
+                </html>
+            `);
+        });
+
+        // File upload endpoint
+        this.app.post('/upload', this.uploadMiddleware, async (req, res) => {
+            try {
+                if (!req.file) {
+                    return res.status(400).json({ error: 'No file uploaded' });
+                }
+
+                const { projectId, nodeData } = req.body;
+                const parsedNodeData = JSON.parse(nodeData);
+                
+                // Generate file hash
+                const fileBuffer = await fs.readFile(req.file.path);
+                const fileHash = crypto.createHash('sha256').update(fileBuffer).digest('hex');
+                
+                // Store file info in database
+                const fileInfo = {
+                    filename: req.file.filename,
+                    original_name: req.file.originalname,
+                    mime_type: req.file.mimetype,
+                    file_size: req.file.size,
+                    file_hash: fileHash,
+                    project_id: parseInt(projectId)
+                };
+
+                // Generate thumbnails for images
+                if (req.file.mimetype.startsWith('image/')) {
+                    await this.generateThumbnails(req.file.path, req.file.filename);
+                }
+
+                // Broadcast to other users in the project (excluding uploader)
+                console.log(`📤 Broadcasting media upload: ${fileInfo.original_name} to project_${projectId}`);
+                
+                // Get uploader's socket ID if available
+                let uploaderSocketId = null;
+                if (this.collaborationManager && parsedNodeData.uploaderUserId) {
+                    // Find the socket for this user
+                    for (const [socketId, session] of this.collaborationManager.userSessions) {
+                        if (session.userId === parsedNodeData.uploaderUserId && session.projectId === parseInt(projectId)) {
+                            uploaderSocketId = socketId;
+                            break;
+                        }
+                    }
+                }
+                
+                if (uploaderSocketId) {
+                    // Broadcast to everyone in the room EXCEPT the uploader
+                    this.io.to(`project_${projectId}`).except(uploaderSocketId).emit('media_uploaded', {
+                        fileInfo,
+                        nodeData: parsedNodeData
+                    });
+                    console.log(`✅ Media upload broadcast sent to project_${projectId} (excluding uploader ${uploaderSocketId})`);
+                } else {
+                    // Fallback: broadcast to everyone (shouldn't happen in normal usage)
+                    this.io.to(`project_${projectId}`).emit('media_uploaded', {
+                        fileInfo,
+                        nodeData: parsedNodeData
+                    });
+                    console.log(`✅ Media upload broadcast sent to project_${projectId} (uploader socket not found)`);
+                }
+
+                res.json({ 
+                    success: true, 
+                    fileInfo,
+                    mediaUrl: `/uploads/${req.file.filename}`
+                });
+
+            } catch (error) {
+                console.error('Upload error:', error);
+                res.status(500).json({ error: 'Upload failed' });
+            }
+        });
+
+        // Serve uploaded files
+        this.app.get('/uploads/:filename', (req, res) => {
+            const filename = req.params.filename;
+            const filepath = path.join(__dirname, 'uploads', filename);
+            res.sendFile(filepath);
+        });
+
+        // Serve thumbnails
+        this.app.get('/thumbnails/:size/:filename', (req, res) => {
+            const { size, filename } = req.params;
+            const thumbnailPath = path.join(__dirname, 'thumbnails', size, filename);
+            res.sendFile(thumbnailPath);
+        });
+
+        // Project endpoints
+        this.app.get('/projects', async (req, res) => {
+            try {
+                const projects = await this.db.all('SELECT * FROM projects ORDER BY last_modified DESC');
+                res.json(projects);
+            } catch (error) {
+                console.error('Failed to fetch projects:', error);
+                res.status(500).json({ error: 'Failed to fetch projects' });
+            }
+        });
+
+        this.app.post('/projects', async (req, res) => {
+            try {
+                const { name, description, ownerId } = req.body;
+                const projectId = await this.db.createProject(name, ownerId, description);
+                const project = await this.db.getProject(projectId);
+                res.json(project);
+            } catch (error) {
+                console.error('Failed to create project:', error);
+                res.status(500).json({ error: 'Failed to create project' });
+            }
         });
         
         // API placeholder routes
@@ -107,50 +246,72 @@ class ImageCanvasServer {
             res.json({ message: 'File API coming soon', status: 'placeholder' });
         });
         
-        // WebSocket test endpoint
-        this.app.get('/test-websocket', (req, res) => {
-            res.send(`
-                <!DOCTYPE html>
-                <html>
-                <head><title>WebSocket Test</title></head>
-                <body>
-                    <h1>ImageCanvas WebSocket Test</h1>
-                    <div id="status">Connecting...</div>
-                    <div id="messages"></div>
-                    <script src="/socket.io/socket.io.js"></script>
-                    <script>
-                        const socket = io();
-                        const status = document.getElementById('status');
-                        const messages = document.getElementById('messages');
-                        
-                        socket.on('connect', () => {
-                            status.textContent = 'Connected to ImageCanvas server!';
-                            status.style.color = 'green';
-                        });
-                        
-                        socket.on('disconnect', () => {
-                            status.textContent = 'Disconnected';
-                            status.style.color = 'red';
-                        });
-                        
-                        socket.on('test_response', (data) => {
-                            messages.innerHTML += '<p>Server: ' + JSON.stringify(data) + '</p>';
-                        });
-                        
-                        // Test message
-                        setTimeout(() => {
-                            socket.emit('test_message', { message: 'Hello from client!' });
-                        }, 1000);
-                    </script>
-                </body>
-                </html>
-            `);
-        });
-        
         // Fallback route
         this.app.use('*', (req, res) => {
             res.status(404).json({ error: 'Endpoint not found' });
         });
+    }
+
+    setupUpload() {
+        // Configure multer for file uploads
+        const storage = multer.diskStorage({
+            destination: async (req, file, cb) => {
+                const uploadsDir = path.join(__dirname, 'uploads');
+                try {
+                    await fs.mkdir(uploadsDir, { recursive: true });
+                    cb(null, uploadsDir);
+                } catch (error) {
+                    cb(error);
+                }
+            },
+            filename: (req, file, cb) => {
+                // Generate unique filename with timestamp
+                const timestamp = Date.now();
+                const randomStr = Math.random().toString(36).substring(7);
+                const ext = path.extname(file.originalname);
+                cb(null, `${timestamp}-${randomStr}${ext}`);
+            }
+        });
+
+        this.uploadMiddleware = multer({
+            storage: storage,
+            limits: {
+                fileSize: 50 * 1024 * 1024 // 50MB limit
+            },
+            fileFilter: (req, file, cb) => {
+                // Allow images and videos
+                if (file.mimetype.startsWith('image/') || file.mimetype.startsWith('video/')) {
+                    cb(null, true);
+                } else {
+                    cb(new Error('Only image and video files are allowed'));
+                }
+            }
+        }).single('file');
+    }
+
+    async generateThumbnails(filePath, filename) {
+        const thumbnailSizes = [64, 128, 256, 512, 1024, 2048];
+        const nameWithoutExt = path.parse(filename).name;
+        
+        for (const size of thumbnailSizes) {
+            try {
+                const thumbnailDir = path.join(__dirname, 'thumbnails', size.toString());
+                await fs.mkdir(thumbnailDir, { recursive: true });
+                
+                const thumbnailPath = path.join(thumbnailDir, `${nameWithoutExt}.webp`);
+                
+                await sharp(filePath)
+                    .resize(size, size, { 
+                        fit: 'inside',
+                        withoutEnlargement: true 
+                    })
+                    .webp({ quality: 85 })
+                    .toFile(thumbnailPath);
+                    
+            } catch (error) {
+                console.warn(`Failed to generate ${size}px thumbnail:`, error);
+            }
+        }
     }
     
     async setupDatabase() {
@@ -169,6 +330,8 @@ class ImageCanvasServer {
             this.collaborationManager = new CollaborationManager(this.io, this.db);
             
             // Add basic test handlers
+            // NOTE: Commenting out to avoid conflicts with CollaborationManager
+            /*
             this.io.on('connection', (socket) => {
                 console.log(`👋 Client connected: ${socket.id}`);
                 
@@ -185,6 +348,7 @@ class ImageCanvasServer {
                     console.log(`👋 Client disconnected: ${socket.id}`);
                 });
             });
+            */
             
             console.log('✅ Real-time collaboration initialized');
         } catch (error) {
