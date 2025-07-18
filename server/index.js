@@ -233,6 +233,156 @@ class ImageCanvasServer {
             }
         });
         
+        // Canvas save/load endpoints
+        this.app.get('/projects/:id/canvas', async (req, res) => {
+            try {
+                const projectId = parseInt(req.params.id);
+                const project = await this.db.get(
+                    'SELECT canvas_data FROM projects WHERE id = ?',
+                    [projectId]
+                );
+                
+                if (!project) {
+                    return res.status(404).json({ error: 'Project not found' });
+                }
+                
+                res.json({ 
+                    success: true,
+                    canvas_data: project.canvas_data ? JSON.parse(project.canvas_data) : null
+                });
+            } catch (error) {
+                console.error('Failed to load canvas:', error);
+                res.status(500).json({ error: 'Failed to load canvas' });
+            }
+        });
+        
+        this.app.put('/projects/:id/canvas', async (req, res) => {
+            try {
+                const projectId = parseInt(req.params.id);
+                const canvasData = req.body.canvas_data;
+                
+                if (!canvasData) {
+                    return res.status(400).json({ error: 'Canvas data required' });
+                }
+                
+                await this.db.run(
+                    'UPDATE projects SET canvas_data = ?, last_modified = CURRENT_TIMESTAMP WHERE id = ?',
+                    [JSON.stringify(canvasData), projectId]
+                );
+                
+                // Broadcast canvas update to other users in the project
+                this.io.to(`project_${projectId}`).emit('canvas_saved', {
+                    projectId,
+                    savedBy: req.body.userId || 'unknown',
+                    timestamp: new Date().toISOString()
+                });
+                
+                res.json({ success: true });
+            } catch (error) {
+                console.error('Failed to save canvas:', error);
+                res.status(500).json({ error: 'Failed to save canvas' });
+            }
+        });
+        
+        // Get single project
+        this.app.get('/projects/:id', async (req, res) => {
+            try {
+                const projectId = parseInt(req.params.id);
+                const project = await this.db.get(
+                    'SELECT * FROM projects WHERE id = ?',
+                    [projectId]
+                );
+                
+                if (!project) {
+                    return res.status(404).json({ error: 'Project not found' });
+                }
+                
+                res.json(project);
+            } catch (error) {
+                console.error('Failed to get project:', error);
+                res.status(500).json({ error: 'Failed to get project' });
+            }
+        });
+        
+        // Update project (rename)
+        this.app.put('/projects/:id', async (req, res) => {
+            try {
+                const projectId = parseInt(req.params.id);
+                const { name } = req.body;
+                
+                if (!name || !name.trim()) {
+                    return res.status(400).json({ error: 'Name is required' });
+                }
+                
+                await this.db.run(
+                    'UPDATE projects SET name = ?, last_modified = CURRENT_TIMESTAMP WHERE id = ?',
+                    [name.trim(), projectId]
+                );
+                
+                const updatedProject = await this.db.get(
+                    'SELECT * FROM projects WHERE id = ?',
+                    [projectId]
+                );
+                
+                if (!updatedProject) {
+                    return res.status(404).json({ error: 'Project not found' });
+                }
+                
+                // Broadcast rename to other users in the project
+                this.io.to(`project_${projectId}`).emit('project_renamed', {
+                    projectId,
+                    newName: name.trim(),
+                    timestamp: new Date().toISOString()
+                });
+                
+                res.json(updatedProject);
+            } catch (error) {
+                console.error('Failed to update project:', error);
+                res.status(500).json({ error: 'Failed to update project' });
+            }
+        });
+        
+        // Get user's projects
+        this.app.get('/projects/user/:userId', async (req, res) => {
+            try {
+                const userId = parseInt(req.params.userId);
+                const projects = await this.db.all(
+                    `SELECT p.*, 
+                            (SELECT COUNT(*) FROM project_collaborators WHERE project_id = p.id) as collaborator_count
+                     FROM projects p 
+                     WHERE p.owner_id = ? 
+                        OR EXISTS (SELECT 1 FROM project_collaborators pc WHERE pc.project_id = p.id AND pc.user_id = ?)
+                     ORDER BY p.last_modified DESC`,
+                    [userId, userId]
+                );
+                res.json(projects);
+            } catch (error) {
+                console.error('Failed to fetch user projects:', error);
+                res.status(500).json({ error: 'Failed to fetch projects' });
+            }
+        });
+        
+        // Delete project
+        this.app.delete('/projects/:id', async (req, res) => {
+            try {
+                const projectId = parseInt(req.params.id);
+                
+                // Delete the project and related data
+                await this.db.run('DELETE FROM project_collaborators WHERE project_id = ?', [projectId]);
+                await this.db.run('DELETE FROM project_versions WHERE project_id = ?', [projectId]);
+                await this.db.run('DELETE FROM operations WHERE project_id = ?', [projectId]);
+                await this.db.run('DELETE FROM projects WHERE id = ?', [projectId]);
+                
+                // Notify connected users
+                this.io.to(`project_${projectId}`).emit('project_deleted', { projectId });
+                
+                res.json({ success: true });
+            } catch (error) {
+                console.error('Failed to delete project:', error);
+                res.status(500).json({ error: 'Failed to delete project' });
+            }
+        });
+        
         // API placeholder routes
         this.app.use('/api/projects', (req, res) => {
             res.json({ message: 'Project API coming soon', status: 'placeholder' });

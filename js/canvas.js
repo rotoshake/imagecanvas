@@ -104,6 +104,11 @@ class LGraphCanvas {
         // Keyboard events
         document.addEventListener('keydown', this.onKeyDown.bind(this));
         
+        // Window resize
+        window.addEventListener('resize', this.onWindowResize.bind(this));
+        // Call resize immediately to set initial size
+        this.onWindowResize();
+        
         // Selection callbacks
         this.selection.addCallback(this.onSelectionChanged.bind(this));
     }
@@ -125,23 +130,23 @@ class LGraphCanvas {
         this.mouseState.down = true;
         this.mouseState.button = e.button;
         
-        // Debug: log all properties of node under mouse
-        const node = this.handleDetector.getNodeAtPosition(...this.mouseState.graph, this.graph.nodes);
-        if (node) {
-            console.group(`Node Debug: ${node.title || node.type} (id: ${node.id})`);
-            console.log('type:', node.type);
-            console.log('id:', node.id);
-            console.log('pos:', node.pos);
-            console.log('size:', node.size);
-            console.log('rotation:', node.rotation);
-            console.log('aspectRatio:', node.aspectRatio);
-            console.log('properties:', node.properties);
-            console.log('flags:', node.flags);
-            if (typeof node.getVideoInfo === 'function') {
-                console.log('videoInfo:', node.getVideoInfo());
-            }
-            console.groupEnd();
-        }
+        // Debug: log all properties of node under mouse (commented out to reduce console noise)
+        // const node = this.handleDetector.getNodeAtPosition(...this.mouseState.graph, this.graph.nodes);
+        // if (node) {
+        //     console.group(`Node Debug: ${node.title || node.type} (id: ${node.id})`);
+        //     console.log('type:', node.type);
+        //     console.log('id:', node.id);
+        //     console.log('pos:', node.pos);
+        //     console.log('size:', node.size);
+        //     console.log('rotation:', node.rotation);
+        //     console.log('aspectRatio:', node.aspectRatio);
+        //     console.log('properties:', node.properties);
+        //     console.log('flags:', node.flags);
+        //     if (typeof node.getVideoInfo === 'function') {
+        //         console.log('videoInfo:', node.getVideoInfo());
+        //     }
+        //     console.groupEnd();
+        // }
         
         // Stop any active animations that might interfere
         if (this.alignmentManager && this.alignmentManager.isAnimating()) {
@@ -401,6 +406,31 @@ class LGraphCanvas {
     }
     
     onSelectionChanged(selection) {
+        this.dirty_canvas = true;
+    }
+    
+    onWindowResize() {
+        // Update canvas size to match window size
+        const dpr = window.devicePixelRatio || 1;
+        
+        // Get the size the canvas should be displayed at
+        const displayWidth = window.innerWidth;
+        const displayHeight = window.innerHeight;
+        
+        // Set the actual canvas size accounting for device pixel ratio
+        this.canvas.width = displayWidth * dpr;
+        this.canvas.height = displayHeight * dpr;
+        
+        // Scale the canvas back down using CSS
+        this.canvas.style.width = displayWidth + 'px';
+        this.canvas.style.height = displayHeight + 'px';
+        
+        // Update viewport DPR
+        if (this.viewport) {
+            this.viewport.dpr = dpr;
+        }
+        
+        // Set canvas to redraw
         this.dirty_canvas = true;
     }
     
@@ -1149,6 +1179,24 @@ class LGraphCanvas {
         const shift = e.shiftKey;
         const alt = e.altKey;
         
+        // Save
+        if (ctrl && key === 's') {
+            if (window.canvasNavigator && !window.canvasNavigator.currentCanvasId && this.graph.nodes.length > 0) {
+                // No current canvas but we have content - create one automatically
+                const timestamp = new Date().toLocaleString();
+                window.canvasNavigator.saveAsNewCanvas(`Untitled Canvas - ${timestamp}`, true);
+                if (this.collaborativeManager) {
+                    this.collaborativeManager.showStatus('Canvas created and saved', 'success');
+                }
+            } else if (this.collaborativeManager && this.collaborativeManager.save) {
+                this.collaborativeManager.save();
+            } else {
+                // Save to localStorage for single-user mode
+                this.stateManager.saveState();
+            }
+            return true;
+        }
+        
         // Undo/Redo
         if (ctrl && key === 'z' && !shift) {
             this.undo();
@@ -1757,7 +1805,7 @@ class LGraphCanvas {
         
         // Try to load from collaborative server if available
         if (this.collaborativeManager?.isConnected) {
-            const serverUrl = `http://localhost:3000/uploads/${nodeData.properties.serverFilename || filename}`;
+            const serverUrl = `${CONFIG.ENDPOINTS.UPLOADS}/${nodeData.properties.serverFilename || filename}`;
             
             if (isVideo && node.setVideo) {
                 node.setVideo(serverUrl, filename, hash).catch(() => {
@@ -1822,7 +1870,18 @@ class LGraphCanvas {
     // ===================================
     
     isEditingText() {
-        return this._editingTitleInput || this._editingTextInput;
+        // Check if editing node title or text
+        if (this._editingTitleInput || this._editingTextInput) {
+            return true;
+        }
+        
+        // Check if editing canvas title in navigator
+        const canvasTitleInput = document.querySelector('.canvas-title-input');
+        if (canvasTitleInput && document.activeElement === canvasTitleInput) {
+            return true;
+        }
+        
+        return false;
     }
     
     canEditTitle(node, pos) {
@@ -2574,9 +2633,18 @@ class LGraphCanvas {
         ctx.save();
         ctx.setTransform(this.viewport.dpr, 0, 0, this.viewport.dpr, 0, 0);
         
+        // Position in lower left
+        const statsHeight = 80;
+        const statsWidth = 160;
+        const margin = 10;
+        const yPos = (this.canvas.height / this.viewport.dpr) - statsHeight - margin;
+        
+        // Set 50% opacity for entire HUD
+        ctx.globalAlpha = 0.5;
+        
         // Background
         ctx.fillStyle = 'rgba(34, 34, 34, 0.8)';
-        ctx.fillRect(10, 10, 160, 80);
+        ctx.fillRect(margin, yPos, statsWidth, statsHeight);
         
         // Stats text
         ctx.font = '12px monospace';
@@ -2593,7 +2661,7 @@ class LGraphCanvas {
         ];
         
         stats.forEach((stat, i) => {
-            ctx.fillText(stat, 15, 25 + i * 14);
+            ctx.fillText(stat, margin + 5, yPos + 15 + i * 14);
         });
         
         ctx.restore();
@@ -2645,6 +2713,7 @@ class LGraphCanvas {
         this.canvas.removeEventListener('wheel', this.onMouseWheel);
         this.canvas.removeEventListener('dblclick', this.onDoubleClick);
         document.removeEventListener('keydown', this.onKeyDown);
+        window.removeEventListener('resize', this.onWindowResize);
         
         console.log('LGraphCanvas cleaned up');
     }

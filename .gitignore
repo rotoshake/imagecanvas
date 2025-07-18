@@ -1,0 +1,12 @@
+# Server generated files
+server/thumbnails/
+server/uploads/
+server/database/*.db
+server/database/*.db-shm
+server/database/*.db-wal
+
+# OS files
+.DS_Store
+
+# Test files
+test-*.html

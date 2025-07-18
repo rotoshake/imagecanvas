@@ -204,6 +204,15 @@ async function initApp() {
         window.app = app;
         window.lcanvas = app.graphCanvas;
         
+        // Initialize Canvas Navigator
+        app.canvasNavigator = new CanvasNavigator(app);
+        window.canvasNavigator = app.canvasNavigator;
+        
+        // Load last canvas or create default
+        setTimeout(() => {
+            app.canvasNavigator.loadStartupCanvas();
+        }, 500);
+        
     } catch (error) {
         console.error('Failed to initialize application:', error);
     }

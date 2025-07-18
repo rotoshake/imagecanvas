@@ -32,7 +32,7 @@ class CollaborativeManager {
         // Periodic sync configuration
         this.periodicSync = {
             enabled: true,
-            interval: 30000, // 30 seconds
+            interval: 60000, // 60 seconds - less aggressive
             lastSync: 0,
             lastKnownStateHash: null,
             timer: null,
@@ -69,7 +69,7 @@ class CollaborativeManager {
         
         // Check if collaborative server is available
         try {
-            const response = await fetch('http://localhost:3000/health');
+            const response = await fetch(CONFIG.ENDPOINTS.HEALTH);
             const health = await response.json();
             
             console.log('🏥 Health check response:', health);
@@ -117,7 +117,7 @@ class CollaborativeManager {
             font-family: Arial, sans-serif;
             font-size: 12px;
             z-index: 10000;
-            min-width: 200px;
+            min-width: 160px;
         `;
         
         // Connection status
@@ -199,6 +199,8 @@ class CollaborativeManager {
     updateUserList() {
         if (!this.userList) return;
         
+        console.log('📝 Updating user list. Current user:', this.currentUser?.displayName, 'Other users:', this.otherUsers.size);
+        
         this.userList.innerHTML = '';
         
         // Add current user
@@ -211,6 +213,7 @@ class CollaborativeManager {
         
         // Add other users
         this.otherUsers.forEach((user) => {
+            console.log('📝 Adding other user to list:', user.displayName);
             const userEl = document.createElement('div');
             userEl.style.cssText = 'padding: 2px 0; color: #ccc;';
             userEl.textContent = user.displayName;
@@ -227,10 +230,10 @@ class CollaborativeManager {
     
     connectToServer() {
         try {
-            console.log('🔌 Attempting to connect to http://localhost:3000');
+            console.log('🔌 Attempting to connect to', CONFIG.SERVER.API_BASE);
             console.log('🔧 io function available:', typeof io !== 'undefined');
             
-            this.socket = io('http://localhost:3000');
+            this.socket = io(CONFIG.SERVER.API_BASE);
             
             console.log('🔌 Socket.IO client created:', !!this.socket);
             
@@ -242,21 +245,30 @@ class CollaborativeManager {
                 // Start health monitoring
                 this.startHeartbeat();
                 
-                // Auto-join demo project
-                this.joinProject('demo-project', 'user-' + Math.random().toString(36).substr(2, 9));
+                // If we were in a project before disconnect, rejoin it
+                if (this.currentProject) {
+                    console.log('🔄 Reconnecting to project:', this.currentProject.id);
+                    this.joinProject(this.currentProject.id, this.currentUser?.username, this.currentUser?.displayName);
+                }
             });
             
-            this.socket.on('disconnect', () => {
+            this.socket.on('disconnect', (reason) => {
+                console.log('🔌 Disconnected from collaborative server. Reason:', reason);
                 this.isConnected = false;
-                this.showStatus('Disconnected', 'error');
-                this.otherUsers.clear();
-                this.updateUserList();
+                
+                // Only clear users if it's a permanent disconnect
+                if (reason === 'io server disconnect' || reason === 'io client disconnect') {
+                    this.showStatus('Disconnected', 'error');
+                    this.otherUsers.clear();
+                    this.updateUserList();
+                } else {
+                    // Temporary disconnect - keep user list
+                    this.showStatus('Reconnecting...', 'warning');
+                }
                 
                 // Stop health monitoring and sync
                 this.stopHeartbeat();
                 this.stopPeriodicSync();
-                
-                console.log('🔌 Disconnected from collaborative server');
             });
             
             this.socket.on('connect_error', (error) => {
@@ -280,9 +292,16 @@ class CollaborativeManager {
         
         // Project events
         this.socket.on('project_joined', (data) => {
+            console.log('🎯 Project joined event received:', data.project.id, data.project.name);
+            console.log('🎯 Sequence number from server:', data.sequenceNumber);
+            
             this.currentProject = data.project;
             this.currentUser = data.session;
-            this.sequenceNumber = data.sequenceNumber;
+            this.sequenceNumber = data.sequenceNumber || 0;
+            
+            // Clear any pending sync state from previous project
+            this.periodicSync.lastKnownStateHash = null;
+            this.periodicSync.lastSync = 0;
             
             this.showStatus(`Connected to ${data.project.name || 'Untitled Project'}`, 'success');
             this.updateUserList();
@@ -290,7 +309,10 @@ class CollaborativeManager {
             // Start periodic sync for this project
             this.startPeriodicSync();
             
-            console.log('🎯 Joined project:', data);
+            // Start auto-save for this project
+            this.startAutoSave();
+            
+            console.log('🎯 Successfully joined project:', data.project.id);
         });
         
         this.socket.on('project_state', (state) => {
@@ -300,19 +322,24 @@ class CollaborativeManager {
         this.socket.on('active_users', (users) => {
             // Populate user list with existing users
             this.otherUsers.clear();
+            console.log('👥 Current user ID:', this.currentUser?.userId);
+            console.log('👥 Active users:', users);
+            
             for (const user of users) {
                 if (user.userId !== this.currentUser?.userId) {
                     this.otherUsers.set(user.userId, user);
                 }
             }
             this.updateUserList();
-            console.log('👥 Received active users:', users.length);
+            console.log('👥 Received active users:', users.length, 'Other users:', this.otherUsers.size);
         });
         
         this.socket.on('user_joined', (user) => {
+            console.log('👋 User joined event received:', user);
             this.otherUsers.set(user.userId, user);
+            console.log('👋 Other users map size:', this.otherUsers.size);
             this.updateUserList();
-            console.log('👋 User joined:', user.displayName);
+            console.log('👋 User joined:', user.displayName, 'ID:', user.userId);
         });
         
         this.socket.on('user_left', (user) => {
@@ -371,7 +398,7 @@ class CollaborativeManager {
         console.log('📸 Media uploaded by other user:', fileInfo.original_name);
         
         // Create the media URL from server
-        const mediaUrl = `http://localhost:3000/uploads/${fileInfo.filename}`;
+        const mediaUrl = `${CONFIG.ENDPOINTS.UPLOADS}/${fileInfo.filename}`;
         
         // Create node based on the data received
         if (typeof NodeFactory !== 'undefined' && this.app?.graph) {
@@ -427,7 +454,7 @@ class CollaborativeManager {
             };
             formData.append('nodeData', JSON.stringify(enhancedNodeData));
             
-            const response = await fetch('http://localhost:3000/upload', {
+            const response = await fetch(CONFIG.ENDPOINTS.UPLOAD, {
                 method: 'POST',
                 body: formData
             });
@@ -446,11 +473,52 @@ class CollaborativeManager {
         }
     }
     
-    joinProject(projectId, username, displayName = null) {
+    async joinProject(projectId, username = null, displayName = null) {
         if (!this.socket || !this.isConnected) {
             console.warn('Cannot join project: not connected');
             return;
         }
+        
+        // Convert projectId to number to ensure consistency
+        projectId = parseInt(projectId);
+        
+        // If we're already in this project, don't rejoin
+        if (this.currentProject && this.currentProject.id === projectId) {
+            console.log('Already in project:', projectId);
+            return;
+        }
+        
+        // Leave current project if we're in one
+        if (this.currentProject && this.currentProject.id) {
+            console.log('Leaving project:', this.currentProject.id);
+            
+            // Stop all timers first
+            this.stopPeriodicSync();
+            this.stopAutoSave();
+            this.stopHeartbeat();
+            
+            // Leave the room
+            this.socket.emit('leave_project', { projectId: this.currentProject.id });
+            
+            // Clear state
+            this.currentProject = null;
+            this.sequenceNumber = 0;
+            this.otherUsers.clear();
+            this.updateUserList();
+        }
+        
+        // Use stored user info if not provided
+        if (!username && this.currentUser) {
+            username = this.currentUser.username;
+            displayName = this.currentUser.displayName;
+        }
+        
+        // Default username if still not set
+        if (!username) {
+            username = 'user-' + Math.random().toString(36).substr(2, 9);
+        }
+        
+        console.log('Joining project:', projectId);
         
         this.socket.emit('join_project', {
             projectId: projectId,
@@ -541,7 +609,9 @@ class CollaborativeManager {
         }
         
         // Update sequence number
-        this.sequenceNumber = Math.max(this.sequenceNumber, data.sequenceNumber);
+        if (data.sequenceNumber) {
+            this.sequenceNumber = Math.max(this.sequenceNumber, data.sequenceNumber);
+        }
     }
     
     applyNodeMove(operationData) {
@@ -674,6 +744,12 @@ class CollaborativeManager {
     }
     
     captureProjectState() {
+        // Use the state manager's serialization method
+        if (this.stateManager) {
+            return this.stateManager.serializeState(this.graph, this.canvas);
+        }
+        
+        // Fallback if state manager not available
         const nodes = this.graph.nodes.map(node => ({
             id: node.id,
             type: node.type,
@@ -793,7 +869,7 @@ class CollaborativeManager {
         
         // Load from server
         const serverFilename = nodeData.properties.serverFilename || filename;
-        const serverUrl = `http://localhost:3000/uploads/${serverFilename}`;
+        const serverUrl = `${CONFIG.ENDPOINTS.UPLOADS}/${serverFilename}`;
         
         if (isVideo && node.setVideo) {
             node.setVideo(serverUrl, filename, hash).catch(() => {
@@ -822,7 +898,16 @@ class CollaborativeManager {
     applyNodeCreate(operationData) {
         const { nodeData } = operationData;
         
+        console.log('🔄 Applying node create operation:', nodeData?.id, nodeData?.type);
+        
         if (nodeData && typeof NodeFactory !== 'undefined') {
+            // Check if node already exists
+            const existingNode = this.graph.getNodeById(nodeData.id);
+            if (existingNode) {
+                console.log('⚠️ Node already exists, skipping creation:', nodeData.id);
+                return;
+            }
+            
             const node = NodeFactory.createNode(nodeData.type);
             if (node) {
                 // Set all properties
@@ -854,7 +939,7 @@ class CollaborativeManager {
                 // Add to graph
                 this.graph.add(node);
                 
-                console.log('✅ Created collaborative node:', nodeData.title || nodeData.type);
+                console.log('✅ Created collaborative node:', nodeData.title || nodeData.type, 'Total nodes:', this.graph.nodes.length);
             }
         }
     }
@@ -1109,26 +1194,21 @@ class CollaborativeManager {
     
     async performPeriodicSync() {
         try {
+            // Don't sync if we're not in a project or switching projects
+            if (!this.socket || !this.isConnected || !this.currentProject || !this.currentProject.id) {
+                console.log('🔄 Skipping sync - no project or not connected');
+                return;
+            }
+            
             const now = Date.now();
             this.periodicSync.lastSync = now;
             
             console.log('🔄 Starting periodic sync check...');
             console.log('🔄 Current project:', this.currentProject);
             console.log('🔄 Socket connected:', this.isConnected);
-            console.log('🔄 Socket object:', !!this.socket);
+            console.log('🔄 Current sequence:', this.sequenceNumber);
             
-            if (!this.socket || !this.isConnected || !this.currentProject) {
-                console.log('❌ Cannot perform sync: missing requirements');
-                return;
-            }
-            
-            // Additional safety check - ensure we have a valid project ID
-            if (!this.currentProject.id) {
-                console.log('❌ Cannot perform sync: no project ID');
-                return;
-            }
-            
-            // Request latest project state from server
+            // Calculate current state hash
             const currentStateHash = this.calculateProjectStateHash();
             
             const syncData = {
@@ -1142,10 +1222,9 @@ class CollaborativeManager {
             
             this.socket.emit('sync_check', syncData);
             
-            console.log('🔄 Periodic sync check sent');
-            
         } catch (error) {
             console.error('❌ Periodic sync failed:', error);
+            console.error('Error stack:', error.stack);
         }
     }
     
@@ -1174,22 +1253,37 @@ class CollaborativeManager {
     }
     
     handleSyncResponse(data) {
-        const { needsSync, missedOperations, latestSequence, serverStateHash } = data;
+        console.log('🔄 Received sync response:', data);
+        
+        const { projectId, needsSync, missedOperations, latestSequence, serverStateHash } = data;
+        
+        // Make sure this sync response is for our current project
+        if (!this.currentProject || this.currentProject.id !== parseInt(projectId)) {
+            console.log('🔄 Ignoring sync response for different project:', projectId, 'current:', this.currentProject?.id);
+            return;
+        }
+        
+        console.log('🔄 Sync response is for current project', projectId);
         
         if (needsSync) {
-            console.log('🔄 Sync needed - applying missed operations:', missedOperations?.length || 0);
+            console.log('🔄 Sync needed for project', projectId, '- missed operations:', missedOperations?.length || 0);
             
             if (missedOperations && missedOperations.length > 0) {
                 // Apply missed operations in sequence
+                console.log('🔄 Applying', missedOperations.length, 'missed operations...');
                 this.applyMissedOperations(missedOperations);
-            } else {
+            } else if (missedOperations === null) {
                 // If we can't get operations, request full state
+                console.log('🔄 No operations available, requesting full state');
                 this.requestFullProjectState();
             }
+        } else {
+            console.log('🔄 No sync needed - client is up to date');
         }
         
         // Update our sequence number
         if (latestSequence > this.sequenceNumber) {
+            console.log('🔄 Updating sequence number from', this.sequenceNumber, 'to', latestSequence);
             this.sequenceNumber = latestSequence;
         }
         
@@ -1198,11 +1292,16 @@ class CollaborativeManager {
     }
     
     applyMissedOperations(operations) {
+        console.log('🔄 Applying', operations.length, 'missed operations');
+        console.log('🔄 Current project:', this.currentProject?.id);
+        console.log('🔄 Current nodes:', this.graph.nodes.length);
+        
         const wasEnabled = this.enableCollaboration;
         this.enableCollaboration = false;
         
         try {
             for (const operation of operations) {
+                console.log('🔄 Applying operation:', operation.operation?.type, 'seq:', operation.sequenceNumber);
                 this.handleRemoteOperation(operation);
             }
             
@@ -1210,9 +1309,26 @@ class CollaborativeManager {
                 this.canvas.dirty_canvas = true;
             }
             
+            console.log('🔄 After applying operations, nodes:', this.graph.nodes.length);
+            
         } finally {
             this.enableCollaboration = wasEnabled;
         }
+    }
+    
+    requestFullProjectState() {
+        console.log('🔄 Requesting full project state...');
+        
+        if (!this.socket || !this.currentProject) {
+            console.warn('Cannot request project state - not connected or no current project');
+            return;
+        }
+        
+        // Ask other users in the project to share their state
+        this.socket.emit('request_project_state', {
+            projectId: this.currentProject.id,
+            fromUser: this.currentUser?.userId
+        });
     }
     
     // ===================================
@@ -1282,6 +1398,252 @@ class CollaborativeManager {
         }
         
         console.log('🤝 Collaborative manager disconnected');
+    }
+    
+    // ===================================
+    // AUTO-SAVE FUNCTIONALITY
+    // ===================================
+    
+    startAutoSave() {
+        if (!this.enableCollaboration) return;
+        
+        this.stopAutoSave(); // Clear any existing timer
+        
+        // Initialize debounced save
+        this.debouncedSave = this.createDebouncedSave();
+        
+        // Track changes and save locally for recovery
+        if (!this.hasChangeTracking) {
+            this.setupChangeTracking();
+        }
+        
+        // Set up periodic sync for reliability (every 5 seconds)
+        this.autoSaveTimer = setInterval(() => {
+            if (this.hasUnsavedChanges && this.currentProject) {
+                this.saveCanvas();
+            }
+        }, 5000);
+        
+        // Set up beforeunload handler for unsaved changes
+        window.addEventListener('beforeunload', this.handleBeforeUnload.bind(this));
+        
+        console.log('💾 Real-time save enabled with recovery');
+    }
+    
+    createDebouncedSave() {
+        let saveTimeout;
+        return () => {
+            clearTimeout(saveTimeout);
+            saveTimeout = setTimeout(() => {
+                if (this.currentProject && this.hasUnsavedChanges) {
+                    this.saveCanvas();
+                }
+            }, 1000); // Save 1 second after last change
+        };
+    }
+    
+    stopAutoSave() {
+        if (this.autoSaveTimer) {
+            clearInterval(this.autoSaveTimer);
+            this.autoSaveTimer = null;
+        }
+    }
+    
+    setupChangeTracking() {
+        // Mark as changed when any operation is sent
+        const originalSendOperation = this.sendOperation.bind(this);
+        this.sendOperation = (type, data) => {
+            this.hasUnsavedChanges = true;
+            
+            // Save to local storage for recovery
+            this.saveToLocalRecovery();
+            
+            // Trigger debounced save
+            if (this.debouncedSave) {
+                this.debouncedSave();
+            }
+            
+            return originalSendOperation(type, data);
+        };
+        
+        this.hasChangeTracking = true;
+    }
+    
+    saveToLocalRecovery() {
+        if (!this.currentProject) return;
+        
+        try {
+            const recoveryData = {
+                projectId: this.currentProject.id,
+                canvasData: this.captureProjectState(),
+                timestamp: Date.now()
+            };
+            
+            localStorage.setItem('canvasRecovery', JSON.stringify(recoveryData));
+        } catch (error) {
+            console.warn('Failed to save recovery data:', error);
+        }
+    }
+    
+    async checkForRecovery() {
+        try {
+            const recoveryData = localStorage.getItem('canvasRecovery');
+            if (!recoveryData) return false;
+            
+            const { projectId, canvasData, timestamp } = JSON.parse(recoveryData);
+            
+            // Check if recovery is recent (within 24 hours)
+            const age = Date.now() - timestamp;
+            if (age > 24 * 60 * 60 * 1000) {
+                localStorage.removeItem('canvasRecovery');
+                return false;
+            }
+            
+            // Check if this is for current project
+            if (this.currentProject && this.currentProject.id === projectId) {
+                const recover = confirm('Found unsaved changes from your last session. Would you like to recover them?');
+                if (recover) {
+                    this.stateManager.loadState(canvasData);
+                    this.hasUnsavedChanges = true;
+                    this.saveCanvas(); // Save recovered state
+                }
+                localStorage.removeItem('canvasRecovery');
+                return true;
+            }
+            
+            return false;
+        } catch (error) {
+            console.error('Failed to check recovery:', error);
+            return false;
+        }
+    }
+    
+    handleBeforeUnload(event) {
+        if (this.hasUnsavedChanges) {
+            // Save one last time
+            this.saveToLocalRecovery();
+            
+            // Most browsers ignore custom messages now, but we still need to set it
+            const message = 'Changes are being saved...';
+            event.returnValue = message;
+            return message;
+        }
+    }
+    
+    async saveCanvas() {
+        console.log('💾 saveCanvas called, currentProject:', this.currentProject?.id, 'hasUnsavedChanges:', this.hasUnsavedChanges);
+        
+        if (!this.currentProject) {
+            console.log('⚠️ No current project, skipping save');
+            return;
+        }
+        
+        if (!this.hasUnsavedChanges) {
+            console.log('⚠️ No unsaved changes, skipping save');
+            return;
+        }
+        
+        try {
+            console.log('💾 Auto-saving canvas...');
+            
+            // Capture current state
+            const canvasData = this.captureProjectState();
+            console.log('💾 Canvas data captured, nodes:', canvasData.nodes?.length);
+            
+            console.log('💾 Sending save request to:', CONFIG.ENDPOINTS.PROJECT_CANVAS(this.currentProject.id));
+            
+            const response = await fetch(CONFIG.ENDPOINTS.PROJECT_CANVAS(this.currentProject.id), {
+                method: 'PUT',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    canvas_data: canvasData,
+                    userId: this.currentUser?.id || 1
+                })
+            });
+            
+            console.log('💾 Save response status:', response.status);
+            
+            if (response.ok) {
+                this.hasUnsavedChanges = false;
+                this.lastSaveTime = Date.now();
+                this.showStatus('Canvas saved', 'success');
+                console.log('✅ Canvas auto-saved successfully');
+                
+                // Verify save by fetching back
+                const verifyResponse = await fetch(CONFIG.ENDPOINTS.PROJECT_CANVAS(this.currentProject.id));
+                if (verifyResponse.ok) {
+                    const verifyData = await verifyResponse.json();
+                    console.log('✅ Save verified, nodes in DB:', verifyData.canvas_data?.nodes?.length || 0);
+                }
+            } else {
+                const errorText = await response.text();
+                console.error('❌ Failed to auto-save canvas:', response.status, errorText);
+                this.showStatus('Auto-save failed', 'error');
+            }
+        } catch (error) {
+            console.error('❌ Auto-save error:', error);
+            this.showStatus('Auto-save error', 'error');
+        }
+    }
+    
+    async loadCanvas(projectId) {
+        try {
+            console.log('📥 Loading canvas for project:', projectId);
+            
+            const response = await fetch(CONFIG.ENDPOINTS.PROJECT_CANVAS(projectId));
+            
+            if (!response.ok) {
+                throw new Error(`Failed to load canvas: ${response.statusText}`);
+            }
+            
+            const data = await response.json();
+            
+            if (data.canvas_data) {
+                // Clear current canvas
+                this.graph.clear();
+                
+                // Load the saved state with external data
+                await this.stateManager.loadState(this.graph, this.canvas, data.canvas_data);
+                
+                console.log('✅ Canvas loaded successfully');
+                this.showStatus('Canvas loaded', 'success');
+                
+                // Reset save tracking
+                this.hasUnsavedChanges = false;
+                this.lastSaveTime = Date.now();
+                
+                // Check for recovery after loading
+                setTimeout(() => this.checkForRecovery(), 500);
+            } else {
+                console.log('ℹ️ No saved canvas data for this project');
+            }
+        } catch (error) {
+            console.error('❌ Failed to load canvas:', error);
+            this.showStatus('Failed to load canvas', 'error');
+        }
+    }
+    
+    // Manual save method
+    async save() {
+        this.hasUnsavedChanges = true;
+        await this.saveCanvas();
+    }
+    
+    // Mark canvas as modified and trigger save
+    markModified() {
+        console.log('📝 markModified called');
+        console.log('📝 currentProject:', this.currentProject);
+        console.log('📝 isConnected:', this.isConnected);
+        
+        this.hasUnsavedChanges = true;
+        if (this.debouncedSave) {
+            console.log('📝 Calling debouncedSave...');
+            this.debouncedSave();
+        } else {
+            console.log('⚠️ No debouncedSave function available');
+        }
     }
 }
 

@@ -165,21 +165,25 @@ class CollaborationManager {
             socket.join(`project_${actualProjectId}`);
             
             // Initialize or update project room
-            if (!this.projectRooms.has(actualProjectId)) {
-                this.projectRooms.set(actualProjectId, {
+            const roomProjectId = parseInt(actualProjectId);
+            if (!this.projectRooms.has(roomProjectId)) {
+                // Get the latest sequence from database
+                const latestOp = await this.db.get(
+                    'SELECT MAX(sequence_number) as latest FROM operations WHERE project_id = ?',
+                    [roomProjectId]
+                );
+                const latestSequence = latestOp?.latest || 0;
+                
+                this.projectRooms.set(roomProjectId, {
                     users: new Set(),
-                    sequenceNumber: 0
+                    sequenceNumber: latestSequence
                 });
+                
+                console.log(`📊 Initialized room for project ${roomProjectId} with sequence ${latestSequence}`);
             }
             
-            const room = this.projectRooms.get(actualProjectId);
+            const room = this.projectRooms.get(roomProjectId);
             room.users.add(socket.id);
-            
-            // Clean up any existing sessions for this user in this project (prevents duplicates)
-            await this.db.run(
-                'DELETE FROM active_sessions WHERE user_id = ? AND project_id = ?',
-                [user.id, actualProjectId]
-            );
             
             // Store session in database
             await this.db.run(
@@ -240,7 +244,11 @@ class CollaborationManager {
             // Get users from in-memory sessions (these are guaranteed to be connected)
             const activeUsers = [];
             
+            console.log('📋 Getting active users for project:', projectId);
+            console.log('📋 Current sessions:', this.userSessions.size);
+            
             for (const [socketId, session] of this.userSessions.entries()) {
+                console.log('📋 Checking session:', socketId, 'projectId:', session.projectId, 'vs', projectId);
                 if (session.projectId === parseInt(projectId)) {
                     activeUsers.push({
                         userId: session.userId,
@@ -251,6 +259,7 @@ class CollaborationManager {
                 }
             }
             
+            console.log('📋 Found active users:', activeUsers.length);
             return activeUsers;
         } catch (error) {
             console.error('Error getting active users:', error);
@@ -275,10 +284,26 @@ class CollaborationManager {
         }
         
         try {
-            const room = this.projectRooms.get(projectId);
+            const roomProjectId = parseInt(projectId);
+            let room = this.projectRooms.get(roomProjectId);
+            
+            // Initialize room if it doesn't exist
             if (!room) {
-                socket.emit('error', { message: 'Project room not found' });
-                return;
+                console.log('⚠️ Project room not found, initializing for project:', roomProjectId);
+                
+                // Get the latest sequence from database
+                const latestOp = await this.db.get(
+                    'SELECT MAX(sequence_number) as latest FROM operations WHERE project_id = ?',
+                    [roomProjectId]
+                );
+                const latestSequence = latestOp?.latest || 0;
+                
+                this.projectRooms.set(roomProjectId, {
+                    users: new Set([socket.id]),
+                    sequenceNumber: latestSequence
+                });
+                
+                room = this.projectRooms.get(roomProjectId);
             }
             
             // Assign sequence number
@@ -525,7 +550,11 @@ class CollaborationManager {
             );
             const latestSequence = latestOp?.latest || 0;
             
-            console.log('🔍 Latest sequence:', latestSequence, 'Client sequence:', sequenceNumber);
+            // Get room sequence number as well
+            const room = this.projectRooms.get(parseInt(projectId));
+            const roomSequence = room?.sequenceNumber || 0;
+            
+            console.log('🔍 Project:', projectId, 'DB sequence:', latestSequence, 'Room sequence:', roomSequence, 'Client sequence:', sequenceNumber);
             
             // Check if client is behind
             const needsSync = sequenceNumber < latestSequence;
@@ -560,6 +589,7 @@ class CollaborationManager {
             console.log('🔍 Sending sync response:', { needsSync, latestSequence, serverStateHash });
             
             socket.emit('sync_response', {
+                projectId: parseInt(projectId),  // Include projectId in response
                 needsSync,
                 missedOperations,
                 latestSequence,
