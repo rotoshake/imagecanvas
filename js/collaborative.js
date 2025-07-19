@@ -10,6 +10,18 @@ class CollaborativeManager {
         this.graph = app.graph;
         this.stateManager = app.stateManager;
         
+        // Connection state machine
+        this.connectionState = new ConnectionStateMachine();
+        
+        // Resource manager
+        this.resourceManager = new ResourceManager();
+        
+        // Error boundary
+        this.errorBoundary = new ErrorBoundary({
+            maxRetries: 3,
+            retryDelay: 1000
+        });
+        
         // Core state
         this.socket = null;
         this.isConnected = false;
@@ -37,6 +49,9 @@ class CollaborativeManager {
         // Auto-save state
         this.hasUnsavedChanges = false;
         this.lastSaveTime = Date.now();
+        
+        // Action manager
+        this.actionManager = null;
         
         this.init();
     }
@@ -68,126 +83,153 @@ class CollaborativeManager {
         this.connectToServer();
     }
     
-    connectToServer() {
-        if (this.isConnecting) {
-            console.log('⏳ Already connecting, skipping duplicate attempt');
+    async connectToServer() {
+        // Check if we can transition to connecting state
+        if (!this.connectionState.canTransition('connecting')) {
+            console.log(`⚠️ Cannot connect from state: ${this.connectionState.getState()}`);
             return;
         }
-        
-        if (this.socket && (this.socket.connected || this.socket.connecting)) {
-            console.log('⚠️ Socket already exists and is connected/connecting');
-            return;
-        }
-        
-        this.isConnecting = true;
-        console.log('🔌 Connecting to collaborative server...');
-        this.showStatus('Connecting...', 'info');
         
         try {
-            // Clean up any existing socket
-            if (this.socket) {
-                console.log('🧹 Cleaning up existing socket');
-                this.socket.removeAllListeners();
-                this.socket.disconnect();
-                this.socket = null;
-            }
-            
-            console.log('🔧 Creating socket to:', CONFIG.SERVER.API_BASE);
-            
-            this.socket = io(CONFIG.SERVER.API_BASE, {
-                reconnection: false,  // We handle reconnection manually for better control
-                autoConnect: false,   // Don't auto-connect, we'll do it manually
-                timeout: 10000,
-                forceNew: true,      // Force a new connection instead of reusing existing
-                multiplex: false,    // Don't multiplex connections
-                transports: ['websocket'], // Use WebSocket only, avoid polling
-                upgrade: false       // Don't upgrade from long-polling
+            await this.connectionState.transition('connecting', async () => {
+                console.log('🔌 Connecting to collaborative server...');
+                this.showStatus('Connecting...', 'info');
+                
+                // Clean up any existing socket
+                if (this.socket) {
+                    console.log('🧹 Cleaning up existing socket');
+                    this.socket.removeAllListeners();
+                    this.socket.disconnect();
+                    this.socket = null;
+                }
+                
+                console.log('🔧 Creating socket to:', CONFIG.SERVER.API_BASE);
+                
+                this.socket = io(CONFIG.SERVER.API_BASE, {
+                    reconnection: false,  // We handle reconnection manually for better control
+                    autoConnect: false,   // Don't auto-connect, we'll do it manually
+                    timeout: 10000,
+                    forceNew: true,      // Force a new connection instead of reusing existing
+                    multiplex: false,    // Don't multiplex connections
+                    transports: ['websocket'], // Use WebSocket only, avoid polling
+                    upgrade: false       // Don't upgrade from long-polling
+                });
+                
+                console.log('🔧 Socket created:', !!this.socket);
+                
+                this.setupSocketHandlers();
+                
+                // Connect immediately
+                console.log('🔧 Connecting socket...');
+                this.socket.connect();
             });
-            
-            console.log('🔧 Socket created:', !!this.socket);
-            
-            this.setupSocketHandlers();
-            
-            // Connect immediately
-            console.log('🔧 Connecting socket...');
-            this.socket.connect();
         } catch (error) {
-            console.error('Failed to create socket:', error);
+            console.error('Failed to connect:', error);
             this.showStatus('Connection Failed', 'error');
-            this.isConnecting = false;  // Reset flag on error
+            // State machine will handle the rollback
         }
     }
     
     setupSocketHandlers() {
-        this.socket.on('connect', () => {
+        this.socket.on('connect', async () => {
             console.log('✅ Connected to server');
-            this.isConnected = true;
-            this.isConnecting = false;  // Clear connecting flag
-            this.reconnectAttempts = 0; // Reset counter
             
-            // Clear any pending reconnect
-            if (this.reconnectTimer) {
-                clearTimeout(this.reconnectTimer);
-                this.reconnectTimer = null;
+            try {
+                await this.connectionState.transition('connected', async () => {
+                    this.isConnected = true;
+                    this.isConnecting = false;  // Clear connecting flag
+                    this.reconnectAttempts = 0; // Reset counter
+                    
+                    // Clear any pending reconnect
+                    if (this.reconnectTimer) {
+                        clearTimeout(this.reconnectTimer);
+                        this.reconnectTimer = null;
+                    }
+                    
+                    this.showStatus('Connected', 'success');
+                    
+                    // Rejoin project if we were in one
+                    if (this.currentProject && this.currentProject.id) {
+                        await this.rejoinProject();
+                    }
+                    
+                    // Start monitoring
+                    this.startHeartbeat();
+                });
+            } catch (error) {
+                console.error('Failed to handle connection:', error);
             }
-            
-            this.showStatus('Connected', 'success');
-            
-            // Rejoin project if we were in one
-            if (this.currentProject && this.currentProject.id) {
-                this.rejoinProject();
-            }
-            
-            // Start monitoring
-            this.startHeartbeat();
         });
         
-        this.socket.on('disconnect', (reason) => {
+        this.socket.on('disconnect', async (reason) => {
             console.log('❌ Disconnected:', reason);
-            this.isConnected = false;
-            this.isConnecting = false;  // Clear connecting flag
             
-            // Clear any pending reconnect
-            if (this.reconnectTimer) {
-                clearTimeout(this.reconnectTimer);
-                this.reconnectTimer = null;
-            }
-            
-            // Stop monitoring
-            this.stopHeartbeat();
-            this.stopPeriodicSync();
-            
-            if (reason === 'io server disconnect') {
-                // Server kicked us out
-                this.showStatus('Disconnected by server', 'error');
-            } else if (reason === 'io client disconnect') {
-                // We disconnected intentionally
-                this.showStatus('Disconnected', 'info');
-            } else if (reason === 'transport close' || reason === 'transport error') {
-                // Transport issues - wait longer before reconnecting
-                console.log('⚠️ Transport issue detected, waiting before reconnect...');
-                this.showStatus('Connection lost - Will reconnect...', 'warning');
-                // Use longer delay for transport issues
-                setTimeout(() => {
-                    if (!this.isConnected && !this.isConnecting) {
+            try {
+                await this.connectionState.transition('disconnected', async () => {
+                    this.isConnected = false;
+                    this.isConnecting = false;  // Clear connecting flag
+                    
+                    // Clear any pending reconnect
+                    if (this.reconnectTimer) {
+                        clearTimeout(this.reconnectTimer);
+                        this.reconnectTimer = null;
+                    }
+                    
+                    // Stop monitoring
+                    this.stopHeartbeat();
+                    this.stopPeriodicSync();
+                    
+                    // Clear pending operations
+                    this.connectionState.clearPendingOperations();
+                    
+                    if (reason === 'io server disconnect') {
+                        // Server kicked us out
+                        this.showStatus('Disconnected by server', 'error');
+                    } else if (reason === 'io client disconnect') {
+                        // We disconnected intentionally
+                        this.showStatus('Disconnected', 'info');
+                    } else if (reason === 'transport close' || reason === 'transport error') {
+                        // Transport issues - wait longer before reconnecting
+                        console.log('⚠️ Transport issue detected, waiting before reconnect...');
+                        this.showStatus('Connection lost - Will reconnect...', 'warning');
+                        // Use longer delay for transport issues
+                        setTimeout(() => {
+                            if (this.connectionState.getState() === 'disconnected') {
+                                this.scheduleReconnect();
+                            }
+                        }, 3000); // Wait 3 seconds before starting reconnection
+                    } else {
+                        // Other connection loss - attempt reconnection
+                        this.showStatus('Connection lost - Reconnecting...', 'warning');
                         this.scheduleReconnect();
                     }
-                }, 3000); // Wait 3 seconds before starting reconnection
-            } else {
-                // Other connection loss - attempt reconnection
-                this.showStatus('Connection lost - Reconnecting...', 'warning');
-                this.scheduleReconnect();
+                });
+            } catch (error) {
+                console.error('Failed to handle disconnect:', error);
             }
         });
         
-        this.socket.on('connect_error', (error) => {
+        this.socket.on('connect_error', async (error) => {
             console.log('❌ Connection error:', error.message);
-            this.isConnected = false;
-            this.isConnecting = false;  // Clear connecting flag
             
-            // Only schedule reconnect if we don't already have one pending
-            if (!this.reconnectTimer) {
-                this.scheduleReconnect();
+            try {
+                await this.connectionState.transition('error', async () => {
+                    this.isConnected = false;
+                    this.isConnecting = false;  // Clear connecting flag
+                    
+                    // Only schedule reconnect if we don't already have one pending
+                    if (!this.reconnectTimer) {
+                        this.scheduleReconnect();
+                    }
+                });
+            } catch (stateError) {
+                // If we can't transition to error state, try disconnected
+                if (this.connectionState.canTransition('disconnected')) {
+                    await this.connectionState.transition('disconnected', () => {
+                        this.isConnected = false;
+                        this.isConnecting = false;
+                    });
+                }
             }
         });
         
@@ -450,28 +492,49 @@ class CollaborativeManager {
     }
     
     sendOperation(operationType, operationData) {
-        if (!this.socket || !this.currentProject) {
-            console.log('📤 Operation queued (offline):', operationType);
-            // In future: queue operations for when we reconnect
-            return;
-        }
-        
-        const operation = {
-            type: operationType,
-            data: operationData,
-            timestamp: Date.now(),
-            sequence: ++this.sequenceNumber
-        };
-        
-        if (this.isConnected) {
-            this.socket.emit('canvas_operation', {
-                projectId: this.currentProject.id,
-                operation: operation
-            });
-        } else {
-            console.log('📤 Operation queued (disconnected):', operationType);
-            // In future: queue operations
-        }
+        return this.errorBoundary.execute(async () => {
+            if (!this.socket || !this.currentProject) {
+                console.log('📤 Operation queued (offline):', operationType);
+                // Use connection state to queue operation
+                return this.connectionState.queueOperation(() => {
+                    this.sendOperation(operationType, operationData);
+                });
+            }
+            
+            const operation = {
+                type: operationType,
+                data: operationData,
+                timestamp: Date.now(),
+                sequence: ++this.sequenceNumber
+            };
+            
+            if (this.isConnected) {
+                this.socket.emit('canvas_operation', {
+                    projectId: this.currentProject.id,
+                    operation: operation
+                });
+                return operation;
+            } else {
+                console.log('📤 Operation queued (disconnected):', operationType);
+                // Queue for when connection is restored
+                return this.connectionState.queueOperation(() => {
+                    this.socket.emit('canvas_operation', {
+                        projectId: this.currentProject.id,
+                        operation: operation
+                    });
+                });
+            }
+        }, {
+            id: `send_${operationType}`,
+            type: 'broadcast',
+            fallback: async (error) => {
+                console.log(`📥 Queueing failed operation: ${operationType}`, error.message);
+                // Queue for retry when connection is restored
+                return this.connectionState.queueOperation(() => {
+                    this.sendOperation(operationType, operationData);
+                });
+            }
+        });
     }
     
     // Special method for undo/redo state sync
@@ -541,6 +604,12 @@ class CollaborativeManager {
         console.log('👋 User joined:', user.displayName);
         this.otherUsers.set(user.userId, user);
         this.updateUserList();
+        
+        // Don't automatically broadcast nodes when users join
+        // They should either:
+        // 1. Load from server (if no unsaved changes)
+        // 2. Request state sync (if unsaved changes exist)
+        // This prevents duplicate nodes
     }
     
     handleUserLeft(user) {
@@ -550,17 +619,35 @@ class CollaborativeManager {
     }
     
     // Operation handlers
-    handleRemoteOperation(data) {
-        // Skip operations from current user
-        if (data.userId === this.currentUser?.userId) {
-            return;
+    async handleRemoteOperation(data) {
+        const { operation, userId } = data;
+        
+        if (userId === this.currentUser?.userId) {
+            return; // Skip own operations
         }
         
-        console.log('📥 Remote operation:', data.operation.type);
-        
-        const { operation } = data;
         const { type, data: operationData } = operation;
         
+        console.log('📥 Remote operation:', type, operationData);
+        
+        // Use action manager for all operations
+        if (this.actionManager) {
+            await this.actionManager.executeAction(type, operationData, { 
+                fromRemote: true,
+                skipUndo: true 
+            });
+        } else {
+            // Fallback to existing implementation
+            this.applyOperation(type, operationData);
+        }
+        
+        // Update sequence number
+        if (operation.sequenceNumber > this.sequenceNumber) {
+            this.sequenceNumber = operation.sequenceNumber;
+        }
+    }
+    
+    applyOperation(type, operationData) {
         try {
             switch (type) {
                 case 'node_move':
@@ -613,7 +700,13 @@ class CollaborativeManager {
     
     // Apply operation methods
     applyNodeMove(operationData) {
-        const { nodeId, pos, nodeIds, positions } = operationData;
+        const { nodeId, pos, nodeIds, positions, x, y } = operationData;
+        
+        console.log('Applying node move:', operationData);
+        
+        // Track if we're missing any nodes
+        let missingNodes = false;
+        let nodesFound = 0;
         
         if (nodeIds && positions) {
             // Multi-node move
@@ -622,20 +715,69 @@ class CollaborativeManager {
                 if (node && positions[i]) {
                     node.pos[0] = positions[i][0];
                     node.pos[1] = positions[i][1];
+                    console.log(`Moved node ${nodeIds[i]} to:`, node.pos);
+                    nodesFound++;
+                } else if (!node) {
+                    console.warn(`Node ${nodeIds[i]} not found during move operation`);
+                    missingNodes = true;
                 }
             }
         } else if (nodeId && pos) {
-            // Single node move
+            // Single node move with pos array
             const node = this.graph.getNodeById(nodeId);
             if (node) {
                 node.pos[0] = pos[0];
                 node.pos[1] = pos[1];
+                console.log(`Moved node ${nodeId} to:`, node.pos, 'Node exists:', !!node, 'Has image:', !!node.img);
+                nodesFound++;
+            } else {
+                console.warn(`Node ${nodeId} not found during move operation`);
+                missingNodes = true;
             }
+        } else if (nodeId && (x !== undefined && y !== undefined)) {
+            // Single node move with x,y coordinates (from action manager)
+            const node = this.graph.getNodeById(nodeId);
+            if (node) {
+                node.pos[0] = x;
+                node.pos[1] = y;
+                console.log(`Moved node ${nodeId} to:`, node.pos, 'Node exists:', !!node, 'Has image:', !!node.img);
+                nodesFound++;
+            } else {
+                console.warn(`Node ${nodeId} not found during move operation`);
+                missingNodes = true;
+            }
+        }
+        
+        console.log(`Move operation completed. Nodes found: ${nodesFound}, Missing: ${missingNodes}`);
+        
+        // Log all current nodes for debugging
+        console.log('Current nodes in graph:', this.graph.nodes.map(n => ({
+            id: n.id,
+            type: n.type,
+            pos: [...n.pos],
+            hasImage: !!n.img,
+            loadingState: n.loadingState
+        })));
+        
+        // Force canvas redraw after move
+        if (this.canvas) {
+            this.canvas.dirty_canvas = true;
+        }
+        
+        // If we're missing nodes, request a state sync
+        if (missingNodes && this.socket && this.socket.connected) {
+            console.log('🔄 Requesting state sync due to missing nodes');
+            this.socket.emit('request_state', {
+                projectId: this.projectId
+            });
         }
     }
     
     applyNodeResize(operationData) {
         const { nodeId, size, pos, nodeIds, sizes, positions } = operationData;
+        
+        // Track if we're missing any nodes
+        let missingNodes = false;
         
         if (nodeIds && sizes) {
             // Multi-node resize
@@ -654,6 +796,9 @@ class CollaborativeManager {
                     if (node.onResize) {
                         node.onResize();
                     }
+                } else if (!node) {
+                    console.warn(`Node ${nodeIds[i]} not found during resize operation`);
+                    missingNodes = true;
                 }
             }
         } else if (nodeId && size) {
@@ -672,12 +817,26 @@ class CollaborativeManager {
                 if (node.onResize) {
                     node.onResize();
                 }
+            } else {
+                console.warn(`Node ${nodeId} not found during resize operation`);
+                missingNodes = true;
             }
+        }
+        
+        // If we're missing nodes, request a state sync
+        if (missingNodes && this.socket && this.socket.connected) {
+            console.log('🔄 Requesting state sync due to missing nodes');
+            this.socket.emit('request_state', {
+                projectId: this.projectId
+            });
         }
     }
     
     applyNodeRotate(operationData) {
         const { nodeId, rotation, pos, nodeIds, rotations, positions } = operationData;
+        
+        // Track if we're missing any nodes
+        let missingNodes = false;
         
         if (nodeIds && rotations) {
             // Multi-node rotation
@@ -690,6 +849,9 @@ class CollaborativeManager {
                         node.pos[0] = positions[i][0];
                         node.pos[1] = positions[i][1];
                     }
+                } else if (!node) {
+                    console.warn(`Node ${nodeIds[i]} not found during rotate operation`);
+                    missingNodes = true;
                 }
             }
         } else if (nodeId && typeof rotation === 'number') {
@@ -702,7 +864,18 @@ class CollaborativeManager {
                     node.pos[0] = pos[0];
                     node.pos[1] = pos[1];
                 }
+            } else {
+                console.warn(`Node ${nodeId} not found during rotate operation`);
+                missingNodes = true;
             }
+        }
+        
+        // If we're missing nodes, request a state sync
+        if (missingNodes && this.socket && this.socket.connected) {
+            console.log('🔄 Requesting state sync due to missing nodes');
+            this.socket.emit('request_state', {
+                projectId: this.projectId
+            });
         }
     }
     
@@ -761,6 +934,8 @@ class CollaborativeManager {
     applyNodeCreate(operationData) {
         const { nodeData } = operationData;
         
+        console.log('📦 Applying node create:', nodeData);
+        
         if (nodeData && typeof NodeFactory !== 'undefined') {
             // Check if node already exists
             const existingNode = this.graph.getNodeById(nodeData.id);
@@ -788,12 +963,18 @@ class CollaborativeManager {
                 
                 // Handle media nodes
                 if ((nodeData.type === 'media/image' || nodeData.type === 'media/video') && nodeData.properties.hash) {
+                    console.log('🖼️ Loading media for node:', node.id, nodeData.properties);
                     this.loadNodeMedia(node, nodeData);
                 }
                 
                 // Add to graph
                 this.graph.add(node);
-                console.log('✅ Created node:', nodeData.title || nodeData.type);
+                console.log('✅ Created node:', nodeData.title || nodeData.type, 'at position:', node.pos);
+                
+                // Force canvas redraw
+                if (this.canvas) {
+                    this.canvas.dirty_canvas = true;
+                }
             }
         }
     }
@@ -957,12 +1138,24 @@ class CollaborativeManager {
         const { fileInfo, nodeData } = data;
         console.log('📸 Media uploaded by other user:', fileInfo.original_name);
         
+        // Check if node already exists (e.g., if we already loaded it from server)
+        if (nodeData.id && this.app?.graph) {
+            const existingNode = this.app.graph.getNodeById(nodeData.id);
+            if (existingNode) {
+                console.log('⚠️ Node already exists from media upload:', nodeData.id);
+                return;
+            }
+        }
+        
         const mediaUrl = `${CONFIG.ENDPOINTS.UPLOADS}/${fileInfo.filename}`;
         
         if (typeof NodeFactory !== 'undefined' && this.app?.graph) {
             const node = NodeFactory.createNode(nodeData.type);
             if (node) {
-                // Set node properties
+                // Set node properties INCLUDING ID!
+                if (nodeData.id) {
+                    node.id = nodeData.id;
+                }
                 node.pos = [...nodeData.pos];
                 node.size = [...nodeData.size];
                 node.title = nodeData.title;
@@ -1129,11 +1322,14 @@ class CollaborativeManager {
     startPeriodicSync() {
         this.stopPeriodicSync();
         
-        this.syncTimer = setInterval(() => {
+        const intervalId = setInterval(() => {
             if (this.isConnected && this.currentProject) {
                 this.performPeriodicSync();
             }
         }, 60000); // Every 60 seconds
+        
+        this.resourceManager.registerInterval('periodicSync', intervalId);
+        this.syncTimer = intervalId;
         
         console.log('🔄 Periodic sync started');
     }
@@ -1227,11 +1423,14 @@ class CollaborativeManager {
     startHeartbeat() {
         this.stopHeartbeat();
         
-        this.heartbeatTimer = setInterval(() => {
+        const intervalId = setInterval(() => {
             if (this.isConnected) {
                 this.sendHeartbeat();
             }
         }, 10000); // Every 10 seconds
+        
+        this.resourceManager.registerInterval('heartbeat', intervalId);
+        this.heartbeatTimer = intervalId;
     }
     
     stopHeartbeat() {
@@ -1264,11 +1463,14 @@ class CollaborativeManager {
         }
         
         // Periodic save
-        this.autoSaveTimer = setInterval(() => {
+        const intervalId = setInterval(() => {
             if (this.hasUnsavedChanges && this.currentProject) {
                 this.saveCanvas();
             }
         }, 5000); // Every 5 seconds
+        
+        this.resourceManager.registerInterval('autoSave', intervalId);
+        this.autoSaveTimer = intervalId;
         
         console.log('💾 Auto-save enabled');
     }
@@ -1330,7 +1532,14 @@ class CollaborativeManager {
     }
     
     // Cleanup
+    setActionManager(actionManager) {
+        this.actionManager = actionManager;
+    }
+    
     disconnect() {
+        console.log('🔌 Disconnecting collaborative session...');
+        
+        // Stop all timers
         this.stopPeriodicSync();
         this.stopHeartbeat();
         this.stopAutoSave();
@@ -1345,9 +1554,19 @@ class CollaborativeManager {
             this.reconnectTimer = null;
         }
         
+        // Clean up all resources
+        this.resourceManager.cleanupAll();
+        
+        // Disconnect socket
         if (this.socket) {
+            this.socket.removeAllListeners();
             this.socket.disconnect();
             this.socket = null;
+        }
+        
+        // Update connection state
+        if (this.connectionState.canTransition('disconnected')) {
+            this.connectionState.transition('disconnected');
         }
         
         if (this.collaborationUI) {

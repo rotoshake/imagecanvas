@@ -31,6 +31,7 @@
     
     <!-- Main application -->
     <script src="js/graph.js"></script>
+    <script src="js/actions/CanvasActionManager.js"></script>
     <script src="js/canvas.js"></script>
     <script src="js/dragdrop.js"></script>
     
@@ -51,11 +52,23 @@
             document.head.appendChild(script);
         })();
     </script>
+    <script src="js/actions/ConnectionStateMachine.js"></script>
+    <script src="js/actions/ResourceManager.js"></script>
+    <script src="js/actions/ErrorBoundary.js"></script>
     <script src="js/collaborative.js"></script>
     
     <!-- UI Components -->
     <script src="js/ui/canvas-navigator.js"></script>
     
     <script src="js/app.js"></script>
+    
+    <!-- Initialize global error boundary -->
+    <script>
+        // Initialize global error boundary after all scripts are loaded
+        if (typeof GlobalErrorBoundary !== 'undefined') {
+            window.globalErrorBoundary = new GlobalErrorBoundary();
+            console.log('🛡️ Global error boundary initialized');
+        }
+    </script>
 </body>
 </html>
