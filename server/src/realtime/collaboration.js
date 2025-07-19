@@ -165,7 +165,7 @@ class CollaborationManager {
             socket.join(`project_${actualProjectId}`);
             
             // Initialize or update project room
-            const roomProjectId = parseInt(actualProjectId);
+            const roomProjectId = typeof actualProjectId === 'string' ? parseInt(actualProjectId) : actualProjectId;
             if (!this.projectRooms.has(roomProjectId)) {
                 // Get the latest sequence from database
                 const latestOp = await this.db.get(
@@ -270,10 +270,15 @@ class CollaborationManager {
     async handleLeaveProject(socket, { projectId }) {
         const session = this.userSessions.get(socket.id);
         if (!session || parseInt(session.projectId) !== parseInt(projectId)) {
+            // Still emit confirmation even if session not found
+            socket.emit('project_left', { projectId: parseInt(projectId) });
             return;
         }
         
         await this.removeUserFromProject(socket, projectId, session);
+        
+        // Emit confirmation to the leaving user
+        socket.emit('project_left', { projectId: parseInt(projectId) });
     }
     
     async handleCanvasOperation(socket, { projectId, operation }) {
@@ -284,7 +289,7 @@ class CollaborationManager {
         }
         
         try {
-            const roomProjectId = parseInt(projectId);
+            const roomProjectId = typeof projectId === 'string' ? parseInt(projectId) : projectId;
             let room = this.projectRooms.get(roomProjectId);
             
             // Initialize room if it doesn't exist
@@ -401,7 +406,10 @@ class CollaborationManager {
     handleDisconnect(socket) {
         const session = this.userSessions.get(socket.id);
         if (session) {
-            this.removeUserFromProject(socket, session.projectId, session);
+            const projectId = session.projectId;
+            this.removeUserFromProject(socket, projectId, session);
+            // Emit confirmation even on disconnect
+            socket.emit('project_left', { projectId: parseInt(projectId) });
         }
         console.log(`👋 Client disconnected: ${socket.id}`);
     }
@@ -546,12 +554,12 @@ class CollaborationManager {
             // Get latest sequence number for this project
             const latestOp = await this.db.get(
                 'SELECT MAX(sequence_number) as latest FROM operations WHERE project_id = ?',
-                [parseInt(projectId)]
+                [typeof projectId === 'string' ? parseInt(projectId) : projectId]
             );
             const latestSequence = latestOp?.latest || 0;
             
             // Get room sequence number as well
-            const room = this.projectRooms.get(parseInt(projectId));
+            const room = this.projectRooms.get(typeof projectId === 'string' ? parseInt(projectId) : projectId);
             const roomSequence = room?.sequenceNumber || 0;
             
             console.log('🔍 Project:', projectId, 'DB sequence:', latestSequence, 'Room sequence:', roomSequence, 'Client sequence:', sequenceNumber);
@@ -567,7 +575,7 @@ class CollaborationManager {
                      FROM operations 
                      WHERE project_id = ? AND sequence_number > ? 
                      ORDER BY sequence_number ASC`,
-                    [parseInt(projectId), sequenceNumber]
+                    [typeof projectId === 'string' ? parseInt(projectId) : projectId, sequenceNumber]
                 );
                 
                 missedOperations = missedOperations.map(op => ({
@@ -584,12 +592,12 @@ class CollaborationManager {
             }
             
             // Calculate server state hash (simplified version)
-            const serverStateHash = await this.calculateServerStateHash(parseInt(projectId));
+            const serverStateHash = await this.calculateServerStateHash(typeof projectId === 'string' ? parseInt(projectId) : projectId);
             
             console.log('🔍 Sending sync response:', { needsSync, latestSequence, serverStateHash });
             
             socket.emit('sync_response', {
-                projectId: parseInt(projectId),  // Include projectId in response
+                projectId: typeof projectId === 'string' ? parseInt(projectId) : projectId,  // Include projectId in response
                 needsSync,
                 missedOperations,
                 latestSequence,
@@ -609,7 +617,7 @@ class CollaborationManager {
         // a proper hash of the current project state
         const latestOp = await this.db.get(
             'SELECT sequence_number, applied_at FROM operations WHERE project_id = ? ORDER BY sequence_number DESC LIMIT 1',
-            [parseInt(projectId)]
+            [typeof projectId === 'string' ? parseInt(projectId) : projectId]
         );
         
         return latestOp ? `${latestOp.sequence_number}_${latestOp.applied_at}` : '0_0';

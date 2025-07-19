@@ -523,8 +523,12 @@ class CanvasNavigator {
             this.currentCanvasId = newCanvas.id;
             
             // Join the project if collaborative
-            if (this.collaborativeManager && this.collaborativeManager.isConnected) {
-                this.collaborativeManager.joinProject(newCanvas.id);
+            if (this.collaborativeManager) {
+                this.collaborativeManager.joinProject(newCanvas.id).then(joined => {
+                    if (!joined) {
+                        console.log('⚠️ Failed to join new project');
+                    }
+                });
             }
             
             // Refresh the list
@@ -551,6 +555,20 @@ class CanvasNavigator {
                 return;
             }
             
+            // Check if we're already trying to connect to this canvas
+            if (this.collaborativeManager && this.collaborativeManager.isConnecting) {
+                console.log('⏳ Connection already in progress, waiting...');
+                // Wait for current connection attempt to complete
+                let attempts = 0;
+                while (this.collaborativeManager.isConnecting && attempts < 30) {
+                    await new Promise(resolve => setTimeout(resolve, 100));
+                    attempts++;
+                }
+                if (this.collaborativeManager.isConnecting) {
+                    console.error('⚠️ Connection timeout - proceeding anyway');
+                }
+            }
+            
             // Disconnect from current project first
             if (this.collaborativeManager && this.collaborativeManager.isConnected && this.collaborativeManager.currentProject) {
                 console.log('Leaving current project before switching...');
@@ -559,11 +577,9 @@ class CanvasNavigator {
                 this.collaborativeManager.stopAutoSave();
                 this.collaborativeManager.stopHeartbeat();
                 
-                // Leave the current project room
+                // Leave the current project room and wait for confirmation
                 if (this.collaborativeManager.currentProject.id) {
-                    this.collaborativeManager.socket.emit('leave_project', { 
-                        projectId: this.collaborativeManager.currentProject.id 
-                    });
+                    await this.leaveProjectAndWait(this.collaborativeManager.currentProject.id);
                 }
                 
                 // Clear the current project reference
@@ -626,12 +642,23 @@ class CanvasNavigator {
                         socket: !!this.collaborativeManager?.socket
                     });
                     
-                    if (this.collaborativeManager && this.collaborativeManager.isConnected) {
-                        // Join will set currentProject and start sync
+                    if (this.collaborativeManager) {
+                        console.log('🔌 Checking collaborative state:', {
+                            hasManager: !!this.collaborativeManager,
+                            isConnected: this.collaborativeManager?.isConnected,
+                            socket: !!this.collaborativeManager?.socket
+                        });
+                        
+                        // Always attempt to join, let joinProject handle connection waiting
                         console.log('🔌 Joining collaborative project:', canvasId);
-                        await this.collaborativeManager.joinProject(canvasId);
-                    } else {
-                        console.log('⚠️ Not joining project - collaborative not ready');
+                        const joined = await this.collaborativeManager.joinProject(canvasId);
+                        
+                        if (joined) {
+                            console.log('✅ Successfully joined collaborative project');
+                        } else {
+                            console.log('⚠️ Failed to join collaborative project - will work offline');
+                            this.collaborativeManager.showStatus('Working offline', 'warning');
+                        }
                     }
                     
                     // Show success
@@ -648,18 +675,27 @@ class CanvasNavigator {
                         socket: !!this.collaborativeManager?.socket
                     });
                     
-                    if (this.collaborativeManager && this.collaborativeManager.isConnected) {
-                        console.log('🔌 Joining collaborative project (empty):', canvasId);
-                        await this.collaborativeManager.joinProject(canvasId);
-                    } else {
-                        console.log('⚠️ Not joining project - collaborative not ready');
+                    if (this.collaborativeManager) {
+                        // Always attempt to join, let joinProject handle connection waiting
+                        console.log('🔌 Joining collaborative project (empty canvas):', canvasId);
+                        const joined = await this.collaborativeManager.joinProject(canvasId);
+                        
+                        if (joined) {
+                            console.log('✅ Successfully joined collaborative project');
+                        } else {
+                            console.log('⚠️ Failed to join collaborative project - will work offline');
+                            this.collaborativeManager.showStatus('Working offline', 'warning');
+                        }
                     }
                 }
             } catch (error) {
                 console.error('Error loading canvas data:', error);
                 // Continue with empty canvas but still join project
-                if (this.collaborativeManager && this.collaborativeManager.isConnected) {
-                    await this.collaborativeManager.joinProject(canvasId);
+                if (this.collaborativeManager) {
+                    const joined = await this.collaborativeManager.joinProject(canvasId);
+                    if (!joined) {
+                        console.log('⚠️ Failed to join project after error');
+                    }
                 }
             }
             
@@ -755,6 +791,41 @@ class CanvasNavigator {
             console.error('Failed to duplicate canvas:', error);
             alert('Failed to duplicate canvas');
         }
+    }
+    
+    async leaveProjectAndWait(projectId) {
+        return new Promise((resolve) => {
+            console.log('📤 Leaving project:', projectId);
+            
+            // Set up one-time listener for leave confirmation
+            const leaveHandler = (data) => {
+                if (data && parseInt(data.projectId) === parseInt(projectId)) {
+                    console.log('✅ Project leave confirmed:', projectId);
+                    this.collaborativeManager.socket.off('project_left', leaveHandler);
+                    resolve();
+                }
+            };
+            
+            // Set up timeout in case server doesn't respond
+            const timeout = setTimeout(() => {
+                console.log('⚠️ Project leave timeout - proceeding anyway');
+                this.collaborativeManager.socket.off('project_left', leaveHandler);
+                resolve();
+            }, 2000); // 2 second timeout
+            
+            // Listen for confirmation
+            this.collaborativeManager.socket.on('project_left', leaveHandler);
+            
+            // Emit leave request
+            this.collaborativeManager.socket.emit('leave_project', { 
+                projectId: projectId 
+            });
+            
+            // Clear timeout on confirmation
+            this.collaborativeManager.socket.once('project_left', () => {
+                clearTimeout(timeout);
+            });
+        });
     }
     
     escapeHtml(unsafe) {
@@ -906,8 +977,12 @@ class CanvasNavigator {
             });
             
             // Join the project if collaborative
-            if (this.collaborativeManager && this.collaborativeManager.isConnected) {
-                this.collaborativeManager.joinProject(newCanvas.id);
+            if (this.collaborativeManager) {
+                this.collaborativeManager.joinProject(newCanvas.id).then(joined => {
+                    if (!joined) {
+                        console.log('⚠️ Failed to join new project');
+                    }
+                });
             }
             
             // Refresh the list
@@ -925,6 +1000,40 @@ class CanvasNavigator {
     
     async loadStartupCanvas() {
         try {
+            // Check if we're in demo mode
+            const isDemoMode = window.location.pathname.includes('demo.html');
+            
+            if (isDemoMode) {
+                console.log('🎭 Demo mode detected - loading demo canvas');
+                
+                // For demo mode, always load or create the demo canvas
+                await this.loadCanvases();
+                const demoCanvas = this.canvases.find(c => c.name === 'Demo Canvas');
+                
+                if (demoCanvas) {
+                    console.log('📂 Loading existing demo canvas:', demoCanvas.id);
+                    await this.loadCanvas(demoCanvas.id);
+                } else {
+                    console.log('🆕 Creating new demo canvas...');
+                    const response = await fetch(CONFIG.ENDPOINTS.PROJECTS, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            name: 'Demo Canvas',
+                            ownerId: 1,
+                            description: 'Collaborative demo canvas'
+                        })
+                    });
+                    
+                    if (response.ok) {
+                        const newCanvas = await response.json();
+                        console.log('📂 Loading new demo canvas:', newCanvas.id);
+                        await this.loadCanvas(newCanvas.id);
+                    }
+                }
+                return;
+            }
+            
             // Check if we're in a duplicate tab by looking for session storage marker
             const tabId = Date.now() + '-' + Math.random();
             const existingTabId = sessionStorage.getItem('imageCanvasTabId');
@@ -999,8 +1108,12 @@ class CanvasNavigator {
             const newCanvas = await response.json();
             
             // Join the project if collaborative
-            if (this.collaborativeManager && this.collaborativeManager.isConnected) {
-                this.collaborativeManager.joinProject(newCanvas.id);
+            if (this.collaborativeManager) {
+                this.collaborativeManager.joinProject(newCanvas.id).then(joined => {
+                    if (!joined) {
+                        console.log('⚠️ Failed to join new project');
+                    }
+                });
             }
             
             // Refresh the list

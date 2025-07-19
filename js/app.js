@@ -209,9 +209,16 @@ async function initApp() {
         window.canvasNavigator = app.canvasNavigator;
         
         // Load last canvas or create default
+        // Increase delay to ensure collaborative manager is ready
         setTimeout(() => {
+            console.log('🚀 Loading startup canvas...');
+            console.log('📊 Collaborative manager status:', {
+                exists: !!app.collaborativeManager,
+                isConnected: app.collaborativeManager?.isConnected,
+                isConnecting: app.collaborativeManager?.isConnecting
+            });
             app.canvasNavigator.loadStartupCanvas();
-        }, 500);
+        }, 1000);
         
     } catch (error) {
         console.error('Failed to initialize application:', error);

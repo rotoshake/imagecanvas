@@ -8,5 +8,17 @@ server/database/*.db-wal
 # OS files
 .DS_Store
 
-# Test files
+# Test files and folders
+.scratch/
+tests/integration/
+tests/fixtures/
 test-*.html
+test_*.html
+test_*.js
+diagnose_*.html
+diagnose_*.js
+verify_*.html
+verify-*.md
+pingpong-diagnostic-*.json
+*.test.html
+*.test.js

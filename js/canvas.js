@@ -645,7 +645,7 @@ class LGraphCanvas {
                     }
                     
                     // Broadcast node creation for collaboration
-                    if (this.collaborativeManager?.enableCollaboration) {
+                    if (this.collaborativeManager) {
                         this.broadcastNodeCreate(duplicate);
                     }
                 }
@@ -661,7 +661,7 @@ class LGraphCanvas {
                 draggedDuplicate = duplicate;
                 
                 // Broadcast node creation for collaboration
-                if (this.collaborativeManager?.enableCollaboration) {
+                if (this.collaborativeManager) {
                     this.broadcastNodeCreate(duplicate);
                 }
             }
@@ -1343,7 +1343,7 @@ class LGraphCanvas {
                 newNodes.push(node);
                 
                 // Broadcast node creation for collaboration
-                if (this.collaborativeManager?.enableCollaboration) {
+                if (this.collaborativeManager) {
                     this.broadcastNodeCreate(node);
                 }
             }
@@ -1373,7 +1373,7 @@ class LGraphCanvas {
                 duplicates.push(duplicate);
                 
                 // Broadcast node creation for collaboration
-                if (this.collaborativeManager?.enableCollaboration) {
+                if (this.collaborativeManager) {
                     this.broadcastNodeCreate(duplicate);
                 }
             }
@@ -1392,7 +1392,7 @@ class LGraphCanvas {
         if (selected.length === 0) return;
         
         // Broadcast deletion for collaboration
-        if (this.collaborativeManager?.enableCollaboration) {
+        if (this.collaborativeManager) {
             const nodeIds = selected.map(node => node.id);
             this.broadcastNodeDelete(nodeIds);
         }
@@ -1719,7 +1719,7 @@ class LGraphCanvas {
             this.selection.selectNode(node);
             
             // Broadcast text node creation for collaboration
-            if (this.collaborativeManager?.enableCollaboration) {
+            if (this.collaborativeManager) {
                 this.broadcastNodeCreate(node);
             }
             
@@ -1946,7 +1946,7 @@ class LGraphCanvas {
             this.updateTextEditingOverlaySize(textarea, node);
             
             // Broadcast text changes in real-time for collaboration
-            if (this.collaborativeManager?.enableCollaboration) {
+            if (this.collaborativeManager) {
                 this.broadcastNodePropertyUpdate(node.id, 'text', textarea.value);
             }
         });
@@ -2004,7 +2004,7 @@ class LGraphCanvas {
         }
         
         // Broadcast final text state and any size changes for collaboration
-        if (this.collaborativeManager?.enableCollaboration) {
+        if (this.collaborativeManager) {
             this.broadcastNodePropertyUpdate(node.id, 'text', textarea.value);
             
             // If size changed during auto-resize, broadcast that too
@@ -2123,6 +2123,14 @@ class LGraphCanvas {
             if (success) {
                 this.selection.clear();
                 this.dirty_canvas = true;
+                
+                // Broadcast undo state to collaborators
+                if (this.collaborativeManager && this.collaborativeManager.isConnected) {
+                    console.log('🔄 Undo performed, broadcasting to collaborators');
+                    this.collaborativeManager.broadcastFullState();
+                } else {
+                    console.log('⚠️ Undo performed but not broadcasting (not connected)');
+                }
             }
         } else {
             console.warn('State manager not available for undo');
@@ -2135,6 +2143,14 @@ class LGraphCanvas {
             if (success) {
                 this.selection.clear();
                 this.dirty_canvas = true;
+                
+                // Broadcast redo state to collaborators
+                if (this.collaborativeManager && this.collaborativeManager.isConnected) {
+                    console.log('🔄 Redo performed, broadcasting to collaborators');
+                    this.collaborativeManager.broadcastFullState();
+                } else {
+                    console.log('⚠️ Redo performed but not broadcasting (not connected)');
+                }
             }
         } else {
             console.warn('State manager not available for redo');
@@ -2752,7 +2768,7 @@ class LGraphCanvas {
     // ===================================
     
     broadcastNodeMove() {
-        if (!this.collaborativeManager?.enableCollaboration) return;
+        if (!this.collaborativeManager) return;
         
         const selectedNodes = this.selection.getSelectedNodes();
         if (selectedNodes.length === 0) return;
@@ -2776,7 +2792,7 @@ class LGraphCanvas {
     }
     
     broadcastNodeResize() {
-        if (!this.collaborativeManager?.enableCollaboration) return;
+        if (!this.collaborativeManager) return;
         
         const selectedNodes = this.selection.getSelectedNodes();
         if (selectedNodes.length === 0) return;
@@ -2803,7 +2819,7 @@ class LGraphCanvas {
     }
     
     broadcastNodeRotation() {
-        if (!this.collaborativeManager?.enableCollaboration) return;
+        if (!this.collaborativeManager) return;
         
         const selectedNodes = this.selection.getSelectedNodes();
         if (selectedNodes.length === 0) return;
@@ -2830,7 +2846,7 @@ class LGraphCanvas {
     }
     
     broadcastNodeDelete(nodeIds) {
-        if (!this.collaborativeManager?.enableCollaboration) return;
+        if (!this.collaborativeManager) return;
         
         if (nodeIds.length === 1) {
             this.collaborativeManager.sendOperation('node_delete', {
@@ -2844,7 +2860,7 @@ class LGraphCanvas {
     }
     
     broadcastNodeCreate(node) {
-        if (!this.collaborativeManager?.enableCollaboration) return;
+        if (!this.collaborativeManager) return;
         
         const nodeData = {
             id: node.id,
@@ -2869,7 +2885,7 @@ class LGraphCanvas {
     }
     
     broadcastNodeReset(nodeIds, resetType, values) {
-        if (!this.collaborativeManager?.enableCollaboration) return;
+        if (!this.collaborativeManager) return;
         
         if (nodeIds.length === 1) {
             this.collaborativeManager.sendOperation('node_reset', {
@@ -2887,7 +2903,7 @@ class LGraphCanvas {
     }
     
     broadcastVideoToggle(nodeId, paused) {
-        if (!this.collaborativeManager?.enableCollaboration) return;
+        if (!this.collaborativeManager) return;
         
         this.collaborativeManager.sendOperation('video_toggle', {
             nodeId: nodeId,
@@ -2896,7 +2912,7 @@ class LGraphCanvas {
     }
     
     broadcastAlignment(nodeIds, alignmentType, targetPositions) {
-        if (!this.collaborativeManager?.enableCollaboration) return;
+        if (!this.collaborativeManager) return;
         
         this.collaborativeManager.sendOperation('node_align', {
             nodeIds: nodeIds,
@@ -2906,7 +2922,7 @@ class LGraphCanvas {
     }
     
     broadcastNodePropertyUpdate(nodeIds, propertyName, values) {
-        if (!this.collaborativeManager?.enableCollaboration) return;
+        if (!this.collaborativeManager) return;
         
         if (Array.isArray(nodeIds) && Array.isArray(values)) {
             // Multi-node property update
@@ -2926,7 +2942,7 @@ class LGraphCanvas {
     }
     
     broadcastLayerOrderChange(nodes, direction) {
-        if (!this.collaborativeManager?.enableCollaboration) return;
+        if (!this.collaborativeManager) return;
         
         const nodeIds = nodes.map(node => node.id);
         const layerOrder = this.graph.nodes.map(node => node.id);
