@@ -12,7 +12,7 @@
 
 ## Phase 2 - Core Refactoring 
 **Branch**: `phase2-core-refactoring`
-**Worktree**: `/Users/marcsteinberg/Documents/Projects/ImageCanvas-phase2`
+**Worktree**: `./worktrees/phase2/`
 
 ### Tasks:
 1. **UnifiedOperationHandler** - Eliminate triple implementation
@@ -34,7 +34,7 @@
 
 ## Phase 3 - Performance Optimization
 **Branch**: `phase3-performance` 
-**Worktree**: `/Users/marcsteinberg/Documents/Projects/ImageCanvas-phase3`
+**Worktree**: `./worktrees/phase3/`
 
 ### Tasks:
 1. **Operation Batching**
@@ -58,12 +58,12 @@
 
 ### For Claude working on Phase 2:
 ```bash
-cd /Users/marcsteinberg/Documents/Projects/ImageCanvas-phase2
+cd worktrees/phase2
 ```
 
 ### For Claude working on Phase 3:
 ```bash
-cd /Users/marcsteinberg/Documents/Projects/ImageCanvas-phase3
+cd worktrees/phase3
 ```
 
 ### Communication:
