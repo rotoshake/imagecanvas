@@ -53,6 +53,12 @@ class CollaborativeManager {
         // Action manager
         this.actionManager = null;
         
+        // Performance optimization components
+        this.operationBatcher = null;
+        this.stateSynchronizer = null;
+        this.compressionManager = null;
+        this.workerManager = null;
+        
         this.init();
     }
     
@@ -79,8 +85,45 @@ class CollaborativeManager {
         
         console.log('✅ Socket.IO is available, proceeding with connection');
         
+        // Initialize performance optimization components
+        this.initializePerformanceComponents();
+        
         // Always try to connect
         this.connectToServer();
+    }
+    
+    /**
+     * Initialize performance optimization components
+     */
+    initializePerformanceComponents() {
+        try {
+            // Initialize operation batcher
+            if (typeof OperationBatcher !== 'undefined') {
+                this.operationBatcher = new OperationBatcher(this);
+                console.log('✅ OperationBatcher initialized');
+            }
+            
+            // Initialize incremental state synchronizer
+            if (typeof IncrementalStateSynchronizer !== 'undefined') {
+                this.stateSynchronizer = new IncrementalStateSynchronizer(this);
+                console.log('✅ IncrementalStateSynchronizer initialized');
+            }
+            
+            // Initialize compression manager
+            if (typeof CompressionManager !== 'undefined') {
+                this.compressionManager = new CompressionManager();
+                console.log('✅ CompressionManager initialized');
+            }
+            
+            // Initialize worker manager
+            if (typeof PerformanceWorkerManager !== 'undefined') {
+                this.workerManager = new PerformanceWorkerManager();
+                console.log('✅ PerformanceWorkerManager initialized');
+            }
+            
+        } catch (error) {
+            console.warn('Failed to initialize some performance components:', error);
+        }
     }
     
     async connectToServer() {
@@ -242,8 +285,12 @@ class CollaborativeManager {
         
         // Canvas operations
         this.socket.on('canvas_operation', this.handleRemoteOperation.bind(this));
+        this.socket.on('canvas_operation_batch', this.handleRemoteOperationBatch.bind(this));
         this.socket.on('sync_response', this.handleSyncResponse.bind(this));
         this.socket.on('media_uploaded', this.handleMediaUploaded.bind(this));
+        
+        // Incremental sync
+        this.socket.on('incremental_sync', this.handleIncrementalSync.bind(this));
         
         // Heartbeat
         this.socket.on('heartbeat_response', this.handleHeartbeatResponse.bind(this));
@@ -501,6 +548,13 @@ class CollaborativeManager {
                 });
             }
             
+            // Use operation batcher if available
+            if (this.operationBatcher && this.isConnected) {
+                this.operationBatcher.addOperation(operationType, operationData);
+                return { batched: true, type: operationType };
+            }
+            
+            // Fallback to original implementation
             const operation = {
                 type: operationType,
                 data: operationData,
@@ -580,6 +634,11 @@ class CollaborativeManager {
         this.showStatus(`Connected to ${data.project.name || 'Untitled Project'}`, 'success');
         this.updateUserList();
         
+        // Initialize state synchronizer with current graph
+        if (this.stateSynchronizer && this.graph) {
+            this.stateSynchronizer.initialize(this.graph);
+        }
+        
         // Start periodic sync and auto-save
         this.startPeriodicSync();
         this.startAutoSave();
@@ -644,6 +703,72 @@ class CollaborativeManager {
         // Update sequence number
         if (operation.sequenceNumber > this.sequenceNumber) {
             this.sequenceNumber = operation.sequenceNumber;
+        }
+    }
+    
+    /**
+     * Handle batch of remote operations
+     */
+    async handleRemoteOperationBatch(data) {
+        const { operations, userId, batchId } = data;
+        
+        if (userId === this.currentUser?.userId) {
+            return; // Skip own operations
+        }
+        
+        console.log('📥 Remote operation batch:', operations.length, 'operations, batch:', batchId);
+        
+        // Process each operation in the batch
+        for (const operation of operations) {
+            try {
+                const { type, data: operationData } = operation;
+                
+                // Use action manager for all operations
+                if (this.actionManager) {
+                    await this.actionManager.executeAction(type, operationData, { 
+                        fromRemote: true,
+                        skipUndo: true 
+                    });
+                } else {
+                    // Fallback to existing implementation
+                    this.applyOperation(type, operationData);
+                }
+                
+                // Update sequence number
+                if (operation.sequence > this.sequenceNumber) {
+                    this.sequenceNumber = operation.sequence;
+                }
+            } catch (error) {
+                console.error('Error processing batched operation:', error, operation);
+            }
+        }
+        
+        // Force canvas redraw after batch
+        if (this.canvas) {
+            this.canvas.dirty_canvas = true;
+        }
+    }
+    
+    /**
+     * Handle incremental state synchronization
+     */
+    async handleIncrementalSync(data) {
+        const { delta, userId } = data;
+        
+        if (userId === this.currentUser?.userId) {
+            return; // Skip own sync
+        }
+        
+        console.log('📊 Received incremental sync:', delta);
+        
+        if (this.stateSynchronizer) {
+            try {
+                this.stateSynchronizer.applyDelta(delta, this.graph);
+            } catch (error) {
+                console.error('Error applying incremental sync:', error);
+                // Fallback to requesting full state
+                this.requestFullProjectState();
+            }
         }
     }
     
@@ -1554,6 +1679,14 @@ class CollaborativeManager {
             this.reconnectTimer = null;
         }
         
+        // Clean up performance components
+        if (this.operationBatcher) {
+            this.operationBatcher.cleanup();
+        }
+        if (this.workerManager) {
+            this.workerManager.cleanup();
+        }
+        
         // Clean up all resources
         this.resourceManager.cleanupAll();
         
@@ -1575,6 +1708,59 @@ class CollaborativeManager {
         }
         
         console.log('🤝 Collaborative manager disconnected');
+    }
+    
+    /**
+     * Get comprehensive performance statistics
+     */
+    getPerformanceStats() {
+        const stats = {
+            timestamp: Date.now(),
+            connection: {
+                isConnected: this.isConnected,
+                sequenceNumber: this.sequenceNumber,
+                reconnectAttempts: this.reconnectAttempts
+            },
+            batching: null,
+            synchronization: null,
+            compression: null,
+            workers: null
+        };
+        
+        // Get batching statistics
+        if (this.operationBatcher) {
+            stats.batching = this.operationBatcher.getStats();
+        }
+        
+        // Get synchronization statistics  
+        if (this.stateSynchronizer) {
+            stats.synchronization = this.stateSynchronizer.getStats();
+        }
+        
+        // Get compression statistics
+        if (this.compressionManager) {
+            stats.compression = this.compressionManager.getStats();
+        }
+        
+        // Get worker statistics
+        if (this.workerManager) {
+            stats.workers = this.workerManager.getStats();
+        }
+        
+        return stats;
+    }
+    
+    /**
+     * Reset all performance statistics
+     */
+    resetPerformanceStats() {
+        if (this.operationBatcher) {
+            this.operationBatcher.resetStats();
+        }
+        if (this.compressionManager) {
+            this.compressionManager.resetStats();
+        }
+        console.log('📊 Performance statistics reset');
     }
 }
 
