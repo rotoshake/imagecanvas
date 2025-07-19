@@ -712,29 +712,55 @@ class CanvasNavigator {
     }
     
     async deleteCanvas(canvasId) {
+        console.log('🗑️ Attempting to delete canvas:', canvasId);
         const canvas = this.canvases.find(c => c.id === canvasId);
-        if (!canvas) return;
+        if (!canvas) {
+            console.error('Canvas not found:', canvasId);
+            return;
+        }
         
-        if (!confirm(`Delete "${canvas.name}"? This cannot be undone.`)) return;
+        if (!confirm(`Delete "${canvas.name}"? This cannot be undone.`)) {
+            console.log('Delete cancelled by user');
+            return;
+        }
         
         try {
-            const response = await fetch(CONFIG.ENDPOINTS.PROJECT(canvasId), {
+            const deleteUrl = CONFIG.ENDPOINTS.PROJECT(canvasId);
+            console.log('🗑️ DELETE URL:', deleteUrl);
+            
+            const response = await fetch(deleteUrl, {
                 method: 'DELETE'
             });
             
-            if (!response.ok) throw new Error('Failed to delete canvas');
+            console.log('🗑️ Delete response:', response.status, response.statusText);
+            
+            if (!response.ok) {
+                const errorText = await response.text();
+                console.error('Delete failed:', errorText);
+                throw new Error(`Failed to delete canvas: ${response.status} ${response.statusText}`);
+            }
             
             // If we deleted the current canvas, clear it
             if (canvasId === this.currentCanvasId) {
                 this.app.graph.clear();
                 this.currentCanvasId = null;
+                
+                // Clear localStorage
+                localStorage.removeItem('lastCanvasId');
             }
             
             // Refresh the list
-            this.loadCanvases();
+            await this.loadCanvases();
+            
+            console.log('✅ Canvas deleted successfully');
+            
+            // Show success message
+            if (this.collaborativeManager) {
+                this.collaborativeManager.showStatus('Canvas deleted successfully', 'success');
+            }
         } catch (error) {
             console.error('Failed to delete canvas:', error);
-            alert('Failed to delete canvas');
+            alert(`Failed to delete canvas: ${error.message}`);
         }
     }
     

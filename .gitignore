@@ -22,3 +22,6 @@ verify-*.md
 pingpong-diagnostic-*.json
 *.test.html
 *.test.js
+
+# Project documentation
+summary.md

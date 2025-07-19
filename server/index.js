@@ -42,7 +42,7 @@ class ImageCanvasServer {
         this.io = socketIo(this.server, {
             cors: {
                 origin: ["http://localhost:8000", "http://127.0.0.1:8000", "http://localhost:8080", "http://127.0.0.1:8080"],
-                methods: ["GET", "POST"],
+                methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
                 credentials: true
             }
         });
@@ -66,7 +66,9 @@ class ImageCanvasServer {
         this.app.use(compression());
         this.app.use(cors({
             origin: ["http://localhost:8000", "http://127.0.0.1:8000", "http://localhost:8080", "http://127.0.0.1:8080"],
-            credentials: true
+            credentials: true,
+            methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+            allowedHeaders: ["Content-Type", "Authorization"]
         }));
         
         // Body parsing
@@ -224,12 +226,33 @@ class ImageCanvasServer {
         this.app.post('/projects', async (req, res) => {
             try {
                 const { name, description, ownerId } = req.body;
+                console.log('📝 Creating project:', { name, description, ownerId });
+                
+                // Validate input
+                if (!name || !ownerId) {
+                    return res.status(400).json({ error: 'Name and ownerId are required' });
+                }
+                
+                // Check if database is initialized
+                if (!this.db) {
+                    console.error('❌ Database not initialized');
+                    return res.status(500).json({ error: 'Database not initialized' });
+                }
+                
                 const projectId = await this.db.createProject(name, ownerId, description);
+                console.log('✅ Project created with ID:', projectId);
+                
                 const project = await this.db.getProject(projectId);
+                console.log('📦 Retrieved project:', project);
+                
                 res.json(project);
             } catch (error) {
-                console.error('Failed to create project:', error);
-                res.status(500).json({ error: 'Failed to create project' });
+                console.error('❌ Failed to create project:', error);
+                console.error('Stack trace:', error.stack);
+                res.status(500).json({ 
+                    error: 'Failed to create project',
+                    details: error.message 
+                });
             }
         });
         

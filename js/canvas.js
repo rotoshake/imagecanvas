@@ -38,6 +38,9 @@ class LGraphCanvas {
         // Clipboard for copy/paste
         this.clipboard = [];
         
+        // Initialize action manager
+        this.actionManager = null; // Will be set when collaborative manager is ready
+        
         // Initialize
         this.setupEventListeners();
         this.viewport.applyDPI();
@@ -293,19 +296,24 @@ class LGraphCanvas {
             // If multiple nodes are selected, reset all their rotations
             if (this.selection.size() > 1) {
                 const selectedNodes = this.selection.getSelectedNodes();
-                const nodeIds = [];
-                for (const node of selectedNodes) {
-                    node.rotation = 0;
-                    nodeIds.push(node.id);
-                }
+                const nodeIds = selectedNodes.map(n => n.id);
+                const values = selectedNodes.map(() => 0);
                 
-                // Broadcast reset operation for collaboration
-                if (nodeIds.length > 0) {
-                    this.broadcastNodeReset(nodeIds, 'rotation', nodeIds.map(() => 0));
+                if (this.actionManager) {
+                    this.actionManager.executeAction('node_reset', {
+                        nodeIds: nodeIds,
+                        resetType: 'rotation',
+                        values: values
+                    });
+                } else {
+                    // Fallback
+                    for (const node of selectedNodes) {
+                        node.rotation = 0;
+                    }
+                    this.dirty_canvas = true;
                 }
                 
                 this.pushUndoState();
-                this.dirty_canvas = true;
             } else {
                 // Single node selected
                 this.resetRotation(rotationHandle);
@@ -323,22 +331,30 @@ class LGraphCanvas {
                 
                 for (const node of selectedNodes) {
                     if (node.originalAspect) {
-                        node.aspectRatio = node.originalAspect;
-                        node.size[1] = node.size[0] / node.originalAspect;
-                        if (node.onResize) node.onResize();
-                        
                         nodeIds.push(node.id);
                         originalAspects.push(node.originalAspect);
                     }
                 }
                 
-                // Broadcast reset operation for collaboration
-                if (nodeIds.length > 0) {
-                    this.broadcastNodeReset(nodeIds, 'aspect_ratio', originalAspects);
+                if (this.actionManager && nodeIds.length > 0) {
+                    this.actionManager.executeAction('node_reset', {
+                        nodeIds: nodeIds,
+                        resetType: 'aspect_ratio',
+                        values: originalAspects
+                    });
+                } else {
+                    // Fallback
+                    for (const node of selectedNodes) {
+                        if (node.originalAspect) {
+                            node.aspectRatio = node.originalAspect;
+                            node.size[1] = node.size[0] / node.originalAspect;
+                            if (node.onResize) node.onResize();
+                        }
+                    }
+                    this.dirty_canvas = true;
                 }
                 
                 this.pushUndoState();
-                this.dirty_canvas = true;
             } else {
                 // Single node selected
                 this.resetAspectRatio(resizeHandle);
@@ -1110,8 +1126,21 @@ class LGraphCanvas {
             const wasDuplication = this.interactionState.dragging.isDuplication;
             
             // Broadcast move operation for collaboration
-            if (this.collaborativeManager && wasInteracting) {
-                this.broadcastNodeMove();
+            if (this.actionManager && wasInteracting) {
+                const selectedNodes = this.selection.getSelectedNodes();
+                if (selectedNodes.length === 1) {
+                    const node = selectedNodes[0];
+                    this.actionManager.executeAction('node_move', {
+                        nodeId: node.id,
+                        x: node.pos[0],
+                        y: node.pos[1]
+                    });
+                } else if (selectedNodes.length > 1) {
+                    this.actionManager.executeAction('node_move', {
+                        nodeIds: selectedNodes.map(n => n.id),
+                        positions: selectedNodes.map(n => [...n.pos])
+                    });
+                }
             }
             
             this.interactionState.dragging.node = null;
@@ -1128,8 +1157,21 @@ class LGraphCanvas {
         // Resize
         if (this.interactionState.resizing.active) {
             // Broadcast resize operation for collaboration
-            if (this.collaborativeManager && wasInteracting) {
-                this.broadcastNodeResize();
+            if (this.actionManager && wasInteracting) {
+                const selectedNodes = this.selection.getSelectedNodes();
+                if (selectedNodes.length === 1) {
+                    const node = selectedNodes[0];
+                    this.actionManager.executeAction('node_resize', {
+                        nodeId: node.id,
+                        width: node.size[0],
+                        height: node.size[1]
+                    });
+                } else if (selectedNodes.length > 1) {
+                    this.actionManager.executeAction('node_resize', {
+                        nodeIds: selectedNodes.map(n => n.id),
+                        sizes: selectedNodes.map(n => [...n.size])
+                    });
+                }
             }
             
             this.interactionState.resizing.active = false;
@@ -1143,8 +1185,22 @@ class LGraphCanvas {
         // Rotation
         if (this.interactionState.rotating.active) {
             // Broadcast rotation operation for collaboration
-            if (this.collaborativeManager && wasInteracting) {
-                this.broadcastNodeRotation();
+            if (this.actionManager && wasInteracting) {
+                const selectedNodes = this.selection.getSelectedNodes();
+                if (selectedNodes.length === 1) {
+                    const node = selectedNodes[0];
+                    this.actionManager.executeAction('node_rotate', {
+                        nodeId: node.id,
+                        rotation: node.rotation || 0,
+                        pos: [...node.pos]
+                    });
+                } else if (selectedNodes.length > 1) {
+                    this.actionManager.executeAction('node_rotate', {
+                        nodeIds: selectedNodes.map(n => n.id),
+                        rotations: selectedNodes.map(n => n.rotation || 0),
+                        positions: selectedNodes.map(n => [...n.pos])
+                    });
+                }
             }
             
             this.interactionState.rotating.active = false;
@@ -2043,15 +2099,21 @@ class LGraphCanvas {
         if (resizeHandle.type === 'single-resize') {
             const node = resizeHandle.node;
             if (node.originalAspect) {
-                node.aspectRatio = node.originalAspect;
-                node.size[1] = node.size[0] / node.originalAspect;
-                if (node.onResize) node.onResize();
-                
-                // Broadcast reset operation for collaboration
-                this.broadcastNodeReset([node.id], 'aspect_ratio', [node.originalAspect]);
+                if (this.actionManager) {
+                    this.actionManager.executeAction('node_reset', {
+                        nodeId: node.id,
+                        resetType: 'aspect_ratio',
+                        value: node.originalAspect
+                    });
+                } else {
+                    // Fallback
+                    node.aspectRatio = node.originalAspect;
+                    node.size[1] = node.size[0] / node.originalAspect;
+                    if (node.onResize) node.onResize();
+                    this.dirty_canvas = true;
+                }
                 
                 this.pushUndoState();
-                this.dirty_canvas = true;
             }
         } else if (resizeHandle.type === 'multi-resize') {
             // Reset all selected nodes to their individual original aspect ratios
@@ -2060,45 +2122,67 @@ class LGraphCanvas {
             
             for (const node of resizeHandle.nodes) {
                 if (node.originalAspect) {
-                    node.aspectRatio = node.originalAspect;
-                    node.size[1] = node.size[0] / node.originalAspect;
-                    if (node.onResize) node.onResize();
-                    
                     nodeIds.push(node.id);
                     originalAspects.push(node.originalAspect);
                 }
             }
             
-            // Broadcast reset operation for collaboration
             if (nodeIds.length > 0) {
-                this.broadcastNodeReset(nodeIds, 'aspect_ratio', originalAspects);
+                if (this.actionManager) {
+                    this.actionManager.executeAction('node_reset', {
+                        nodeIds: nodeIds,
+                        resetType: 'aspect_ratio',
+                        values: originalAspects
+                    });
+                } else {
+                    // Fallback
+                    for (const node of resizeHandle.nodes) {
+                        if (node.originalAspect) {
+                            node.aspectRatio = node.originalAspect;
+                            node.size[1] = node.size[0] / node.originalAspect;
+                            if (node.onResize) node.onResize();
+                        }
+                    }
+                    this.dirty_canvas = true;
+                }
             }
             
             this.pushUndoState();
-            this.dirty_canvas = true;
         }
     }
     
     resetRotation(rotationHandle) {
         if (rotationHandle.type === 'single-rotation') {
-            rotationHandle.node.rotation = 0;
-            
-            // Broadcast reset operation for collaboration
-            this.broadcastNodeReset([rotationHandle.node.id], 'rotation', [0]);
-        } else {
-            const nodeIds = [];
-            for (const node of rotationHandle.nodes) {
-                node.rotation = 0;
-                nodeIds.push(node.id);
+            if (this.actionManager) {
+                this.actionManager.executeAction('node_reset', {
+                    nodeId: rotationHandle.node.id,
+                    resetType: 'rotation',
+                    value: 0
+                });
+            } else {
+                // Fallback
+                rotationHandle.node.rotation = 0;
+                this.dirty_canvas = true;
             }
+        } else {
+            const nodeIds = rotationHandle.nodes.map(n => n.id);
+            const values = nodeIds.map(() => 0);
             
-            // Broadcast reset operation for collaboration
-            if (nodeIds.length > 0) {
-                this.broadcastNodeReset(nodeIds, 'rotation', nodeIds.map(() => 0));
+            if (this.actionManager) {
+                this.actionManager.executeAction('node_reset', {
+                    nodeIds: nodeIds,
+                    resetType: 'rotation',
+                    values: values
+                });
+            } else {
+                // Fallback
+                for (const node of rotationHandle.nodes) {
+                    node.rotation = 0;
+                }
+                this.dirty_canvas = true;
             }
         }
         this.pushUndoState();
-        this.dirty_canvas = true;
     }
     
     // ===================================
@@ -2107,6 +2191,15 @@ class LGraphCanvas {
     
     setStateManager(stateManager) {
         this.stateManager = stateManager;
+    }
+    
+    setActionManager(collaborativeManager) {
+        this.actionManager = new CanvasActionManager(this, this.graph, collaborativeManager);
+        
+        // Set action manager on collaborative manager for remote operations
+        if (collaborativeManager) {
+            collaborativeManager.setActionManager(this.actionManager);
+        }
     }
     
     pushUndoState() {
@@ -2860,7 +2953,7 @@ class LGraphCanvas {
     }
     
     broadcastNodeCreate(node) {
-        if (!this.collaborativeManager) return;
+        if (!this.actionManager) return;
         
         const nodeData = {
             id: node.id,
@@ -2874,14 +2967,32 @@ class LGraphCanvas {
             rotation: node.rotation || 0
         };
         
-        // Ensure serverFilename is preserved for collaborative media loading
-        if ((node.type === 'media/image' || node.type === 'media/video') && node.properties.hash) {
-            if (!nodeData.properties.serverFilename && nodeData.properties.filename) {
+        // Ensure all media properties are included
+        if (node.type === 'media/image' || node.type === 'media/video') {
+            // Make sure we have all the required properties
+            if (!nodeData.properties.src && node.properties.src) {
+                nodeData.properties.src = node.properties.src;
+            }
+            if (!nodeData.properties.hash && node.properties.hash) {
+                nodeData.properties.hash = node.properties.hash;
+            }
+            if (!nodeData.properties.filename && node.properties.filename) {
+                nodeData.properties.filename = node.properties.filename;
+            }
+            
+            // Ensure serverFilename is preserved for collaborative media loading
+            if (node.properties.hash && !nodeData.properties.serverFilename && nodeData.properties.filename) {
                 nodeData.properties.serverFilename = nodeData.properties.filename;
             }
+            
+            console.log('Broadcasting media node with properties:', nodeData.properties);
         }
         
-        this.collaborativeManager.sendOperation('node_create', { nodeData });
+        // Note: We're sending the operation directly since the node is already created
+        // We don't want to execute the action again locally
+        if (this.collaborativeManager?.isConnected) {
+            this.collaborativeManager.sendOperation('node_create', { nodeData });
+        }
     }
     
     broadcastNodeReset(nodeIds, resetType, values) {
@@ -2911,15 +3022,7 @@ class LGraphCanvas {
         });
     }
     
-    broadcastAlignment(nodeIds, alignmentType, targetPositions) {
-        if (!this.collaborativeManager) return;
-        
-        this.collaborativeManager.sendOperation('node_align', {
-            nodeIds: nodeIds,
-            alignmentType: alignmentType,
-            positions: targetPositions
-        });
-    }
+    // Removed broadcastAlignment - alignment now uses node_move operations
     
     broadcastNodePropertyUpdate(nodeIds, propertyName, values) {
         if (!this.collaborativeManager) return;

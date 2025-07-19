@@ -505,9 +505,13 @@ class AutoAlignmentManager {
                     }
                 }
                 
-                // Broadcast alignment operation for collaboration
-                if (nodeIds.length > 0 && this.canvas.broadcastAlignment) {
-                    this.canvas.broadcastAlignment(nodeIds, 'auto_align', finalPositions);
+                // Broadcast position updates for collaboration
+                if (nodeIds.length > 0 && this.canvas.actionManager && this.canvas.collaborativeManager?.isConnected) {
+                    // Send batch move operation
+                    this.canvas.collaborativeManager.sendOperation('node_move', {
+                        nodeIds: nodeIds,
+                        positions: finalPositions
+                    });
                 }
                 
                 // Invalidate bounding box cache when animation completes
@@ -585,9 +589,13 @@ class AutoAlignmentManager {
                     }
                 }
                 
-                // Broadcast alignment operation for collaboration
-                if (nodeIds.length > 0 && this.canvas.broadcastAlignment) {
-                    this.canvas.broadcastAlignment(nodeIds, 'grid_align', finalPositions);
+                // Broadcast position updates for collaboration
+                if (nodeIds.length > 0 && this.canvas.actionManager && this.canvas.collaborativeManager?.isConnected) {
+                    // Send batch move operation
+                    this.canvas.collaborativeManager.sendOperation('node_move', {
+                        nodeIds: nodeIds,
+                        positions: finalPositions
+                    });
                 }
                 
                 // Invalidate bounding box cache when grid alignment completes

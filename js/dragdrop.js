@@ -136,6 +136,12 @@ class DragDropManager {
                     this.graph.add(node);
                     newNodes.push(node);
                     
+                    // Only broadcast if we did NOT use collaborative upload
+                    // Collaborative upload already broadcasts via 'media_uploaded' event
+                    if (this.graph.canvas && !node._uploadedViaCollaboration) {
+                        this.graph.canvas.broadcastNodeCreate(node);
+                    }
+                    
                     // Trigger redraw to show new node immediately
                     if (this.graph.canvas) {
                         this.graph.canvas.dirty_canvas = true;
@@ -194,6 +200,7 @@ class DragDropManager {
             
             // Prepare node data for collaborative upload
             const nodeData = {
+                id: node.id, // Include node ID to prevent duplicates!
                 type: nodeType,
                 pos: node.pos,
                 size: node.size,
@@ -225,6 +232,10 @@ class DragDropManager {
                     } else {
                         await node.setImage(mediaUrl, file.name, uploadResult.fileInfo.file_hash);
                     }
+                    
+                    // Mark that this node was uploaded via collaboration
+                    // This prevents double broadcasting
+                    node._uploadedViaCollaboration = true;
                     
                     console.log('✅ Collaborative upload successful');
                     return node;

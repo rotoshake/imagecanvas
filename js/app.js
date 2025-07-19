@@ -41,6 +41,10 @@ class ImageCanvasApp {
                 this.collaborativeManager = new CollaborativeManager(this);
                 // Connect collaborative manager to canvas for operation broadcasting
                 this.graphCanvas.collaborativeManager = this.collaborativeManager;
+                
+                // Set up action manager
+                this.graphCanvas.setActionManager(this.collaborativeManager);
+                
                 console.log('🤝 Collaborative features initialized');
             } else {
                 console.log('📱 Running in single-user mode (collaborative features not loaded)');

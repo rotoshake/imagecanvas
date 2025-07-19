@@ -120,6 +120,16 @@ class Database {
         
         await this.exec(schema);
         console.log('✅ Database schema created/updated');
+        
+        // Create default user if it doesn't exist
+        const defaultUser = await this.get('SELECT * FROM users WHERE id = 1');
+        if (!defaultUser) {
+            await this.run(
+                'INSERT INTO users (id, username, display_name) VALUES (?, ?, ?)',
+                [1, 'default', 'Default User']
+            );
+            console.log('✅ Default user created');
+        }
     }
     
     // Promisified database methods
