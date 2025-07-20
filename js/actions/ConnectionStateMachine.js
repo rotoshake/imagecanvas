@@ -10,10 +10,10 @@ class ConnectionStateMachine {
         
         // Define valid state transitions
         this.transitions = {
-            'disconnected': ['connecting'],
+            'disconnected': ['connecting', 'connected'], // Allow direct to connected for quick reconnects
             'connecting': ['connected', 'disconnected', 'error'],
-            'connected': ['disconnecting', 'error'],
-            'disconnecting': ['disconnected'],
+            'connected': ['disconnecting', 'disconnected', 'error'], // Added direct disconnected for abrupt disconnections
+            'disconnecting': ['disconnected', 'connected'], // Allow connected if reconnect happens during disconnect
             'error': ['connecting', 'disconnected']
         };
         
@@ -27,6 +27,21 @@ class ConnectionStateMachine {
      */
     getState() {
         return this.state;
+    }
+    
+    /**
+     * Get current state (alias for compatibility)
+     */
+    get currentState() {
+        return this.state;
+    }
+    
+    /**
+     * Set current state (for emergency corrections)
+     */
+    set currentState(newState) {
+        console.warn(`⚠️ Direct state change: ${this.state} -> ${newState}`);
+        this.state = newState;
     }
     
     /**

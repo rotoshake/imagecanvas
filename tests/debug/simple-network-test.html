@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Simple Network Test</title>
+</head>
+<body>
+    <h1>Simple Network Layer Test</h1>
+    <pre id="log"></pre>
+    
+    <script>
+        const log = (msg) => {
+            document.getElementById('log').textContent += msg + '\n';
+            console.log(msg);
+        };
+        
+        log('Starting test...');
+        
+        // Test 1: Can we load the NetworkLayer.js file directly?
+        fetch('/js/core/NetworkLayer.js')
+            .then(response => {
+                log(`NetworkLayer.js fetch status: ${response.status}`);
+                if (response.ok) {
+                    return response.text();
+                } else {
+                    throw new Error(`HTTP ${response.status}`);
+                }
+            })
+            .then(text => {
+                log(`NetworkLayer.js size: ${text.length} bytes`);
+                log('First 100 chars: ' + text.substring(0, 100));
+                
+                // Try to evaluate it
+                try {
+                    eval(text);
+                    log('NetworkLayer evaluated successfully');
+                    log('typeof NetworkLayer: ' + typeof NetworkLayer);
+                } catch (e) {
+                    log('ERROR evaluating NetworkLayer: ' + e.message);
+                }
+            })
+            .catch(error => {
+                log('ERROR fetching NetworkLayer.js: ' + error.message);
+            });
+            
+        // Test 2: Try loading via script tag
+        const script = document.createElement('script');
+        script.src = '/js/core/NetworkLayer.js';
+        script.onload = () => {
+            log('NetworkLayer.js loaded via script tag');
+            log('typeof NetworkLayer after script load: ' + typeof NetworkLayer);
+            
+            if (typeof NetworkLayer !== 'undefined') {
+                log('SUCCESS: NetworkLayer class is available!');
+                
+                // Try to create an instance
+                try {
+                    const mockApp = {
+                        updateConnectionStatus: () => {},
+                        updateActiveUsers: () => {},
+                        showError: () => {},
+                        handleStateSync: () => {}
+                    };
+                    const nl = new NetworkLayer(mockApp);
+                    log('SUCCESS: NetworkLayer instance created!');
+                    log('NetworkLayer status: ' + JSON.stringify(nl.getStatus()));
+                } catch (e) {
+                    log('ERROR creating NetworkLayer instance: ' + e.message);
+                }
+            }
+        };
+        script.onerror = (e) => {
+            log('ERROR loading NetworkLayer.js via script tag');
+            console.error(e);
+        };
+        
+        log('Appending script tag...');
+        document.head.appendChild(script);
+    </script>
+</body>
+</html>

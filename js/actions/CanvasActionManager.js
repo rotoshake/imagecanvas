@@ -257,39 +257,6 @@ class CanvasActionManager {
             }
         });
         
-        this.registerAction('node_rotate', {
-            validate: (params) => {
-                if (!params.nodeId && !params.nodeIds) {
-                    return { valid: false, error: 'Missing nodeId or nodeIds' };
-                }
-                return { valid: true };
-            },
-            execute: (params) => {
-                if (params.nodeIds) {
-                    // Multi-node rotation
-                    params.nodeIds.forEach((nodeId, index) => {
-                        const node = this.graph.getNodeById(nodeId);
-                        if (node && params.rotations !== undefined) {
-                            node.rotation = params.rotations[index] % 360;
-                            if (params.positions && params.positions[index]) {
-                                node.pos[0] = params.positions[index][0];
-                                node.pos[1] = params.positions[index][1];
-                            }
-                        }
-                    });
-                } else {
-                    // Single node rotation
-                    const node = this.graph.getNodeById(params.nodeId);
-                    if (node && params.rotation !== undefined) {
-                        node.rotation = params.rotation % 360;
-                        if (params.pos) {
-                            node.pos[0] = params.pos[0];
-                            node.pos[1] = params.pos[1];
-                        }
-                    }
-                }
-            }
-        });
         
         this.registerAction('node_reset', {
             validate: (params) => {

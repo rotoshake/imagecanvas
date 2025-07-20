@@ -295,6 +295,20 @@ class TransactionManager {
                     }
                 };
                 
+            case 'node_rotate':
+                return {
+                    type: 'node_rotate',
+                    data: undoData.operations.length > 1 ? {
+                        nodeIds: undoData.operations.map(op => op.nodeId),
+                        rotations: undoData.operations.map(op => op.oldRotation),
+                        positions: undoData.operations.map(op => op.oldPos)
+                    } : {
+                        nodeId: undoData.operations[0].nodeId,
+                        rotation: undoData.operations[0].oldRotation,
+                        pos: undoData.operations[0].oldPos
+                    }
+                };
+                
             default:
                 console.warn(`Unknown undo operation type: ${undoData.type}`);
                 return null;

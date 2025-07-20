@@ -70,8 +70,8 @@ class UnifiedOperationHandler {
                 
                 // Broadcast if local operation
                 if (!isRemote && this.app.collaborativeManager?.isConnected) {
-                    await this.app.collaborativeManager.broadcastOperation({
-                        ...operation,
+                    this.app.collaborativeManager.sendOperation(operation.type, {
+                        ...operation.data,
                         operationId,
                         timestamp: Date.now()
                     });
@@ -178,34 +178,52 @@ class UnifiedOperationHandler {
         this.registerOperation('node_move', {
             description: 'Move nodes to new positions',
             supportsTransactions: true,
+            validate: (params) => {
+                if (!params.nodeId && (!params.nodeIds || params.nodeIds.length === 0)) {
+                    return { valid: false, error: 'Missing nodeId or nodeIds' };
+                }
+                return { valid: true };
+            },
             execute: async (data, app) => {
                 const { nodeIds, positions, nodeId, pos } = data;
                 const canvas = app.graphCanvas;
                 const undoData = { type: 'node_move', operations: [] };
                 
-                if (nodeIds && positions) {
+                if (nodeIds && nodeIds.length > 0) {
                     // Multiple nodes
                     for (let i = 0; i < nodeIds.length; i++) {
                         const node = canvas.graph.getNodeById(nodeIds[i]);
                         if (node) {
+                            const oldPos = [...node.pos];
+                            
+                            // Only update position if new position is provided
+                            if (positions && positions[i]) {
+                                node.pos = [...positions[i]];
+                            }
+                            
                             undoData.operations.push({
                                 nodeId: nodeIds[i],
-                                oldPos: [...node.pos],
-                                newPos: positions[i]
+                                oldPos: oldPos,
+                                newPos: [...node.pos]
                             });
-                            node.pos = [...positions[i]];
                         }
                     }
-                } else if (nodeId && pos) {
+                } else if (nodeId) {
                     // Single node
                     const node = canvas.graph.getNodeById(nodeId);
                     if (node) {
+                        const oldPos = [...node.pos];
+                        
+                        // Only update position if new position is provided
+                        if (pos) {
+                            node.pos = [...pos];
+                        }
+                        
                         undoData.operations.push({
                             nodeId,
-                            oldPos: [...node.pos],
-                            newPos: pos
+                            oldPos: oldPos,
+                            newPos: [...node.pos]
                         });
-                        node.pos = [...pos];
                     }
                 }
                 
@@ -218,9 +236,7 @@ class UnifiedOperationHandler {
                 if (!data.nodeId && !data.nodeIds) {
                     return { valid: false, error: 'Missing nodeId or nodeIds' };
                 }
-                if (!data.pos && !data.positions) {
-                    return { valid: false, error: 'Missing pos or positions' };
-                }
+                // Make pos/positions optional - some move operations only update positions internally
                 return { valid: true };
             }
         });
@@ -437,6 +453,74 @@ class UnifiedOperationHandler {
             validate: (data) => {
                 if (!data.state) {
                     return { valid: false, error: 'Missing state data' };
+                }
+                return { valid: true };
+            }
+        });
+        
+        // Node Rotate Operation
+        this.registerOperation('node_rotate', {
+            description: 'Rotate nodes',
+            supportsTransactions: true,
+            execute: async (data, app) => {
+                const { nodeId, rotation, pos, nodeIds, rotations, positions } = data;
+                const canvas = app.graphCanvas;
+                const undoData = { type: 'node_rotate', operations: [] };
+                
+                if (nodeIds && rotations) {
+                    // Multi-node rotation
+                    for (let i = 0; i < nodeIds.length; i++) {
+                        const node = canvas.graph.getNodeById(nodeIds[i]);
+                        if (node) {
+                            undoData.operations.push({
+                                nodeId: nodeIds[i],
+                                oldRotation: node.rotation || 0,
+                                newRotation: rotations[i],
+                                oldPos: [...node.pos],
+                                newPos: positions && positions[i] ? positions[i] : [...node.pos]
+                            });
+                            
+                            node.rotation = rotations[i] % 360;
+                            if (positions && positions[i]) {
+                                node.pos[0] = positions[i][0];
+                                node.pos[1] = positions[i][1];
+                            }
+                        }
+                    }
+                } else if (nodeId && rotation !== undefined) {
+                    // Single node rotation
+                    const node = canvas.graph.getNodeById(nodeId);
+                    if (node) {
+                        undoData.operations.push({
+                            nodeId,
+                            oldRotation: node.rotation || 0,
+                            newRotation: rotation,
+                            oldPos: [...node.pos],
+                            newPos: pos ? pos : [...node.pos]
+                        });
+                        
+                        node.rotation = rotation % 360;
+                        if (pos) {
+                            node.pos[0] = pos[0];
+                            node.pos[1] = pos[1];
+                        }
+                    }
+                }
+                
+                return {
+                    result: { rotated: undoData.operations.length },
+                    undo: undoData
+                };
+            },
+            validate: (data) => {
+                if (!data.nodeId && !data.nodeIds) {
+                    return { valid: false, error: 'Missing nodeId or nodeIds' };
+                }
+                if (data.nodeId && data.rotation === undefined) {
+                    return { valid: false, error: 'Missing rotation for single node' };
+                }
+                if (data.nodeIds && !data.rotations) {
+                    return { valid: false, error: 'Missing rotations for multiple nodes' };
                 }
                 return { valid: true };
             }

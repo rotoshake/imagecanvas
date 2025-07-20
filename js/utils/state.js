@@ -133,11 +133,13 @@ class StateManager {
     
     serializeProperties(node) {
         if (node.type === 'media/image') {
-            // Image nodes: store hash, filename, and any other properties
+            // Image nodes: store hash, filename, server URL, and any other properties
             return {
                 hash: node.properties.hash,
                 filename: node.properties.filename,
                 serverFilename: node.properties.serverFilename,
+                // Include src if it's a server URL (not a data URL)
+                ...(node.properties.src && !node.properties.src.startsWith('data:') ? { src: node.properties.src } : {}),
                 ...Object.fromEntries(
                     Object.entries(node.properties).filter(([key]) => 
                         !['hash', 'filename', 'serverFilename', 'src'].includes(key)
@@ -145,18 +147,20 @@ class StateManager {
                 )
             };
         } else if (node.type === 'media/video') {
-            // Video nodes: store hash, filename, and all video properties (loop, muted, autoplay, paused, etc.)
+            // Video nodes: store hash, filename, server URL, and all video properties (loop, muted, autoplay, paused, etc.)
             return {
                 hash: node.properties.hash,
                 filename: node.properties.filename,
                 serverFilename: node.properties.serverFilename,
+                // Include src if it's a server URL (not a data URL)
+                ...(node.properties.src && !node.properties.src.startsWith('data:') ? { src: node.properties.src } : {}),
                 loop: node.properties.loop,
                 muted: node.properties.muted,
                 autoplay: node.properties.autoplay,
                 paused: node.properties.paused,
                 ...Object.fromEntries(
                     Object.entries(node.properties).filter(([key]) => 
-                        !['hash', 'filename', 'serverFilename', 'src'].includes(key)
+                        !['hash', 'filename', 'serverFilename', 'src', 'loop', 'muted', 'autoplay', 'paused'].includes(key)
                     )
                 )
             };
@@ -271,6 +275,11 @@ class StateManager {
                     }
                 }
                 
+                // Ensure src is preserved from nodeData
+                if (nodeData.properties.src) {
+                    node.properties.src = nodeData.properties.src;
+                }
+                
                 // Ensure media is still loaded (in case it was lost)
                 if (newHash && !node.img) {
                     this.loadNodeFromCache(node, node.type);
@@ -302,6 +311,11 @@ class StateManager {
                     } else if (!nodeData.properties.paused && node.video.paused) {
                         node.video.play().catch(() => {}); // Ignore autoplay restrictions
                     }
+                }
+                
+                // Ensure src is preserved from nodeData
+                if (nodeData.properties.src) {
+                    node.properties.src = nodeData.properties.src;
                 }
                 
                 // Ensure media is still loaded (in case it was lost)
@@ -341,8 +355,50 @@ class StateManager {
                 } else {
                     await node.setImage(cached, node.properties.filename, node.properties.hash);
                 }
+                return; // Successfully loaded from cache
             } catch (error) {
                 console.warn('Failed to load cached media:', error);
+            }
+        }
+        
+        // Cache miss - try to load from server URL if available
+        if (node.properties.src && !node.properties.src.startsWith('data:')) {
+            console.log(`Cache miss for ${node.properties.hash}, loading from server: ${node.properties.src}`);
+            try {
+                if (nodeType === 'media/video') {
+                    await node.setVideo(node.properties.src, node.properties.filename, node.properties.hash);
+                } else {
+                    await node.setImage(node.properties.src, node.properties.filename, node.properties.hash);
+                }
+                
+                // Cache the loaded media for future use
+                if (node.img && node.img.complete) {
+                    // Convert image to data URL and cache it
+                    const canvas = document.createElement('canvas');
+                    canvas.width = node.img.width;
+                    canvas.height = node.img.height;
+                    const ctx = canvas.getContext('2d');
+                    ctx.drawImage(node.img, 0, 0);
+                    const dataUrl = canvas.toDataURL('image/png');
+                    window.imageCache.set(node.properties.hash, dataUrl);
+                }
+            } catch (error) {
+                console.error('Failed to load media from server:', error);
+            }
+        } else if (node.properties.serverFilename) {
+            // Try to construct server URL from serverFilename
+            const serverUrl = `${window.CONFIG?.SERVER?.API_BASE || ''}/uploads/${node.properties.serverFilename}`;
+            console.log(`Cache miss, trying server URL: ${serverUrl}`);
+            try {
+                if (nodeType === 'media/video') {
+                    await node.setVideo(serverUrl, node.properties.filename, node.properties.hash);
+                } else {
+                    await node.setImage(serverUrl, node.properties.filename, node.properties.hash);
+                }
+                // Update the src property for future use
+                node.properties.src = serverUrl;
+            } catch (error) {
+                console.error('Failed to load media from constructed URL:', error);
             }
         }
     }

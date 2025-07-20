@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Script Load Order Check</title>
+    <script>
+        // Track script loading order
+        window.scriptLoadOrder = [];
+        window.scriptLoadTimes = {};
+        
+        // Override appendChild to track script loads
+        const originalAppendChild = document.head.appendChild;
+        document.head.appendChild = function(element) {
+            if (element.tagName === 'SCRIPT' && element.src) {
+                const scriptName = element.src.split('/').pop();
+                console.log(`[LOAD] Adding script: ${scriptName}`);
+                window.scriptLoadOrder.push(scriptName);
+                window.scriptLoadTimes[scriptName] = { added: Date.now() };
+                
+                element.onload = function() {
+                    window.scriptLoadTimes[scriptName].loaded = Date.now();
+                    console.log(`[LOADED] ${scriptName} (${window.scriptLoadTimes[scriptName].loaded - window.scriptLoadTimes[scriptName].added}ms)`);
+                };
+            }
+            return originalAppendChild.call(this, element);
+        };
+    </script>
+</head>
+<body>
+    <h1>Script Load Order Check</h1>
+    <pre id="results"></pre>
+    
+    <script>
+        // Load the main page in an iframe to track its script loading
+        const iframe = document.createElement('iframe');
+        iframe.src = '/index.html';
+        iframe.style.width = '100%';
+        iframe.style.height = '400px';
+        iframe.onload = function() {
+            setTimeout(() => {
+                const results = document.getElementById('results');
+                
+                // Check what's loaded in the iframe
+                const iframeWindow = iframe.contentWindow;
+                
+                results.textContent = `
+=== Script Load Order ===
+${window.scriptLoadOrder.map((s, i) => `${i+1}. ${s}`).join('\n')}
+
+=== Components Loaded in Main Window ===
+NetworkLayer: ${typeof iframeWindow.NetworkLayer !== 'undefined' ? '✅ LOADED' : '❌ NOT LOADED'}
+OperationPipeline: ${typeof iframeWindow.OperationPipeline !== 'undefined' ? '✅ LOADED' : '❌ NOT LOADED'}
+CollaborativeArchitecture: ${typeof iframeWindow.CollaborativeArchitecture !== 'undefined' ? '✅ LOADED' : '❌ NOT LOADED'}
+Command: ${typeof iframeWindow.Command !== 'undefined' ? '✅ LOADED' : '❌ NOT LOADED'}
+
+=== App State ===
+window.app exists: ${iframeWindow.app ? '✅ YES' : '❌ NO'}
+${iframeWindow.app ? `
+app.networkLayer: ${iframeWindow.app.networkLayer ? '✅ EXISTS' : '❌ MISSING'}
+app.operationPipeline: ${iframeWindow.app.operationPipeline ? '✅ EXISTS' : '❌ MISSING'}
+app.collaborativeArchitecture: ${iframeWindow.app.collaborativeArchitecture ? '✅ EXISTS' : '❌ MISSING'}
+` : 'App not initialized'}
+
+=== Network State ===
+${iframeWindow.app && iframeWindow.app.networkLayer ? `
+Connected: ${iframeWindow.app.networkLayer.isConnected ? '✅ YES' : '❌ NO'}
+Current Project: ${JSON.stringify(iframeWindow.app.networkLayer.currentProject)}
+` : 'NetworkLayer not available'}
+                `;
+                
+                // Also log to console
+                console.log('=== Detailed Component Check ===');
+                console.log('iframeWindow:', iframeWindow);
+                console.log('iframeWindow.NetworkLayer:', iframeWindow.NetworkLayer);
+                console.log('iframeWindow.app:', iframeWindow.app);
+                if (iframeWindow.app) {
+                    console.log('app.networkLayer:', iframeWindow.app.networkLayer);
+                }
+            }, 3000); // Wait 3 seconds for everything to load
+        };
+        document.body.appendChild(iframe);
+    </script>
+</body>
+</html>

@@ -375,8 +375,8 @@ class LGraphCanvas {
                 // Get the new state of the clicked video
                 const clickedVideoState = node.properties.paused;
                 
-                // Broadcast the toggle for the clicked video
-                this.broadcastVideoToggle(node.id, clickedVideoState);
+                // Broadcast the toggle for the clicked video (send playing state, not paused)
+                this.broadcastVideoToggle(node.id, !clickedVideoState);
                 
                 // Apply the same state to all other selected video nodes
                 const selectedNodes = this.selection.getSelectedNodes();
@@ -388,8 +388,8 @@ class LGraphCanvas {
                             selectedNode.play();
                         }
                         
-                        // Broadcast toggle for each video
-                        this.broadcastVideoToggle(selectedNode.id, clickedVideoState);
+                        // Broadcast toggle for each video (send playing state, not paused)
+                        this.broadcastVideoToggle(selectedNode.id, !clickedVideoState);
                     }
                 }
                 
@@ -1130,16 +1130,46 @@ class LGraphCanvas {
                 const selectedNodes = this.selection.getSelectedNodes();
                 if (selectedNodes.length === 1) {
                     const node = selectedNodes[0];
-                    this.actionManager.executeAction('node_move', {
+                    const moveData = {
                         nodeId: node.id,
-                        x: node.pos[0],
-                        y: node.pos[1]
-                    });
+                        pos: [...node.pos]
+                    };
+                    
+                    // For media nodes, include properties to ensure they don't lose their content
+                    if (node.type === 'media/image' || node.type === 'media/video') {
+                        moveData.properties = {
+                            src: node.properties.src,
+                            hash: node.properties.hash,
+                            filename: node.properties.filename,
+                            serverFilename: node.properties.serverFilename
+                        };
+                    }
+                    
+                    this.actionManager.executeAction('node_move', moveData);
                 } else if (selectedNodes.length > 1) {
-                    this.actionManager.executeAction('node_move', {
+                    const moveData = {
                         nodeIds: selectedNodes.map(n => n.id),
                         positions: selectedNodes.map(n => [...n.pos])
-                    });
+                    };
+                    
+                    // Check if any nodes are media nodes that need properties preserved
+                    const mediaNodes = selectedNodes.filter(n => n.type === 'media/image' || n.type === 'media/video');
+                    if (mediaNodes.length > 0) {
+                        moveData.nodeProperties = {};
+                        mediaNodes.forEach(node => {
+                            moveData.nodeProperties[node.id] = {
+                                src: node.properties.src,
+                                hash: node.properties.hash,
+                                filename: node.properties.filename,
+                                serverFilename: node.properties.serverFilename
+                            };
+                        });
+                    }
+                    
+                    this.actionManager.executeAction('node_move', moveData);
+                } else if (selectedNodes.length === 0) {
+                    // No nodes selected - skip the operation
+                    console.warn('Attempted to execute node_move with no selected nodes');
                 }
             }
             
@@ -1185,20 +1215,26 @@ class LGraphCanvas {
         // Rotation
         if (this.interactionState.rotating.active) {
             // Broadcast rotation operation for collaboration
-            if (this.actionManager && wasInteracting) {
+            if (this.collaborativeManager?.operationHandler && wasInteracting) {
                 const selectedNodes = this.selection.getSelectedNodes();
                 if (selectedNodes.length === 1) {
                     const node = selectedNodes[0];
-                    this.actionManager.executeAction('node_rotate', {
-                        nodeId: node.id,
-                        rotation: node.rotation || 0,
-                        pos: [...node.pos]
+                    this.collaborativeManager.operationHandler.execute({
+                        type: 'node_rotate',
+                        data: {
+                            nodeId: node.id,
+                            rotation: node.rotation || 0,
+                            pos: [...node.pos]
+                        }
                     });
                 } else if (selectedNodes.length > 1) {
-                    this.actionManager.executeAction('node_rotate', {
-                        nodeIds: selectedNodes.map(n => n.id),
-                        rotations: selectedNodes.map(n => n.rotation || 0),
-                        positions: selectedNodes.map(n => [...n.pos])
+                    this.collaborativeManager.operationHandler.execute({
+                        type: 'node_rotate',
+                        data: {
+                            nodeIds: selectedNodes.map(n => n.id),
+                            rotations: selectedNodes.map(n => n.rotation || 0),
+                            positions: selectedNodes.map(n => [...n.pos])
+                        }
                     });
                 }
             }
@@ -2861,7 +2897,7 @@ class LGraphCanvas {
     // ===================================
     
     broadcastNodeMove() {
-        if (!this.collaborativeManager) return;
+        if (!this.collaborativeManager || this.collaborativeManager._isApplyingRemoteOp) return;
         
         const selectedNodes = this.selection.getSelectedNodes();
         if (selectedNodes.length === 0) return;
@@ -2885,7 +2921,7 @@ class LGraphCanvas {
     }
     
     broadcastNodeResize() {
-        if (!this.collaborativeManager) return;
+        if (!this.collaborativeManager || this.collaborativeManager._isApplyingRemoteOp) return;
         
         const selectedNodes = this.selection.getSelectedNodes();
         if (selectedNodes.length === 0) return;
@@ -2911,35 +2947,9 @@ class LGraphCanvas {
         }
     }
     
-    broadcastNodeRotation() {
-        if (!this.collaborativeManager) return;
-        
-        const selectedNodes = this.selection.getSelectedNodes();
-        if (selectedNodes.length === 0) return;
-        
-        if (selectedNodes.length === 1) {
-            // Single node rotation
-            const node = selectedNodes[0];
-            this.collaborativeManager.sendOperation('node_rotate', {
-                nodeId: node.id,
-                rotation: node.rotation || 0,
-                pos: [...node.pos]
-            });
-        } else {
-            // Multi-node rotation
-            const nodeIds = selectedNodes.map(node => node.id);
-            const rotations = selectedNodes.map(node => node.rotation || 0);
-            const positions = selectedNodes.map(node => [...node.pos]);
-            this.collaborativeManager.sendOperation('node_rotate', {
-                nodeIds: nodeIds,
-                rotations: rotations,
-                positions: positions
-            });
-        }
-    }
     
     broadcastNodeDelete(nodeIds) {
-        if (!this.collaborativeManager) return;
+        if (!this.collaborativeManager || this.collaborativeManager._isApplyingRemoteOp) return;
         
         if (nodeIds.length === 1) {
             this.collaborativeManager.sendOperation('node_delete', {
@@ -2953,7 +2963,7 @@ class LGraphCanvas {
     }
     
     broadcastNodeCreate(node) {
-        if (!this.actionManager) return;
+        if (!this.collaborativeManager || this.collaborativeManager._isApplyingRemoteOp) return;
         
         const nodeData = {
             id: node.id,
@@ -2996,56 +3006,61 @@ class LGraphCanvas {
     }
     
     broadcastNodeReset(nodeIds, resetType, values) {
-        if (!this.collaborativeManager) return;
+        if (!this.collaborativeManager || this.collaborativeManager._isApplyingRemoteOp) return;
         
         if (nodeIds.length === 1) {
             this.collaborativeManager.sendOperation('node_reset', {
                 nodeId: nodeIds[0],
-                resetType: resetType,
-                value: values[0]
+                resetRotation: resetType === 'rotation',
+                resetAspectRatio: resetType === 'aspectRatio'
             });
         } else {
-            this.collaborativeManager.sendOperation('node_reset', {
-                nodeIds: nodeIds,
-                resetType: resetType,
-                values: values
+            // Handle multiple nodes
+            nodeIds.forEach((nodeId, index) => {
+                this.collaborativeManager.sendOperation('node_reset', {
+                    nodeId: nodeId,
+                    resetRotation: resetType === 'rotation',
+                    resetAspectRatio: resetType === 'aspectRatio'
+                });
             });
         }
     }
     
-    broadcastVideoToggle(nodeId, paused) {
-        if (!this.collaborativeManager) return;
+    broadcastVideoToggle(nodeId, playing) {
+        if (!this.collaborativeManager || this.collaborativeManager._isApplyingRemoteOp) return;
         
         this.collaborativeManager.sendOperation('video_toggle', {
             nodeId: nodeId,
-            paused: paused
+            playing: playing
         });
     }
     
     // Removed broadcastAlignment - alignment now uses node_move operations
     
     broadcastNodePropertyUpdate(nodeIds, propertyName, values) {
-        if (!this.collaborativeManager) return;
+        if (!this.collaborativeManager || this.collaborativeManager._isApplyingRemoteOp) return;
         
         if (Array.isArray(nodeIds) && Array.isArray(values)) {
-            // Multi-node property update
-            this.collaborativeManager.sendOperation('node_property_update', {
-                nodeIds: nodeIds,
-                propertyName: propertyName,
-                values: values
+            // Multi-node property update - send individual updates for consistency
+            nodeIds.forEach((nodeId, index) => {
+                this.collaborativeManager.sendOperation('node_property_update', {
+                    nodeId: nodeId,
+                    property: propertyName,
+                    value: values[index]
+                });
             });
         } else {
             // Single node property update
             this.collaborativeManager.sendOperation('node_property_update', {
                 nodeId: Array.isArray(nodeIds) ? nodeIds[0] : nodeIds,
-                propertyName: propertyName,
+                property: propertyName,
                 value: Array.isArray(values) ? values[0] : values
             });
         }
     }
     
     broadcastLayerOrderChange(nodes, direction) {
-        if (!this.collaborativeManager) return;
+        if (!this.collaborativeManager || this.collaborativeManager._isApplyingRemoteOp) return;
         
         const nodeIds = nodes.map(node => node.id);
         const layerOrder = this.graph.nodes.map(node => node.id);

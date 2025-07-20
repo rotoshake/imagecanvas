@@ -39,6 +39,10 @@ class ImageCanvasApp {
             // Initialize collaborative features (Phase 2)
             if (typeof CollaborativeManager !== 'undefined') {
                 this.collaborativeManager = new CollaborativeManager(this);
+                
+                // Initialize the collaborative manager
+                await this.collaborativeManager.initialize();
+                
                 // Connect collaborative manager to canvas for operation broadcasting
                 this.graphCanvas.collaborativeManager = this.collaborativeManager;
                 
@@ -149,24 +153,54 @@ class ImageCanvasApp {
 class NodeFactory {
     static nodeTypes = new Map();
     
-    static createNode(type) {
+    static createNode(type, options = {}) {
+        let node = null;
+        
+        // Get node class
         const NodeClass = this.nodeTypes.get(type);
         if (NodeClass) {
-            return new NodeClass();
+            node = new NodeClass();
+        } else {
+            // Fallback for built-in types
+            switch (type) {
+                case 'media/image':
+                case 'canvas/image':
+                    node = new ImageNode();
+                    break;
+                case 'media/video':
+                case 'canvas/video':
+                    node = new VideoNode();
+                    break;
+                case 'media/text':
+                case 'canvas/text':
+                    node = new TextNode();
+                    break;
+                default:
+                    console.warn('Unknown node type:', type);
+                    return null;
+            }
         }
         
-        // Fallback for built-in types
-        switch (type) {
-            case 'media/image':
-                return new ImageNode();
-            case 'media/video':
-                return new VideoNode();
-            case 'media/text':
-                return new TextNode();
-            default:
-                console.warn('Unknown node type:', type);
-                return null;
+        // Apply options if provided
+        if (node && options) {
+            if (options.id) node.id = options.id;
+            if (options.pos) node.pos = [...options.pos];
+            if (options.size) node.size = [...options.size];
+            if (options.properties) {
+                Object.assign(node.properties, options.properties);
+            }
+            if (options.flags) {
+                Object.assign(node.flags, options.flags);
+            }
+            if (options.title) node.title = options.title;
+            if (options.rotation !== undefined) node.rotation = options.rotation;
+            if (options.aspectRatio !== undefined) node.aspectRatio = options.aspectRatio;
+            
+            // Do NOT automatically add to graph - let the caller handle it
+            // This prevents double-adding and broadcast loops
         }
+        
+        return node;
     }
     
     static registerNodeType(type, nodeClass) {

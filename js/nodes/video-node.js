@@ -281,7 +281,7 @@ class VideoNode extends BaseNode {
         
         // Broadcast video toggle for collaboration
         if (this.graph?.canvas?.broadcastVideoToggle) {
-            this.graph.canvas.broadcastVideoToggle(this.id, this.properties.paused);
+            this.graph.canvas.broadcastVideoToggle(this.id, !this.properties.paused);
         }
     }
     

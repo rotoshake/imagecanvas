@@ -13,5 +13,4 @@ ImageCanvas is a high-performance, collaborative media canvas application that s
   - `tests/integration/` - For multi-file integration tests
   - `tests/fixtures/` - For test HTML files and test data
   - NEVER place test files in the project root unless explicitly requested
-
-[Rest of the existing content remains unchanged...]
+- please write all documentation md files into the docs subdirectory

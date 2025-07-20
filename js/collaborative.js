@@ -1,1768 +1,1231 @@
-// ===================================
-// SIMPLIFIED COLLABORATIVE MODULE
-// Always multi-user, no mode switching
-// ===================================
-
+/**
+ * Fixed Collaborative Manager - Supports multiple tabs properly
+ * Key fixes:
+ * 1. Unique tab IDs that persist across reconnections
+ * 2. Proper session management
+ * 3. No blocking between tabs of same user
+ */
 class CollaborativeManager {
     constructor(app) {
         this.app = app;
-        this.canvas = app.graphCanvas;
         this.graph = app.graph;
-        this.stateManager = app.stateManager;
+        this.resourceManager = app.resourceManager;
+        this.errorBoundary = app.errorBoundary;
         
-        // Connection state machine
-        this.connectionState = new ConnectionStateMachine();
-        
-        // Resource manager
-        this.resourceManager = new ResourceManager();
-        
-        // Error boundary
-        this.errorBoundary = new ErrorBoundary({
-            maxRetries: 3,
-            retryDelay: 1000
-        });
-        
-        // Core state
+        // Connection state
         this.socket = null;
         this.isConnected = false;
-        this.isConnecting = false;  // Add flag to prevent duplicate connections
         this.currentProject = null;
         this.currentUser = null;
-        this.otherUsers = new Map();
+        
+        // Generate persistent tab ID
+        if (!window.__imageCanvasTabId) {
+            window.__imageCanvasTabId = `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+        }
+        this.tabId = window.__imageCanvasTabId;
+        
+        // Session management
+        this._hasValidSession = false;
         this.sequenceNumber = 0;
         
+        // Operation tracking
+        this.pendingOperations = new Map();
+        this.appliedOperations = new Set();
+        
+        // Flag to prevent circular broadcasts when applying remote operations
+        this._isApplyingRemoteOp = false;
+        
+        // Initialize UnifiedOperationHandler for centralized operation handling
+        this.operationHandler = null;
+        this.transactionManager = null;
+        
         // UI elements
-        this.collaborationUI = null;
-        this.userList = null;
-        this.connectionStatus = null;
+        this.statusElement = null;
+        this.userListElement = null;
         
         // Timers
         this.syncTimer = null;
-        this.heartbeatTimer = null;
-        this.autoSaveTimer = null;
-        
-        // Reconnection
-        this.reconnectAttempts = 0;
-        this.maxReconnectAttempts = 10;
         this.reconnectTimer = null;
         
-        // Auto-save state
-        this.hasUnsavedChanges = false;
-        this.lastSaveTime = Date.now();
-        
-        // Action manager
-        this.actionManager = null;
-        
-        // Performance optimization components
-        this.operationBatcher = null;
-        this.stateSynchronizer = null;
-        this.compressionManager = null;
-        this.workerManager = null;
-        
-        this.init();
+        console.log(`🚀 CollaborativeManager initialized with tab ID: ${this.tabId}`);
     }
     
-    async init() {
-        console.log('🤝 Collaborative manager initializing...');
-        
-        // Create UI immediately
-        this.createUI();
-        
-        // Wait a bit for Socket.IO to load if not available yet
-        let attempts = 0;
-        while (typeof io === 'undefined' && attempts < 20) {
-            console.log('⏳ Waiting for Socket.IO to load...', attempts);
-            await new Promise(resolve => setTimeout(resolve, 100));
-            attempts++;
-        }
-        
-        // Check if Socket.IO is available
-        if (typeof io === 'undefined') {
-            console.log('⚠️ Socket.IO not loaded - collaboration unavailable');
-            this.showStatus('Collaboration Unavailable', 'error');
-            return;
-        }
-        
-        console.log('✅ Socket.IO is available, proceeding with connection');
-        
-        // Initialize performance optimization components
-        this.initializePerformanceComponents();
-        
-        // Always try to connect
-        this.connectToServer();
-    }
-    
-    /**
-     * Initialize performance optimization components
-     */
-    initializePerformanceComponents() {
+    async initialize() {
         try {
-            // Initialize operation batcher
-            if (typeof OperationBatcher !== 'undefined') {
-                this.operationBatcher = new OperationBatcher(this);
-                console.log('✅ OperationBatcher initialized');
+            // Setup UI
+            this.setupUI();
+            
+            // Initialize UnifiedOperationHandler and TransactionManager
+            if (typeof UnifiedOperationHandler !== 'undefined') {
+                this.operationHandler = new UnifiedOperationHandler(this.app);
+                console.log('✅ UnifiedOperationHandler initialized');
+                
+                if (typeof TransactionManager !== 'undefined') {
+                    this.transactionManager = new TransactionManager(this.operationHandler);
+                    this.operationHandler.setTransactionManager(this.transactionManager);
+                    console.log('✅ TransactionManager initialized');
+                }
             }
             
-            // Initialize incremental state synchronizer
-            if (typeof IncrementalStateSynchronizer !== 'undefined') {
-                this.stateSynchronizer = new IncrementalStateSynchronizer(this);
-                console.log('✅ IncrementalStateSynchronizer initialized');
-            }
+            // Connect to server
+            await this.connect();
             
-            // Initialize compression manager
-            if (typeof CompressionManager !== 'undefined') {
-                this.compressionManager = new CompressionManager();
-                console.log('✅ CompressionManager initialized');
-            }
+            // Setup operation handlers
+            this.setupOperationHandlers();
             
-            // Initialize worker manager
-            if (typeof PerformanceWorkerManager !== 'undefined') {
-                this.workerManager = new PerformanceWorkerManager();
-                console.log('✅ PerformanceWorkerManager initialized');
-            }
+            console.log('✅ Collaborative features initialized');
             
         } catch (error) {
-            console.warn('Failed to initialize some performance components:', error);
+            console.error('Failed to initialize collaborative features:', error);
+            this.showStatus('Offline mode', 'warning');
         }
     }
     
-    async connectToServer() {
-        // Check if we can transition to connecting state
-        if (!this.connectionState.canTransition('connecting')) {
-            console.log(`⚠️ Cannot connect from state: ${this.connectionState.getState()}`);
-            return;
-        }
+    setupOperationHandlers() {
+        // Placeholder for operation handler setup
+        // This will be where you integrate with the existing action system
+        console.log('🔧 Operation handlers setup');
         
-        try {
-            await this.connectionState.transition('connecting', async () => {
-                console.log('🔌 Connecting to collaborative server...');
-                this.showStatus('Connecting...', 'info');
-                
-                // Clean up any existing socket
-                if (this.socket) {
-                    console.log('🧹 Cleaning up existing socket');
-                    this.socket.removeAllListeners();
-                    this.socket.disconnect();
-                    this.socket = null;
-                }
-                
-                console.log('🔧 Creating socket to:', CONFIG.SERVER.API_BASE);
-                
-                this.socket = io(CONFIG.SERVER.API_BASE, {
-                    reconnection: false,  // We handle reconnection manually for better control
-                    autoConnect: false,   // Don't auto-connect, we'll do it manually
-                    timeout: 10000,
-                    forceNew: true,      // Force a new connection instead of reusing existing
-                    multiplex: false,    // Don't multiplex connections
-                    transports: ['websocket'], // Use WebSocket only, avoid polling
-                    upgrade: false       // Don't upgrade from long-polling
+        // Don't auto-join - let the canvas navigator handle project joining
+        // when it loads a specific canvas
+    }
+    
+    async connect() {
+        return new Promise((resolve, reject) => {
+            try {
+                // Connect to Socket.IO server
+                this.socket = io('http://localhost:3000', {
+                    transports: ['websocket'],
+                    reconnection: true,
+                    reconnectionDelay: 1000,
+                    reconnectionDelayMax: 5000,
+                    reconnectionAttempts: Infinity
                 });
-                
-                console.log('🔧 Socket created:', !!this.socket);
                 
                 this.setupSocketHandlers();
                 
-                // Connect immediately
-                console.log('🔧 Connecting socket...');
-                this.socket.connect();
-            });
-        } catch (error) {
-            console.error('Failed to connect:', error);
-            this.showStatus('Connection Failed', 'error');
-            // State machine will handle the rollback
-        }
+                // Wait for connection
+                this.socket.on('connect', () => {
+                    console.log('✅ Connected to collaboration server');
+                    this.isConnected = true;
+                    this.showStatus('Connected', 'success');
+                    resolve();
+                });
+                
+                this.socket.on('connect_error', (error) => {
+                    console.error('Connection error:', error);
+                    this.showStatus('Connection failed', 'error');
+                    reject(error);
+                });
+                
+            } catch (error) {
+                reject(error);
+            }
+        });
     }
     
     setupSocketHandlers() {
-        this.socket.on('connect', async () => {
-            console.log('✅ Connected to server');
+        // Connection events
+        this.socket.on('connect', () => {
+            this.isConnected = true;
+            this.showStatus('Connected', 'success');
             
-            try {
-                await this.connectionState.transition('connected', async () => {
-                    this.isConnected = true;
-                    this.isConnecting = false;  // Clear connecting flag
-                    this.reconnectAttempts = 0; // Reset counter
-                    
-                    // Clear any pending reconnect
-                    if (this.reconnectTimer) {
-                        clearTimeout(this.reconnectTimer);
-                        this.reconnectTimer = null;
-                    }
-                    
-                    this.showStatus('Connected', 'success');
-                    
-                    // Rejoin project if we were in one
-                    if (this.currentProject && this.currentProject.id) {
-                        await this.rejoinProject();
-                    }
-                    
-                    // Start monitoring
-                    this.startHeartbeat();
-                });
-            } catch (error) {
-                console.error('Failed to handle connection:', error);
+            // Rejoin project if we were in one
+            if (this.currentProject && !this._hasValidSession) {
+                console.log('🔄 Reconnected - rejoining project...');
+                this.rejoinProject();
             }
         });
         
-        this.socket.on('disconnect', async (reason) => {
-            console.log('❌ Disconnected:', reason);
-            
-            try {
-                await this.connectionState.transition('disconnected', async () => {
-                    this.isConnected = false;
-                    this.isConnecting = false;  // Clear connecting flag
-                    
-                    // Clear any pending reconnect
-                    if (this.reconnectTimer) {
-                        clearTimeout(this.reconnectTimer);
-                        this.reconnectTimer = null;
-                    }
-                    
-                    // Stop monitoring
-                    this.stopHeartbeat();
-                    this.stopPeriodicSync();
-                    
-                    // Clear pending operations
-                    this.connectionState.clearPendingOperations();
-                    
-                    if (reason === 'io server disconnect') {
-                        // Server kicked us out
-                        this.showStatus('Disconnected by server', 'error');
-                    } else if (reason === 'io client disconnect') {
-                        // We disconnected intentionally
-                        this.showStatus('Disconnected', 'info');
-                    } else if (reason === 'transport close' || reason === 'transport error') {
-                        // Transport issues - wait longer before reconnecting
-                        console.log('⚠️ Transport issue detected, waiting before reconnect...');
-                        this.showStatus('Connection lost - Will reconnect...', 'warning');
-                        // Use longer delay for transport issues
-                        setTimeout(() => {
-                            if (this.connectionState.getState() === 'disconnected') {
-                                this.scheduleReconnect();
-                            }
-                        }, 3000); // Wait 3 seconds before starting reconnection
-                    } else {
-                        // Other connection loss - attempt reconnection
-                        this.showStatus('Connection lost - Reconnecting...', 'warning');
-                        this.scheduleReconnect();
-                    }
-                });
-            } catch (error) {
-                console.error('Failed to handle disconnect:', error);
-            }
-        });
-        
-        this.socket.on('connect_error', async (error) => {
-            console.log('❌ Connection error:', error.message);
-            
-            try {
-                await this.connectionState.transition('error', async () => {
-                    this.isConnected = false;
-                    this.isConnecting = false;  // Clear connecting flag
-                    
-                    // Only schedule reconnect if we don't already have one pending
-                    if (!this.reconnectTimer) {
-                        this.scheduleReconnect();
-                    }
-                });
-            } catch (stateError) {
-                // If we can't transition to error state, try disconnected
-                if (this.connectionState.canTransition('disconnected')) {
-                    await this.connectionState.transition('disconnected', () => {
-                        this.isConnected = false;
-                        this.isConnecting = false;
-                    });
-                }
-            }
+        this.socket.on('disconnect', () => {
+            this.isConnected = false;
+            this._hasValidSession = false;
+            this.showStatus('Disconnected', 'error');
+            this.stopPeriodicSync();
         });
         
         // Project events
-        this.socket.on('project_joined', this.handleProjectJoined.bind(this));
-        this.socket.on('project_state', this.handleProjectState.bind(this));
-        this.socket.on('active_users', this.handleActiveUsers.bind(this));
-        this.socket.on('user_joined', this.handleUserJoined.bind(this));
-        this.socket.on('user_left', this.handleUserLeft.bind(this));
-        
-        // Canvas operations
-        this.socket.on('canvas_operation', this.handleRemoteOperation.bind(this));
-        this.socket.on('canvas_operation_batch', this.handleRemoteOperationBatch.bind(this));
-        this.socket.on('sync_response', this.handleSyncResponse.bind(this));
-        this.socket.on('media_uploaded', this.handleMediaUploaded.bind(this));
-        
-        // Incremental sync
-        this.socket.on('incremental_sync', this.handleIncrementalSync.bind(this));
-        
-        // Heartbeat
-        this.socket.on('heartbeat_response', this.handleHeartbeatResponse.bind(this));
-        
-        // State sharing
-        this.socket.on('request_project_state', this.handleProjectStateRequest.bind(this));
-    }
-    
-    createUI() {
-        // Create collaboration UI container
-        this.collaborationUI = document.createElement('div');
-        this.collaborationUI.id = 'collaboration-ui';
-        this.collaborationUI.style.cssText = `
-            position: fixed;
-            top: 10px;
-            right: 10px;
-            background: rgba(0, 0, 0, 0.85);
-            color: white;
-            padding: 12px;
-            border-radius: 8px;
-            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-            font-size: 12px;
-            z-index: 10000;
-            min-width: 180px;
-            box-shadow: 0 2px 8px rgba(0,0,0,0.3);
-        `;
-        
-        // Connection status
-        this.connectionStatus = document.createElement('div');
-        this.connectionStatus.style.cssText = `
-            margin-bottom: 10px;
-            padding: 6px 10px;
-            border-radius: 4px;
-            text-align: center;
-            font-weight: 500;
-            display: flex;
-            align-items: center;
-            gap: 6px;
-            justify-content: center;
-        `;
-        this.collaborationUI.appendChild(this.connectionStatus);
-        
-        // User list header
-        const userHeader = document.createElement('div');
-        userHeader.textContent = 'Active Users';
-        userHeader.style.cssText = 'font-weight: 600; margin-bottom: 6px; opacity: 0.8;';
-        this.collaborationUI.appendChild(userHeader);
-        
-        // User list
-        this.userList = document.createElement('div');
-        this.userList.id = 'user-list';
-        this.userList.style.cssText = 'max-height: 200px; overflow-y: auto;';
-        this.collaborationUI.appendChild(this.userList);
-        
-        document.body.appendChild(this.collaborationUI);
-    }
-    
-    scheduleReconnect() {
-        // Clear any existing timer
-        if (this.reconnectTimer) {
-            clearTimeout(this.reconnectTimer);
-        }
-        
-        if (this.reconnectAttempts >= this.maxReconnectAttempts) {
-            console.log('❌ Max reconnection attempts reached');
-            this.showStatus('Offline - Refresh to retry', 'error');
-            return;
-        }
-        
-        this.reconnectAttempts++;
-        
-        // Exponential backoff with jitter
-        const baseDelay = Math.min(1000 * Math.pow(2, this.reconnectAttempts - 1), 30000);
-        const jitter = baseDelay * 0.5 * Math.random();
-        const delay = baseDelay + jitter;
-        
-        console.log(`⏱️ Reconnecting in ${Math.round(delay/1000)}s (attempt ${this.reconnectAttempts}/${this.maxReconnectAttempts})`);
-        
-        this.reconnectTimer = setTimeout(() => {
-            if (!this.isConnected && !this.isConnecting) {
-                console.log('🔄 Attempting reconnection...');
-                // Clear old socket before reconnecting
-                if (this.socket) {
-                    this.socket.removeAllListeners();
-                    this.socket.disconnect();
-                    this.socket = null;
-                }
-                this.connectToServer();
-            }
-        }, delay);
-    }
-    
-    showStatus(message, type = 'info') {
-        if (!this.connectionStatus) return;
-        
-        const colors = {
-            info: { bg: '#3b82f6', icon: '🔄' },
-            success: { bg: '#10b981', icon: '✅' },
-            warning: { bg: '#f59e0b', icon: '⚠️' },
-            error: { bg: '#ef4444', icon: '❌' }
-        };
-        
-        const status = colors[type] || colors.info;
-        this.connectionStatus.innerHTML = `<span>${status.icon}</span> ${message}`;
-        this.connectionStatus.style.backgroundColor = status.bg;
-    }
-    
-    updateUserList() {
-        if (!this.userList) return;
-        
-        this.userList.innerHTML = '';
-        
-        // Add current user
-        if (this.currentUser) {
-            const userEl = document.createElement('div');
-            userEl.style.cssText = 'padding: 4px 0; color: #10b981;';
-            userEl.textContent = `${this.currentUser.displayName} (you)`;
-            this.userList.appendChild(userEl);
-        }
-        
-        // Add other users
-        this.otherUsers.forEach((user) => {
-            const userEl = document.createElement('div');
-            userEl.style.cssText = 'padding: 4px 0; color: #e5e7eb;';
-            userEl.textContent = user.displayName;
-            this.userList.appendChild(userEl);
+        this.socket.on('project_joined', (data) => {
+            this.handleProjectJoined(data);
         });
         
-        if (this.otherUsers.size === 0 && !this.currentUser) {
-            const emptyEl = document.createElement('div');
-            emptyEl.style.cssText = 'padding: 4px 0; color: #6b7280; font-style: italic;';
-            emptyEl.textContent = 'No users connected';
-            this.userList.appendChild(emptyEl);
-        }
+        this.socket.on('active_users', (users) => {
+            this.handleActiveUsers(users);
+        });
+        
+        this.socket.on('user_joined', (user) => {
+            this.handleUserJoined(user);
+        });
+        
+        this.socket.on('user_left', (user) => {
+            this.handleUserLeft(user);
+        });
+        
+        this.socket.on('tab_closed', (data) => {
+            console.log(`📱 Tab closed: ${data.tabId} for user ${data.userId}`);
+        });
+        
+        // Canvas operations
+        this.socket.on('canvas_operation', (data) => {
+            this.handleRemoteOperation(data);
+        });
+        
+        this.socket.on('sync_response', (data) => {
+            this.handleSyncResponse(data);
+        });
+        
+        // Media upload events
+        this.socket.on('media_uploaded', (data) => {
+            this.handleRemoteMediaUpload(data);
+        });
+        
+        // State sharing
+        this.socket.on('request_project_state', (data) => {
+            this.handleStateRequest(data);
+        });
+        
+        this.socket.on('project_state', (state) => {
+            this.handleProjectState(state);
+        });
+        
+        // Error handling
+        this.socket.on('error', (error) => {
+            this.handleServerError(error);
+        });
     }
     
-    async joinProject(projectId, username = null, displayName = null) {
-        projectId = parseInt(projectId);
-        
-        if (!this.socket) {
-            console.error('Cannot join project - no socket');
-            return false;
-        }
-        
-        // If we're in the same project already, don't rejoin
-        if (this.currentProject && parseInt(this.currentProject.id) === parseInt(projectId)) {
-            console.log('✅ Already in this project');
-            return true;
-        }
-        
-        // Prevent multiple simultaneous join attempts
-        if (this.isJoining) {
-            console.log('⏳ Already joining a project, waiting...');
-            return false;
-        }
-        
-        this.isJoining = true;
-        
-        // Wait for connection if not connected
+    async joinProject(projectId) {
         if (!this.isConnected) {
-            console.log('⏳ Waiting for connection before joining project...');
-            
-            // Wait up to 10 seconds for connection
-            const waitStart = Date.now();
-            while (!this.isConnected && Date.now() - waitStart < 10000) {
-                await new Promise(resolve => setTimeout(resolve, 100));
-            }
-            
-            if (!this.isConnected) {
-                console.error('❌ Timeout waiting for connection');
-                this.isJoining = false;
-                return false;
-            }
+            console.warn('⚠️ Cannot join project - not connected');
+            return false;
         }
         
-        // Generate user info if not provided
-        if (!username) {
-            // Get or create base username
-            let baseUsername = localStorage.getItem('username');
-            if (!baseUsername) {
-                // Generate more readable usernames for testing
-                const adjectives = ['Red', 'Blue', 'Green', 'Yellow', 'Purple', 'Orange', 'Pink', 'Gray'];
-                const nouns = ['Fox', 'Bear', 'Eagle', 'Wolf', 'Tiger', 'Lion', 'Hawk', 'Owl'];
-                const adj = adjectives[Math.floor(Math.random() * adjectives.length)];
-                const noun = nouns[Math.floor(Math.random() * nouns.length)];
-                const num = Math.floor(Math.random() * 100);
-                baseUsername = `${adj}${noun}${num}`;
-                localStorage.setItem('username', baseUsername);
-            }
-            
-            // Add tab-specific identifier
-            // Always generate a fresh tab ID to ensure uniqueness
-            // This handles cases where tabs are duplicated or sessionStorage is copied
-            const tabId = Date.now().toString(36) + Math.random().toString(36).substr(2, 5);
-            console.log('📍 Generated unique Tab ID:', tabId);
-            
-            // Combine for unique username per tab
-            username = `${baseUsername}-${tabId}`;
-            
-            // Display name is just the base username (without tab ID)
-            if (!displayName) {
-                displayName = baseUsername;
-            }
-        }
+        // Clear any existing session
+        this._hasValidSession = false;
+        this.stopPeriodicSync();
         
-        console.log('🔐 Joining with username:', username, 'display:', displayName);
+        // Generate username
+        const baseUsername = localStorage.getItem('imagecanvas_username') || 'User';
+        const username = `${baseUsername}-${this.tabId.split('-')[0]}`;
+        
+        console.log(`🎯 Joining project ${projectId} as ${username} (tab: ${this.tabId})`);
         
         return new Promise((resolve) => {
-            const timeout = setTimeout(() => {
-                console.error('Join project timeout');
-                this.isJoining = false;
-                resolve(false);
-            }, 5000);
-            
+            // Set up one-time handlers
             const handleJoined = (data) => {
-                clearTimeout(timeout);
-                console.log('✅ Joined project:', data.project.name);
-                this.isJoining = false;
+                this.socket.off('project_joined', handleJoined);
+                this.socket.off('error', handleError);
                 resolve(true);
             };
             
+            const handleError = (error) => {
+                this.socket.off('project_joined', handleJoined);
+                this.socket.off('error', handleError);
+                console.error('Failed to join project:', error);
+                resolve(false);
+            };
+            
             this.socket.once('project_joined', handleJoined);
+            this.socket.once('error', handleError);
             
-            // Extract base username for display (remove tab ID suffix)
-            const baseDisplayName = username.split('-').slice(0, -1).join('-') || username.split('-')[0];
-            
+            // Send join request
             this.socket.emit('join_project', {
                 projectId: projectId,
                 username: username,
-                displayName: displayName || baseDisplayName
+                displayName: baseUsername,
+                tabId: this.tabId
             });
+            
+            // Timeout after 5 seconds
+            setTimeout(() => {
+                this.socket.off('project_joined', handleJoined);
+                this.socket.off('error', handleError);
+                resolve(false);
+            }, 5000);
         });
     }
     
-    rejoinProject() {
-        if (this.currentProject && this.currentUser) {
-            console.log('🔄 Rejoining project after reconnect');
-            // When rejoining, use the exact same username and displayName
-            // to maintain session continuity
-            this.joinProject(
-                this.currentProject.id,
-                this.currentUser.username,
-                this.currentUser.displayName
-            );
-        }
-    }
-    
-    sendOperation(operationType, operationData) {
-        return this.errorBoundary.execute(async () => {
-            if (!this.socket || !this.currentProject) {
-                console.log('📤 Operation queued (offline):', operationType);
-                // Use connection state to queue operation
-                return this.connectionState.queueOperation(() => {
-                    this.sendOperation(operationType, operationData);
-                });
-            }
-            
-            // Use operation batcher if available
-            if (this.operationBatcher && this.isConnected) {
-                this.operationBatcher.addOperation(operationType, operationData);
-                return { batched: true, type: operationType };
-            }
-            
-            // Fallback to original implementation
-            const operation = {
-                type: operationType,
-                data: operationData,
-                timestamp: Date.now(),
-                sequence: ++this.sequenceNumber
-            };
-            
-            if (this.isConnected) {
-                this.socket.emit('canvas_operation', {
-                    projectId: this.currentProject.id,
-                    operation: operation
-                });
-                return operation;
-            } else {
-                console.log('📤 Operation queued (disconnected):', operationType);
-                // Queue for when connection is restored
-                return this.connectionState.queueOperation(() => {
-                    this.socket.emit('canvas_operation', {
-                        projectId: this.currentProject.id,
-                        operation: operation
-                    });
-                });
-            }
-        }, {
-            id: `send_${operationType}`,
-            type: 'broadcast',
-            fallback: async (error) => {
-                console.log(`📥 Queueing failed operation: ${operationType}`, error.message);
-                // Queue for retry when connection is restored
-                return this.connectionState.queueOperation(() => {
-                    this.sendOperation(operationType, operationData);
-                });
-            }
-        });
-    }
-    
-    // Special method for undo/redo state sync
-    broadcastFullState() {
-        if (!this.socket || !this.isConnected || !this.currentProject) {
-            console.log('⚠️ Cannot broadcast state: not connected');
-            return;
-        }
-        
-        console.log('📤 Broadcasting full state');
-        
-        const state = {
-            nodes: this.graph.nodes.map(node => ({
-                id: node.id,
-                type: node.type,
-                pos: [...node.pos],
-                size: [...node.size],
-                aspectRatio: node.aspectRatio,
-                rotation: node.rotation || 0,
-                properties: { ...node.properties },
-                flags: { ...node.flags },
-                title: node.title
-            })),
-            timestamp: Date.now()
-        };
-        
-        this.sendOperation('state_sync', {
-            state: state,
-            reason: 'undo_redo'
-        });
-    }
-    
-    // Project event handlers
     handleProjectJoined(data) {
-        console.log('🎯 Joined project:', data.project.name);
+        console.log('🎉 Successfully joined project:', data.project.name);
         
         this.currentProject = data.project;
         this.currentUser = data.session;
         this.sequenceNumber = data.sequenceNumber || 0;
+        this._hasValidSession = true;
         
-        // Show clean display name in UI (without tab ID)
-        const displayName = this.currentUser.displayName || this.currentUser.username.split('-')[0];
-        this.showStatus(`Connected to ${data.project.name || 'Untitled Project'}`, 'success');
-        this.updateUserList();
+        // Update UI
+        this.showStatus(`Joined: ${data.project.name}`, 'success');
         
-        // Initialize state synchronizer with current graph
-        if (this.stateSynchronizer && this.graph) {
-            this.stateSynchronizer.initialize(this.graph);
-        }
-        
-        // Start periodic sync and auto-save
+        // Start periodic sync
         this.startPeriodicSync();
-        this.startAutoSave();
-    }
-    
-    handleProjectState(state) {
-        console.log('📥 Received project state');
-        this.restoreProjectState(state);
+        
+        // Enable collaborative features
+        this.enableCollaborativeFeatures();
     }
     
     handleActiveUsers(users) {
-        this.otherUsers.clear();
-        for (const user of users) {
-            if (user.userId !== this.currentUser?.userId) {
-                this.otherUsers.set(user.userId, user);
-            }
-        }
-        this.updateUserList();
+        console.log('👥 Active users updated:', users);
+        this.updateUserList(users);
     }
     
     handleUserJoined(user) {
-        console.log('👋 User joined:', user.displayName);
-        this.otherUsers.set(user.userId, user);
-        this.updateUserList();
-        
-        // Don't automatically broadcast nodes when users join
-        // They should either:
-        // 1. Load from server (if no unsaved changes)
-        // 2. Request state sync (if unsaved changes exist)
-        // This prevents duplicate nodes
+        console.log(`👋 ${user.username} joined`);
+        this.showStatus(`${user.displayName} joined`, 'info');
     }
     
     handleUserLeft(user) {
-        console.log('👋 User left:', user.displayName);
-        this.otherUsers.delete(user.userId);
-        this.updateUserList();
+        console.log(`👋 ${user.username} left`);
+        this.showStatus(`${user.displayName} left`, 'info');
     }
     
-    // Operation handlers
-    async handleRemoteOperation(data) {
-        const { operation, userId } = data;
+    handleRemoteOperation(data) {
+        const { operation, fromUserId, fromTabId, fromSocketId } = data;
         
-        if (userId === this.currentUser?.userId) {
-            return; // Skip own operations
-        }
-        
-        const { type, data: operationData } = operation;
-        
-        console.log('📥 Remote operation:', type, operationData);
-        
-        // Use action manager for all operations
-        if (this.actionManager) {
-            await this.actionManager.executeAction(type, operationData, { 
-                fromRemote: true,
-                skipUndo: true 
-            });
-        } else {
-            // Fallback to existing implementation
-            this.applyOperation(type, operationData);
-        }
-        
-        // Update sequence number
-        if (operation.sequenceNumber > this.sequenceNumber) {
-            this.sequenceNumber = operation.sequenceNumber;
-        }
-    }
-    
-    /**
-     * Handle batch of remote operations
-     */
-    async handleRemoteOperationBatch(data) {
-        const { operations, userId, batchId } = data;
-        
-        if (userId === this.currentUser?.userId) {
-            return; // Skip own operations
-        }
-        
-        console.log('📥 Remote operation batch:', operations.length, 'operations, batch:', batchId);
-        
-        // Process each operation in the batch
-        for (const operation of operations) {
-            try {
-                const { type, data: operationData } = operation;
-                
-                // Use action manager for all operations
-                if (this.actionManager) {
-                    await this.actionManager.executeAction(type, operationData, { 
-                        fromRemote: true,
-                        skipUndo: true 
-                    });
-                } else {
-                    // Fallback to existing implementation
-                    this.applyOperation(type, operationData);
-                }
-                
-                // Update sequence number
-                if (operation.sequence > this.sequenceNumber) {
-                    this.sequenceNumber = operation.sequence;
-                }
-            } catch (error) {
-                console.error('Error processing batched operation:', error, operation);
-            }
-        }
-        
-        // Force canvas redraw after batch
-        if (this.canvas) {
-            this.canvas.dirty_canvas = true;
-        }
-    }
-    
-    /**
-     * Handle incremental state synchronization
-     */
-    async handleIncrementalSync(data) {
-        const { delta, userId } = data;
-        
-        if (userId === this.currentUser?.userId) {
-            return; // Skip own sync
-        }
-        
-        console.log('📊 Received incremental sync:', delta);
-        
-        if (this.stateSynchronizer) {
-            try {
-                this.stateSynchronizer.applyDelta(delta, this.graph);
-            } catch (error) {
-                console.error('Error applying incremental sync:', error);
-                // Fallback to requesting full state
-                this.requestFullProjectState();
-            }
-        }
-    }
-    
-    applyOperation(type, operationData) {
-        try {
-            switch (type) {
-                case 'node_move':
-                    this.applyNodeMove(operationData);
-                    break;
-                case 'node_resize': 
-                    this.applyNodeResize(operationData);
-                    break;
-                case 'node_rotate':
-                    this.applyNodeRotate(operationData);
-                    break;
-                case 'node_delete':
-                    this.applyNodeDelete(operationData);
-                    break;
-                case 'node_create':
-                    this.applyNodeCreate(operationData);
-                    break;
-                case 'node_property_update':
-                    this.applyNodePropertyUpdate(operationData);
-                    break;
-                case 'state_sync':
-                    this.applyStateSync(operationData);
-                    break;
-                case 'node_align':
-                    this.applyNodeAlign(operationData);
-                    break;
-                case 'layer_order_change':
-                    this.applyLayerOrderChange(operationData);
-                    break;
-                case 'node_reset':
-                    this.applyNodeReset(operationData);
-                    break;
-                default:
-                    console.warn('Unknown operation type:', type);
-            }
-            
-            // Force canvas redraw
-            if (this.canvas) {
-                this.canvas.dirty_canvas = true;
-            }
-        } catch (error) {
-            console.error('Error applying operation:', error);
-        }
-        
-        // Update sequence number
-        if (data.sequenceNumber) {
-            this.sequenceNumber = Math.max(this.sequenceNumber, data.sequenceNumber);
-        }
-    }
-    
-    // Apply operation methods
-    applyNodeMove(operationData) {
-        const { nodeId, pos, nodeIds, positions, x, y } = operationData;
-        
-        console.log('Applying node move:', operationData);
-        
-        // Track if we're missing any nodes
-        let missingNodes = false;
-        let nodesFound = 0;
-        
-        if (nodeIds && positions) {
-            // Multi-node move
-            for (let i = 0; i < nodeIds.length; i++) {
-                const node = this.graph.getNodeById(nodeIds[i]);
-                if (node && positions[i]) {
-                    node.pos[0] = positions[i][0];
-                    node.pos[1] = positions[i][1];
-                    console.log(`Moved node ${nodeIds[i]} to:`, node.pos);
-                    nodesFound++;
-                } else if (!node) {
-                    console.warn(`Node ${nodeIds[i]} not found during move operation`);
-                    missingNodes = true;
-                }
-            }
-        } else if (nodeId && pos) {
-            // Single node move with pos array
-            const node = this.graph.getNodeById(nodeId);
-            if (node) {
-                node.pos[0] = pos[0];
-                node.pos[1] = pos[1];
-                console.log(`Moved node ${nodeId} to:`, node.pos, 'Node exists:', !!node, 'Has image:', !!node.img);
-                nodesFound++;
-            } else {
-                console.warn(`Node ${nodeId} not found during move operation`);
-                missingNodes = true;
-            }
-        } else if (nodeId && (x !== undefined && y !== undefined)) {
-            // Single node move with x,y coordinates (from action manager)
-            const node = this.graph.getNodeById(nodeId);
-            if (node) {
-                node.pos[0] = x;
-                node.pos[1] = y;
-                console.log(`Moved node ${nodeId} to:`, node.pos, 'Node exists:', !!node, 'Has image:', !!node.img);
-                nodesFound++;
-            } else {
-                console.warn(`Node ${nodeId} not found during move operation`);
-                missingNodes = true;
-            }
-        }
-        
-        console.log(`Move operation completed. Nodes found: ${nodesFound}, Missing: ${missingNodes}`);
-        
-        // Log all current nodes for debugging
-        console.log('Current nodes in graph:', this.graph.nodes.map(n => ({
-            id: n.id,
-            type: n.type,
-            pos: [...n.pos],
-            hasImage: !!n.img,
-            loadingState: n.loadingState
-        })));
-        
-        // Force canvas redraw after move
-        if (this.canvas) {
-            this.canvas.dirty_canvas = true;
-        }
-        
-        // If we're missing nodes, request a state sync
-        if (missingNodes && this.socket && this.socket.connected) {
-            console.log('🔄 Requesting state sync due to missing nodes');
-            this.socket.emit('request_state', {
-                projectId: this.projectId
-            });
-        }
-    }
-    
-    applyNodeResize(operationData) {
-        const { nodeId, size, pos, nodeIds, sizes, positions } = operationData;
-        
-        // Track if we're missing any nodes
-        let missingNodes = false;
-        
-        if (nodeIds && sizes) {
-            // Multi-node resize
-            for (let i = 0; i < nodeIds.length; i++) {
-                const node = this.graph.getNodeById(nodeIds[i]);
-                if (node && sizes[i]) {
-                    node.size[0] = sizes[i][0];
-                    node.size[1] = sizes[i][1];
-                    node.aspectRatio = node.size[0] / node.size[1];
-                    
-                    if (positions && positions[i]) {
-                        node.pos[0] = positions[i][0];
-                        node.pos[1] = positions[i][1];
-                    }
-                    
-                    if (node.onResize) {
-                        node.onResize();
-                    }
-                } else if (!node) {
-                    console.warn(`Node ${nodeIds[i]} not found during resize operation`);
-                    missingNodes = true;
-                }
-            }
-        } else if (nodeId && size) {
-            // Single node resize
-            const node = this.graph.getNodeById(nodeId);
-            if (node) {
-                node.size[0] = size[0];
-                node.size[1] = size[1];
-                node.aspectRatio = node.size[0] / node.size[1];
-                
-                if (pos) {
-                    node.pos[0] = pos[0];
-                    node.pos[1] = pos[1];
-                }
-                
-                if (node.onResize) {
-                    node.onResize();
-                }
-            } else {
-                console.warn(`Node ${nodeId} not found during resize operation`);
-                missingNodes = true;
-            }
-        }
-        
-        // If we're missing nodes, request a state sync
-        if (missingNodes && this.socket && this.socket.connected) {
-            console.log('🔄 Requesting state sync due to missing nodes');
-            this.socket.emit('request_state', {
-                projectId: this.projectId
-            });
-        }
-    }
-    
-    applyNodeRotate(operationData) {
-        const { nodeId, rotation, pos, nodeIds, rotations, positions } = operationData;
-        
-        // Track if we're missing any nodes
-        let missingNodes = false;
-        
-        if (nodeIds && rotations) {
-            // Multi-node rotation
-            for (let i = 0; i < nodeIds.length; i++) {
-                const node = this.graph.getNodeById(nodeIds[i]);
-                if (node && typeof rotations[i] === 'number') {
-                    node.rotation = rotations[i] % 360;
-                    
-                    if (positions && positions[i]) {
-                        node.pos[0] = positions[i][0];
-                        node.pos[1] = positions[i][1];
-                    }
-                } else if (!node) {
-                    console.warn(`Node ${nodeIds[i]} not found during rotate operation`);
-                    missingNodes = true;
-                }
-            }
-        } else if (nodeId && typeof rotation === 'number') {
-            // Single node rotation
-            const node = this.graph.getNodeById(nodeId);
-            if (node) {
-                node.rotation = rotation % 360;
-                
-                if (pos) {
-                    node.pos[0] = pos[0];
-                    node.pos[1] = pos[1];
-                }
-            } else {
-                console.warn(`Node ${nodeId} not found during rotate operation`);
-                missingNodes = true;
-            }
-        }
-        
-        // If we're missing nodes, request a state sync
-        if (missingNodes && this.socket && this.socket.connected) {
-            console.log('🔄 Requesting state sync due to missing nodes');
-            this.socket.emit('request_state', {
-                projectId: this.projectId
-            });
-        }
-    }
-    
-    applyNodeReset(operationData) {
-        const { nodeId, nodeIds, resetType, value, values } = operationData;
-        
-        if (nodeIds && values) {
-            // Multi-node reset
-            for (let i = 0; i < nodeIds.length; i++) {
-                const node = this.graph.getNodeById(nodeIds[i]);
-                if (node) {
-                    if (resetType === 'rotation') {
-                        node.rotation = values[i];
-                    } else if (resetType === 'aspect_ratio' && node.originalAspect) {
-                        node.aspectRatio = values[i];
-                        node.size[1] = node.size[0] / values[i];
-                        if (node.onResize) node.onResize();
-                    }
-                }
-            }
-        } else if (nodeId && value !== undefined) {
-            // Single node reset
-            const node = this.graph.getNodeById(nodeId);
-            if (node) {
-                if (resetType === 'rotation') {
-                    node.rotation = value;
-                } else if (resetType === 'aspect_ratio' && node.originalAspect) {
-                    node.aspectRatio = value;
-                    node.size[1] = node.size[0] / value;
-                    if (node.onResize) node.onResize();
-                }
-            }
-        }
-    }
-    
-    applyNodeDelete(operationData) {
-        const { nodeId, nodeIds } = operationData;
-        
-        if (nodeIds) {
-            // Multi-node delete
-            for (const id of nodeIds) {
-                const node = this.graph.getNodeById(id);
-                if (node) {
-                    this.graph.remove(node);
-                }
-            }
-        } else if (nodeId) {
-            // Single node delete
-            const node = this.graph.getNodeById(nodeId);
-            if (node) {
-                this.graph.remove(node);
-            }
-        }
-    }
-    
-    applyNodeCreate(operationData) {
-        const { nodeData } = operationData;
-        
-        console.log('📦 Applying node create:', nodeData);
-        
-        if (nodeData && typeof NodeFactory !== 'undefined') {
-            // Check if node already exists
-            const existingNode = this.graph.getNodeById(nodeData.id);
-            if (existingNode) {
-                console.log('⚠️ Node already exists:', nodeData.id);
-                return;
-            }
-            
-            const node = NodeFactory.createNode(nodeData.type);
-            if (node) {
-                // Set all properties
-                node.id = nodeData.id;
-                node.pos = [...nodeData.pos];
-                node.size = [...nodeData.size];
-                node.title = nodeData.title;
-                node.properties = { ...nodeData.properties };
-                node.flags = { ...nodeData.flags };
-                node.aspectRatio = nodeData.aspectRatio || 1;
-                node.rotation = nodeData.rotation || 0;
-                
-                // Update lastNodeId
-                if (this.graph && node.id >= this.graph.lastNodeId) {
-                    this.graph.lastNodeId = node.id;
-                }
-                
-                // Handle media nodes
-                if ((nodeData.type === 'media/image' || nodeData.type === 'media/video') && nodeData.properties.hash) {
-                    console.log('🖼️ Loading media for node:', node.id, nodeData.properties);
-                    this.loadNodeMedia(node, nodeData);
-                }
-                
-                // Add to graph
-                this.graph.add(node);
-                console.log('✅ Created node:', nodeData.title || nodeData.type, 'at position:', node.pos);
-                
-                // Force canvas redraw
-                if (this.canvas) {
-                    this.canvas.dirty_canvas = true;
-                }
-            }
-        }
-    }
-    
-    applyNodePropertyUpdate(operationData) {
-        const { nodeId, nodeIds, propertyName, value, values } = operationData;
-        
-        if (nodeIds && values) {
-            // Multi-node property update
-            for (let i = 0; i < nodeIds.length; i++) {
-                const node = this.graph.getNodeById(nodeIds[i]);
-                if (node && typeof values[i] !== 'undefined') {
-                    node.properties[propertyName] = values[i];
-                    this.handleSpecialPropertyUpdate(node, propertyName, values[i]);
-                }
-            }
-        } else if (nodeId && typeof value !== 'undefined') {
-            // Single node property update
-            const node = this.graph.getNodeById(nodeId);
-            if (node) {
-                node.properties[propertyName] = value;
-                this.handleSpecialPropertyUpdate(node, propertyName, value);
-            }
-        }
-    }
-    
-    handleSpecialPropertyUpdate(node, propertyName, value) {
-        // Handle video node state changes
-        if (node.type === 'media/video' && node.video) {
-            if (propertyName === 'paused') {
-                if (value) {
-                    node.video.pause();
-                } else if (node.video.paused) {
-                    node.video.play().catch(() => {}); // Ignore autoplay restrictions
-                }
-            } else if (propertyName === 'loop') {
-                node.video.loop = value;
-            } else if (propertyName === 'muted') {
-                node.video.muted = value;
-            }
-        }
-        
-        // Handle text node changes
-        if (node.type === 'media/text') {
-            if (propertyName === 'text' || propertyName === 'fontSize' || propertyName === 'fontFamily') {
-                if (node.fitTextToBox) {
-                    node.fitTextToBox();
-                }
-            }
-        }
-    }
-    
-    applyNodeAlign(operationData) {
-        const { nodeIds, positions } = operationData;
-        
-        if (nodeIds && positions && nodeIds.length === positions.length) {
-            for (let i = 0; i < nodeIds.length; i++) {
-                const node = this.graph.getNodeById(nodeIds[i]);
-                if (node && positions[i]) {
-                    node.pos[0] = positions[i][0];
-                    node.pos[1] = positions[i][1];
-                }
-            }
-        }
-    }
-    
-    applyLayerOrderChange(operationData) {
-        const { nodeIds, direction, newLayerOrder } = operationData;
-        
-        if (newLayerOrder && Array.isArray(newLayerOrder)) {
-            // Apply the complete new layer order
-            const reorderedNodes = [];
-            
-            for (const nodeId of newLayerOrder) {
-                const node = this.graph.getNodeById(nodeId);
-                if (node) {
-                    reorderedNodes.push(node);
-                }
-            }
-            
-            this.graph.nodes = reorderedNodes;
-            console.log(`🔄 Applied layer order change`);
-        }
-    }
-    
-    applyStateSync(operationData) {
-        const { state, reason } = operationData;
-        
-        if (!state || !state.nodes) {
-            console.warn('Invalid state sync data');
+        // Skip if this is our own operation echoed back
+        if (fromSocketId === this.socket.id) {
+            console.log('📥 Skipping own operation echo');
             return;
         }
         
-        console.log(`🔄 Applying state sync (reason: ${reason})`);
+        // Skip if we already applied this operation
+        const opId = `${operation.sequence}-${operation.type}`;
+        if (this.appliedOperations.has(opId)) {
+            console.log('📥 Skipping duplicate operation:', opId);
+            return;
+        }
         
-        try {
-            // Use state manager for efficient restoration
-            if (this.stateManager && this.stateManager.restoreNodesEfficiently) {
-                this.stateManager.restoreNodesEfficiently(state.nodes, this.graph);
-            } else {
-                // Fallback: manual restoration
-                this.graph.clear();
-                for (const nodeData of state.nodes) {
-                    this.createNodeFromData(nodeData);
-                }
-            }
-            
-            // Update lastNodeId
-            if (state.nodes.length > 0) {
-                this.graph.lastNodeId = Math.max(...state.nodes.map(n => n.id), 0);
-            }
-            
-            // Clear selection
-            if (this.canvas && this.canvas.selection) {
-                this.canvas.selection.clear();
-            }
-        } catch (error) {
-            console.error('Error applying state sync:', error);
+        console.log(`📥 Remote operation from ${fromTabId}:`, operation.type);
+        
+        // Apply the operation
+        this.applyRemoteOperation(operation);
+        
+        // Track that we applied it
+        this.appliedOperations.add(opId);
+        
+        // Update sequence number
+        if (operation.sequence > this.sequenceNumber) {
+            this.sequenceNumber = operation.sequence;
         }
     }
     
-    // Media handling
-    loadNodeMedia(node, nodeData) {
-        const hash = nodeData.properties.hash;
-        const filename = nodeData.properties.filename;
-        const isVideo = nodeData.type === 'media/video';
-        
-        if (!hash) return;
-        
-        // Try cache first
-        if (window.imageCache) {
-            const cached = window.imageCache.get(hash);
-            if (cached) {
-                if (isVideo && node.setVideo) {
-                    node.setVideo(cached, filename, hash);
-                } else if (node.setImage) {
-                    node.setImage(cached, filename, hash);
-                }
-                return;
-            }
+    async broadcastOperation(operationType, operationData) {
+        // Skip if we're applying a remote operation
+        if (this._isApplyingRemoteOp) {
+            console.log('⏭️ Skipping broadcast - applying remote operation');
+            return;
         }
         
-        // Load from server
-        const serverFilename = nodeData.properties.serverFilename || filename;
-        const serverUrl = `${CONFIG.ENDPOINTS.UPLOADS}/${serverFilename}`;
-        
-        if (isVideo && node.setVideo) {
-            node.setVideo(serverUrl, filename, hash).catch(() => {
-                console.warn('Failed to load video:', filename);
-                node.loadingState = 'error';
-            });
-        } else if (node.setImage) {
-            node.setImage(serverUrl, filename, hash).catch(() => {
-                console.warn('Failed to load image:', filename);
-                node.loadingState = 'error';
-            });
-        }
-    }
-    
-    handleMediaUploaded(data) {
-        const { fileInfo, nodeData } = data;
-        console.log('📸 Media uploaded by other user:', fileInfo.original_name);
-        
-        // Check if node already exists (e.g., if we already loaded it from server)
-        if (nodeData.id && this.app?.graph) {
-            const existingNode = this.app.graph.getNodeById(nodeData.id);
-            if (existingNode) {
-                console.log('⚠️ Node already exists from media upload:', nodeData.id);
-                return;
-            }
+        if (!this._hasValidSession) {
+            console.warn('⚠️ Cannot broadcast - no valid session');
+            return;
         }
         
-        const mediaUrl = `${CONFIG.ENDPOINTS.UPLOADS}/${fileInfo.filename}`;
-        
-        if (typeof NodeFactory !== 'undefined' && this.app?.graph) {
-            const node = NodeFactory.createNode(nodeData.type);
-            if (node) {
-                // Set node properties INCLUDING ID!
-                if (nodeData.id) {
-                    node.id = nodeData.id;
-                }
-                node.pos = [...nodeData.pos];
-                node.size = [...nodeData.size];
-                node.title = nodeData.title;
-                node.properties = { ...nodeData.properties };
-                node.properties.hash = fileInfo.file_hash;
-                node.properties.serverFilename = fileInfo.filename;
-                node.flags = { ...nodeData.flags };
-                node.aspectRatio = nodeData.aspectRatio || 1;
-                node.rotation = nodeData.rotation || 0;
-                
-                // Load media
-                if (nodeData.type === 'media/video' && node.setVideo) {
-                    node.setVideo(mediaUrl, fileInfo.original_name, fileInfo.file_hash);
-                } else if (nodeData.type === 'media/image' && node.setImage) {
-                    node.setImage(mediaUrl, fileInfo.original_name, fileInfo.file_hash);
-                }
-                
-                // Add to graph
-                this.app.graph.add(node);
-                if (this.app.graphCanvas) {
-                    this.app.graphCanvas.dirty_canvas = true;
-                }
-            }
-        }
-    }
-    
-    async uploadMedia(file, nodeData) {
-        if (!this.isConnected || !this.socket) {
-            console.log('⚠️ Not connected - cannot upload media');
-            return null;
-        }
-        
-        try {
-            console.log('📤 Uploading media:', file.name);
-            
-            const formData = new FormData();
-            formData.append('file', file);
-            formData.append('projectId', this.currentProject?.id || 'demo-project');
-            
-            const enhancedNodeData = {
-                ...nodeData,
-                uploaderUserId: this.currentUser?.userId
-            };
-            formData.append('nodeData', JSON.stringify(enhancedNodeData));
-            
-            const response = await fetch(CONFIG.ENDPOINTS.UPLOAD, {
-                method: 'POST',
-                body: formData
-            });
-            
-            if (response.ok) {
-                const result = await response.json();
-                console.log('✅ Media uploaded:', result.fileInfo.filename);
-                return result;
-            } else {
-                console.error('❌ Failed to upload media:', response.statusText);
-                return null;
-            }
-        } catch (error) {
-            console.error('❌ Media upload error:', error);
-            return null;
-        }
-    }
-    
-    // State management
-    createNodeFromData(nodeData) {
-        if (typeof NodeFactory !== 'undefined') {
-            const node = NodeFactory.createNode(nodeData.type);
-            if (node) {
-                node.id = nodeData.id;
-                node.pos = [...nodeData.pos];
-                node.size = [...nodeData.size];
-                node.title = nodeData.title;
-                node.properties = { ...nodeData.properties };
-                node.flags = { ...nodeData.flags };
-                node.aspectRatio = nodeData.aspectRatio || 1;
-                node.rotation = nodeData.rotation || 0;
-                
-                if (this.graph && node.id >= this.graph.lastNodeId) {
-                    this.graph.lastNodeId = node.id;
-                }
-                
-                if (nodeData.type === 'media/image' || nodeData.type === 'media/video') {
-                    this.loadNodeMedia(node, nodeData);
-                }
-                
-                this.graph.add(node);
-            }
-        }
-    }
-    
-    restoreProjectState(state) {
-        console.log('🔄 Restoring project state');
-        
-        try {
-            if (state.nodes && Array.isArray(state.nodes)) {
-                this.graph.clear();
-                for (const nodeData of state.nodes) {
-                    this.createNodeFromData(nodeData);
-                }
-            }
-            
-            if (state.viewport && this.canvas?.viewport) {
-                if (state.viewport.scale !== undefined) {
-                    this.canvas.viewport.scale = state.viewport.scale;
-                }
-                if (state.viewport.offset && Array.isArray(state.viewport.offset)) {
-                    this.canvas.viewport.offset = [...state.viewport.offset];
-                }
-            }
-            
-            if (this.canvas) {
-                this.canvas.dirty_canvas = true;
-            }
-        } catch (error) {
-            console.error('Error restoring state:', error);
-        }
-    }
-    
-    captureProjectState() {
-        if (this.stateManager) {
-            return this.stateManager.serializeState(this.graph, this.canvas);
-        }
-        
-        // Fallback
-        const nodes = this.graph.nodes.map(node => ({
-            id: node.id,
-            type: node.type,
-            pos: [...node.pos],
-            size: [...node.size],
-            title: node.title,
-            properties: { ...node.properties },
-            flags: { ...node.flags },
-            aspectRatio: node.aspectRatio || 1,
-            rotation: node.rotation || 0
-        }));
-        
-        const viewport = this.canvas?.viewport ? {
-            scale: this.canvas.viewport.scale,
-            offset: [...this.canvas.viewport.offset]
-        } : null;
-        
-        return {
-            nodes: nodes,
-            viewport: viewport,
-            timestamp: Date.now()
+        // Direct broadcast - DO NOT use UnifiedOperationHandler here
+        // to avoid infinite loops. The operation has already been executed locally.
+        const operation = {
+            type: operationType,
+            data: operationData,
+            timestamp: Date.now(),
+            sequence: this.sequenceNumber // Server will assign actual sequence
         };
+        
+        // Send to server (this already saves to database via handleCanvasOperation)
+        this.socket.emit('canvas_operation', {
+            projectId: this.currentProject.id,
+            operation: operation
+        });
+        
+        console.log(`📤 Broadcast operation: ${operationType}`);
+        
+        // Also trigger immediate canvas save for important operations
+        if (this.shouldSaveCanvas(operationType)) {
+            this.triggerCanvasSave();
+        }
+        
+        return operation;
     }
     
-    handleProjectStateRequest(data) {
-        console.log('📤 Sharing project state with new user');
+    shouldSaveCanvas(operationType) {
+        // Save canvas state for structural changes
+        const saveOperations = [
+            'node_create', 'node_delete', 'node_move', 'node_resize',
+            'node_property_update', 'layer_order_change'
+        ];
+        return saveOperations.includes(operationType);
+    }
+    
+    triggerCanvasSave() {
+        // Debounce saves to avoid too many requests
+        if (this.saveTimer) {
+            clearTimeout(this.saveTimer);
+        }
         
-        if (!this.graph || !data.forUser) return;
+        this.saveTimer = setTimeout(() => {
+            if (this.app.canvasNavigator && this.app.canvasNavigator.saveCanvasToServer) {
+                console.log('💾 Auto-saving canvas state after operation');
+                this.app.canvasNavigator.saveCanvasToServer();
+            }
+        }, 1000); // Save 1 second after last operation
+    }
+    
+    applyRemoteOperation(operation) {
+        // Set flag to prevent re-broadcasting
+        this._isApplyingRemoteOp = true;
         
-        const projectState = this.captureProjectState();
+        try {
+            // Apply based on operation type
+            switch (operation.type) {
+                case 'node_create':
+                    this.applyNodeCreate(operation.data);
+                    break;
+                case 'node_move':
+                    this.applyNodeMove(operation.data);
+                    break;
+                case 'node_resize':
+                    this.applyNodeResize(operation.data);
+                    break;
+                case 'node_rotate':
+                    this.applyNodeRotate(operation.data);
+                    break;
+                case 'node_delete':
+                    this.applyNodeDelete(operation.data);
+                    break;
+                case 'node_update':
+                    this.applyNodeUpdate(operation.data);
+                    break;
+                case 'node_property_update':
+                    this.applyNodePropertyUpdate(operation.data);
+                    break;
+                case 'state_sync':
+                    this.applyStateSync(operation.data);
+                    break;
+                case 'undo_operation':
+                    this.applyUndoOperation(operation.data);
+                    break;
+                case 'redo_operation':
+                    this.applyRedoOperation(operation.data);
+                    break;
+                case 'node_reset':
+                    this.applyNodeReset(operation.data);
+                    break;
+                case 'video_toggle':
+                    this.applyVideoToggle(operation.data);
+                    break;
+                case 'layer_order_change':
+                    this.applyLayerOrderChange(operation.data);
+                    break;
+                case 'text_update':
+                    this.applyTextUpdate(operation.data);
+                    break;
+                default:
+                    console.warn('Unknown operation type:', operation.type);
+            }
+            
+            // Trigger canvas redraw
+            this.requestCanvasRedraw();
+            
+        } catch (error) {
+            console.error('Error applying remote operation:', error);
+        } finally {
+            // Always reset the flag
+            this._isApplyingRemoteOp = false;
+        }
+    }
+    
+    // Operation handlers
+    applyNodeCreate(data) {
+        // Normalize data structure - support both data.node and data.nodeData
+        const nodeData = data.nodeData || data.node;
+        if (!nodeData) {
+            console.error('No node data provided to applyNodeCreate');
+            return;
+        }
         
-        this.socket.emit('share_project_state', {
-            projectState: projectState,
-            forUser: data.forUser
+        // Check if node already exists
+        if (this.graph.getNodeById && this.graph.getNodeById(nodeData.id)) {
+            console.log('Node already exists:', nodeData.id);
+            return;
+        }
+        
+        // Use NodeFactory to properly create and initialize nodes
+        const node = NodeFactory.createNode(nodeData.type, {
+            id: nodeData.id,
+            pos: [...nodeData.pos],
+            size: [...nodeData.size],
+            properties: nodeData.properties || {},
+            flags: nodeData.flags || {}
         });
+        
+        if (node) {
+            // Add the node to the graph
+            this.graph.add(node);
+            console.log('✅ Created remote node:', node.id, 'type:', node.type);
+            
+            // For media nodes, ensure content is loaded
+            if (node.type === 'media/image' && nodeData.properties?.src) {
+                // Use setImage method if available, otherwise loadImage
+                if (node.setImage) {
+                    node.setImage(nodeData.properties.src, 
+                                 nodeData.properties.filename || 'remote-image', 
+                                 nodeData.properties.hash);
+                } else if (node.loadImage) {
+                    node.loadImage(nodeData.properties.src);
+                }
+            } else if (node.type === 'media/video' && nodeData.properties?.src) {
+                // Use setVideo method if available, otherwise loadVideo
+                if (node.setVideo) {
+                    node.setVideo(nodeData.properties.src,
+                                 nodeData.properties.filename || 'remote-video',
+                                 nodeData.properties.hash);
+                } else if (node.loadVideo) {
+                    node.loadVideo(nodeData.properties.src);
+                }
+            }
+        }
+    }
+    
+    applyNodeMove(data) {
+        if (data.nodeIds && data.positions) {
+            // Multi-node move
+            data.nodeIds.forEach((nodeId, index) => {
+                const node = this.graph.getNodeById(nodeId);
+                if (node && data.positions[index]) {
+                    node.pos[0] = data.positions[index][0];
+                    node.pos[1] = data.positions[index][1];
+                    
+                    // Check if this node has properties to preserve
+                    if (data.nodeProperties && data.nodeProperties[nodeId]) {
+                        const props = data.nodeProperties[nodeId];
+                        if (props.src) node.properties.src = props.src;
+                        if (props.hash) node.properties.hash = props.hash;
+                        if (props.filename) node.properties.filename = props.filename;
+                        if (props.serverFilename) node.properties.serverFilename = props.serverFilename;
+                        
+                        // Reload media if lost
+                        if (node.type === 'media/image' && !node.img && node.properties.src) {
+                            node.setImage(node.properties.src, node.properties.filename, node.properties.hash);
+                        } else if (node.type === 'media/video' && !node.video && node.properties.src) {
+                            node.setVideo(node.properties.src, node.properties.filename, node.properties.hash);
+                        }
+                    }
+                    
+                    console.log('✅ Moved remote node (multi):', node.id);
+                }
+            });
+        } else if (data.nodeId) {
+            // Single node move
+            const node = this.graph.getNodeById(data.nodeId);
+            if (node) {
+                // Handle both formats: x,y or position array
+                if (data.x !== undefined && data.y !== undefined) {
+                    node.pos[0] = data.x;
+                    node.pos[1] = data.y;
+                } else if (data.position && Array.isArray(data.position)) {
+                    node.pos[0] = data.position[0];
+                    node.pos[1] = data.position[1];
+                } else if (data.pos && Array.isArray(data.pos)) {
+                    node.pos[0] = data.pos[0];
+                    node.pos[1] = data.pos[1];
+                }
+                
+                // If properties are provided (for media nodes), ensure they're preserved
+                if (data.properties) {
+                    // Ensure critical properties are set
+                    if (data.properties.src) {
+                        node.properties.src = data.properties.src;
+                    }
+                    if (data.properties.hash) {
+                        node.properties.hash = data.properties.hash;
+                    }
+                    if (data.properties.filename) {
+                        node.properties.filename = data.properties.filename;
+                    }
+                    if (data.properties.serverFilename) {
+                        node.properties.serverFilename = data.properties.serverFilename;
+                    }
+                    
+                    // If image was lost, reload it
+                    if (node.type === 'media/image' && !node.img && node.properties.src) {
+                        node.setImage(node.properties.src, node.properties.filename, node.properties.hash);
+                    } else if (node.type === 'media/video' && !node.video && node.properties.src) {
+                        node.setVideo(node.properties.src, node.properties.filename, node.properties.hash);
+                    }
+                }
+                
+                console.log('✅ Moved remote node:', node.id);
+            }
+        }
+    }
+    
+    applyNodeResize(data) {
+        if (data.nodeIds && data.sizes) {
+            // Multi-node resize
+            data.nodeIds.forEach((nodeId, index) => {
+                const node = this.graph.getNodeById(nodeId);
+                if (node && data.sizes[index]) {
+                    node.size[0] = data.sizes[index][0];
+                    node.size[1] = data.sizes[index][1];
+                    console.log('✅ Resized remote node (multi):', node.id);
+                }
+            });
+        } else if (data.nodeId) {
+            // Single node resize
+            const node = this.graph.getNodeById(data.nodeId);
+            if (node) {
+                // Handle different formats
+                if (data.width !== undefined && data.height !== undefined) {
+                    node.size[0] = data.width;
+                    node.size[1] = data.height;
+                } else if (data.size && Array.isArray(data.size)) {
+                    node.size[0] = data.size[0];
+                    node.size[1] = data.size[1];
+                }
+                console.log('✅ Resized remote node:', node.id);
+            }
+        }
+    }
+    
+    applyNodeDelete(data) {
+        const node = this.graph.getNodeById(data.nodeId);
+        if (node) {
+            this.graph.remove(node);
+            console.log('✅ Deleted remote node:', data.nodeId);
+        }
+    }
+    
+    applyNodeRotate(data) {
+        if (data.nodeIds && data.rotations) {
+            // Multi-node rotate
+            data.nodeIds.forEach((nodeId, index) => {
+                const node = this.graph.getNodeById(nodeId);
+                if (node && data.rotations[index] !== undefined) {
+                    node.rotation = data.rotations[index];
+                    // Also update position if provided
+                    if (data.positions && data.positions[index]) {
+                        node.pos[0] = data.positions[index][0];
+                        node.pos[1] = data.positions[index][1];
+                    }
+                    console.log('✅ Rotated remote node (multi):', node.id);
+                }
+            });
+        } else if (data.nodeId) {
+            // Single node rotate
+            const node = this.graph.getNodeById(data.nodeId);
+            if (node) {
+                if (data.rotation !== undefined) {
+                    node.rotation = data.rotation;
+                }
+                // Also update position if provided (rotation can change position)
+                if (data.pos && Array.isArray(data.pos)) {
+                    node.pos[0] = data.pos[0];
+                    node.pos[1] = data.pos[1];
+                }
+                console.log('✅ Rotated remote node:', node.id);
+            }
+        }
+    }
+
+    applyNodeUpdate(data) {
+        const node = this.graph.getNodeById(data.nodeId);
+        if (node && data.updates) {
+            Object.entries(data.updates).forEach(([key, value]) => {
+                if (key === 'properties') {
+                    Object.assign(node.properties, value);
+                } else {
+                    node[key] = value;
+                }
+            });
+            console.log('✅ Updated remote node:', node.id);
+        }
+    }
+    
+    applyNodePropertyUpdate(data) {
+        const { nodeId, property, value, properties } = data;
+        const node = this.graph.getNodeById(nodeId);
+        if (node) {
+            if (properties) {
+                // Multiple properties
+                Object.assign(node.properties, properties);
+            } else if (property && value !== undefined) {
+                // Single property
+                node.properties[property] = value;
+            }
+            console.log('✅ Updated remote node properties:', nodeId);
+        }
+    }
+    
+    applyStateSync(data) {
+        console.log('📊 Applying full state sync');
+        // This would be a complete state replacement
+        // Implementation depends on your specific needs
+    }
+    
+    applyUndoOperation(data) {
+        console.log('↶ Applying remote undo operation');
+        
+        // Use the app's undo/redo system if available
+        if (this.app.stateManager && this.app.stateManager.undo) {
+            this.app.stateManager.undo();
+        } else if (this.app.graphCanvas && this.app.graphCanvas.undo) {
+            this.app.graphCanvas.undo();
+        } else {
+            console.warn('No undo system available');
+        }
+    }
+    
+    applyRedoOperation(data) {
+        console.log('↷ Applying remote redo operation');
+        
+        // Use the app's undo/redo system if available  
+        if (this.app.stateManager && this.app.stateManager.redo) {
+            this.app.stateManager.redo();
+        } else if (this.app.graphCanvas && this.app.graphCanvas.redo) {
+            this.app.graphCanvas.redo();
+        } else {
+            console.warn('No redo system available');
+        }
+    }
+    
+    applyNodeReset(data) {
+        console.log('🔄 Applying node reset:', data.nodeId);
+        const node = this.graph.getNodeById(data.nodeId);
+        if (node) {
+            // Reset rotation
+            if (data.resetRotation && node.rotation !== undefined) {
+                node.rotation = 0;
+            }
+            
+            // Reset aspect ratio
+            if (data.resetAspectRatio && node.resetAspectRatio) {
+                node.resetAspectRatio();
+            }
+            
+            console.log('✅ Reset node:', node.id);
+        }
+    }
+    
+    applyVideoToggle(data) {
+        console.log('▶️ Applying video toggle:', data.nodeId, data.playing ? 'play' : 'pause');
+        const node = this.graph.getNodeById(data.nodeId);
+        if (node && node.type === 'media/video') {
+            node.properties.playing = data.playing;
+            
+            // Call the node's play/pause methods if they exist
+            if (data.playing && node.play) {
+                node.play();
+            } else if (!data.playing && node.pause) {
+                node.pause();
+            }
+            
+            console.log('✅ Toggled video playback:', node.id);
+        }
+    }
+    
+    applyLayerOrderChange(data) {
+        console.log('📚 Applying layer order change:', data.nodeId, data.direction);
+        const node = this.graph.getNodeById(data.nodeId);
+        if (node) {
+            // Use graph methods to change layer order
+            if (data.direction === 'front') {
+                this.graph.moveNodeToFront(node);
+            } else if (data.direction === 'back') {
+                this.graph.moveNodeToBack(node);
+            } else if (data.direction === 'forward' && this.graph.moveNodeForward) {
+                this.graph.moveNodeForward(node);
+            } else if (data.direction === 'backward' && this.graph.moveNodeBackward) {
+                this.graph.moveNodeBackward(node);
+            }
+            
+            console.log('✅ Changed layer order:', node.id);
+        }
+    }
+    
+    applyTextUpdate(data) {
+        console.log('📝 Applying text update:', data.nodeId);
+        const node = this.graph.getNodeById(data.nodeId);
+        if (node && node.type === 'media/text') {
+            if (data.text !== undefined) {
+                node.properties.text = data.text;
+            }
+            
+            if (data.properties) {
+                Object.assign(node.properties, data.properties);
+            }
+            
+            // Trigger text node update if it has a method for it
+            if (node.updateText) {
+                node.updateText();
+            }
+            
+            console.log('✅ Updated text node:', node.id);
+        }
     }
     
     // Periodic sync
     startPeriodicSync() {
         this.stopPeriodicSync();
         
-        const intervalId = setInterval(() => {
-            if (this.isConnected && this.currentProject) {
-                this.performPeriodicSync();
+        if (!this._hasValidSession) {
+            console.log('⏸️ Cannot start sync - no valid session');
+            return;
+        }
+        
+        this.syncTimer = setInterval(() => {
+            if (this._hasValidSession && this.isConnected) {
+                this.performSync();
             }
-        }, 60000); // Every 60 seconds
+        }, 30000); // Every 30 seconds
         
-        this.resourceManager.registerInterval('periodicSync', intervalId);
-        this.syncTimer = intervalId;
-        
-        console.log('🔄 Periodic sync started');
+        console.log('🔄 Started periodic sync');
     }
     
     stopPeriodicSync() {
         if (this.syncTimer) {
             clearInterval(this.syncTimer);
             this.syncTimer = null;
+            console.log('⏹️ Stopped periodic sync');
         }
-    }
-    
-    async performPeriodicSync() {
-        if (!this.socket || !this.isConnected || !this.currentProject) {
-            return;
-        }
-        
-        console.log('🔄 Performing periodic sync');
-        
-        const stateHash = this.calculateStateHash();
-        
-        this.socket.emit('sync_check', {
-            projectId: this.currentProject.id,
-            sequenceNumber: this.sequenceNumber,
-            stateHash: stateHash,
-            timestamp: Date.now()
-        });
-    }
-    
-    calculateStateHash() {
-        const nodes = this.graph.nodes.map(node => ({
-            id: node.id,
-            type: node.type,
-            pos: node.pos,
-            size: node.size,
-            rotation: node.rotation || 0,
-            aspectRatio: node.aspectRatio || 1,
-            properties: node.properties
-        })).sort((a, b) => a.id - b.id);
-        
-        const stateString = JSON.stringify(nodes);
-        
-        // Simple hash
-        let hash = 0;
-        for (let i = 0; i < stateString.length; i++) {
-            const char = stateString.charCodeAt(i);
-            hash = ((hash << 5) - hash) + char;
-            hash = hash & hash;
-        }
-        
-        return hash.toString();
-    }
-    
-    handleSyncResponse(data) {
-        console.log('🔄 Sync response:', data);
-        
-        const { projectId, needsSync, missedOperations, latestSequence } = data;
-        
-        if (!this.currentProject || this.currentProject.id !== parseInt(projectId)) {
-            return;
-        }
-        
-        if (needsSync) {
-            if (missedOperations && missedOperations.length > 0) {
-                console.log('🔄 Applying', missedOperations.length, 'missed operations');
-                for (const operation of missedOperations) {
-                    this.handleRemoteOperation(operation);
-                }
-            } else if (missedOperations === null) {
-                console.log('🔄 Requesting full state');
-                this.requestFullProjectState();
-            }
-        }
-        
-        if (latestSequence > this.sequenceNumber) {
-            this.sequenceNumber = latestSequence;
-        }
-    }
-    
-    requestFullProjectState() {
-        if (!this.socket || !this.currentProject) {
-            return;
-        }
-        
-        this.socket.emit('request_project_state', {
-            projectId: this.currentProject.id,
-            fromUser: this.currentUser?.userId
-        });
-    }
-    
-    // Heartbeat
-    startHeartbeat() {
-        this.stopHeartbeat();
-        
-        const intervalId = setInterval(() => {
-            if (this.isConnected) {
-                this.sendHeartbeat();
-            }
-        }, 10000); // Every 10 seconds
-        
-        this.resourceManager.registerInterval('heartbeat', intervalId);
-        this.heartbeatTimer = intervalId;
-    }
-    
-    stopHeartbeat() {
-        if (this.heartbeatTimer) {
-            clearInterval(this.heartbeatTimer);
-            this.heartbeatTimer = null;
-        }
-    }
-    
-    sendHeartbeat() {
-        if (this.socket) {
-            this.socket.emit('heartbeat', {
-                timestamp: Date.now(),
-                projectId: this.currentProject?.id
-            });
-        }
-    }
-    
-    handleHeartbeatResponse() {
-        // Connection is healthy
-    }
-    
-    // Auto-save
-    startAutoSave() {
-        this.stopAutoSave();
-        
-        // Track changes
-        if (!this.hasChangeTracking) {
-            this.setupChangeTracking();
-        }
-        
-        // Periodic save
-        const intervalId = setInterval(() => {
-            if (this.hasUnsavedChanges && this.currentProject) {
-                this.saveCanvas();
-            }
-        }, 5000); // Every 5 seconds
-        
-        this.resourceManager.registerInterval('autoSave', intervalId);
-        this.autoSaveTimer = intervalId;
-        
-        console.log('💾 Auto-save enabled');
     }
     
     stopAutoSave() {
-        if (this.autoSaveTimer) {
-            clearInterval(this.autoSaveTimer);
-            this.autoSaveTimer = null;
-        }
+        // This method is called by canvas navigator but not needed in current implementation
+        // Auto-save functionality is handled by periodic sync
+        console.log('stopAutoSave called (no-op in current implementation)');
     }
     
-    setupChangeTracking() {
-        const originalSendOperation = this.sendOperation.bind(this);
-        this.sendOperation = (type, data) => {
-            this.hasUnsavedChanges = true;
-            return originalSendOperation(type, data);
-        };
-        this.hasChangeTracking = true;
-    }
-    
-    async saveCanvas() {
-        if (!this.currentProject || !this.hasUnsavedChanges) {
-            return;
-        }
-        
-        try {
-            console.log('💾 Auto-saving...');
-            
-            const canvasData = this.captureProjectState();
-            
-            const response = await fetch(CONFIG.ENDPOINTS.PROJECT_CANVAS(this.currentProject.id), {
-                method: 'PUT',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    canvas_data: canvasData,
-                    userId: this.currentUser?.id || 1
-                })
-            });
-            
-            if (response.ok) {
-                this.hasUnsavedChanges = false;
-                this.lastSaveTime = Date.now();
-                console.log('✅ Canvas saved');
-            } else {
-                console.error('❌ Save failed:', response.status);
-            }
-        } catch (error) {
-            console.error('❌ Save error:', error);
-        }
+    stopHeartbeat() {
+        // This method is called by canvas navigator but not needed in current implementation
+        // Heartbeat functionality is handled by Socket.IO connection
+        console.log('stopHeartbeat called (no-op in current implementation)');
     }
     
     async save() {
-        this.hasUnsavedChanges = true;
-        await this.saveCanvas();
+        // Save the current canvas state
+        if (!this._hasValidSession || !this.currentProject) {
+            console.log('Cannot save - no active session or project');
+            return false;
+        }
+        
+        try {
+            // Mark that we have unsaved changes
+            this.hasUnsavedChanges = true;
+            
+            // Trigger a sync to save the current state
+            await this.performSync();
+            
+            console.log('Canvas saved successfully');
+            return true;
+        } catch (error) {
+            console.error('Error saving canvas:', error);
+            this.showStatus('Failed to save canvas', 'error');
+            return false;
+        }
     }
     
-    markModified() {
-        this.hasUnsavedChanges = true;
+    async performSync() {
+        if (!this._hasValidSession) return;
+        
+        console.log('🔄 Performing sync check...');
+        
+        this.socket.emit('sync_check', {
+            projectId: this.currentProject.id,
+            lastSequence: this.sequenceNumber
+        });
+    }
+    
+    handleSyncResponse(data) {
+        const { operations, currentSequence } = data;
+        
+        if (operations && operations.length > 0) {
+            console.log(`📥 Sync: applying ${operations.length} missed operations`);
+            
+            operations.forEach(op => {
+                this.handleRemoteOperation({
+                    operation: {
+                        type: op.operation_type,
+                        data: op.operation_data,
+                        sequence: op.sequence_number
+                    },
+                    fromUserId: op.user_id,
+                    fromSocketId: 'sync' // Mark as from sync
+                });
+            });
+        }
+        
+        this.sequenceNumber = currentSequence;
+    }
+    
+    handleRemoteMediaUpload(data) {
+        const { nodeData, fileInfo, mediaUrl, fromSocketId } = data;
+        
+        // Server now properly excludes the uploader using .except()
+        // So this should only be received by other clients
+        console.log('📥 Remote media upload received:', nodeData.id);
+        
+        // Create the node from the uploaded media
+        const fullMediaUrl = `${CONFIG.SERVER.API_BASE}${mediaUrl}`;
+        
+        // Modify nodeData to include the server URL
+        nodeData.properties = nodeData.properties || {};
+        nodeData.properties.src = fullMediaUrl;
+        nodeData.properties.hash = fileInfo.file_hash;
+        nodeData.properties.filename = fileInfo.original_name;
+        nodeData.properties.serverFilename = fileInfo.filename;
+        
+        // Apply as a remote node creation
+        this.applyRemoteOperation({
+            type: 'node_create',
+            data: { nodeData }
+        });
+    }
+    
+    // State sharing
+    handleStateRequest(data) {
+        if (data.forUser && this.currentProject) {
+            const state = this.captureProjectState();
+            
+            this.socket.emit('share_project_state', {
+                projectState: state,
+                forUser: data.forUser
+            });
+            
+            console.log('📤 Shared project state with new user');
+        }
+    }
+    
+    handleProjectState(state) {
+        console.log('📥 Received project state from peer');
+        // Apply the shared state
+        this.applyProjectState(state);
+    }
+    
+    captureProjectState() {
+        // Handle case where graph or nodes might not be ready
+        if (!this.graph || !this.graph._nodes) {
+            console.log('⚠️ Graph not ready for state capture');
+            return {
+                nodes: [],
+                timestamp: Date.now()
+            };
+        }
+        
+        return {
+            nodes: this.graph._nodes.map(node => ({
+                id: node.id,
+                type: node.type,
+                pos: [...node.pos],
+                size: [...node.size],
+                properties: { ...node.properties },
+                flags: { ...node.flags }
+            })),
+            timestamp: Date.now()
+        };
+    }
+    
+    applyProjectState(state) {
+        // Clear existing nodes
+        this.graph.clear();
+        
+        // Add nodes from state
+        state.nodes.forEach(nodeData => {
+            const node = LiteGraph.createNode(nodeData.type);
+            if (node) {
+                node.id = nodeData.id;
+                node.pos = nodeData.pos;
+                node.size = nodeData.size;
+                Object.assign(node.properties, nodeData.properties);
+                Object.assign(node.flags, nodeData.flags);
+                
+                this.graph.add(node);
+            }
+        });
+        
+        console.log(`✅ Applied project state with ${state.nodes.length} nodes`);
+    }
+    
+    // Error handling
+    handleServerError(error) {
+        console.error('🚨 Server error:', error);
+        
+        if (error.message === 'Not authenticated for this project') {
+            this._hasValidSession = false;
+            this.stopPeriodicSync();
+            
+            // Attempt to rejoin
+            if (this.currentProject) {
+                console.log('🔄 Attempting to rejoin after auth error...');
+                setTimeout(() => {
+                    this.rejoinProject();
+                }, 2000);
+            }
+        }
+        
+        this.showStatus(error.message, 'error');
+    }
+    
+    async rejoinProject() {
+        if (!this.currentProject) return;
+        
+        console.log('🔄 Rejoining project...');
+        const projectId = this.currentProject.id;
+        
+        // Clear state
+        this.currentProject = null;
+        this.currentUser = null;
+        this._hasValidSession = false;
+        
+        // Rejoin
+        await this.joinProject(projectId);
+    }
+    
+    // UI methods
+    setupUI() {
+        // Add CSS for collaboration UI
+        this.addCollaborationCSS();
+        
+        // Status indicator
+        const statusContainer = document.createElement('div');
+        statusContainer.className = 'collab-status';
+        statusContainer.innerHTML = `
+            <span class="status-indicator"></span>
+            <span class="status-text">Connecting...</span>
+        `;
+        document.body.appendChild(statusContainer);
+        this.statusElement = statusContainer;
+        
+        // User list
+        const userListContainer = document.createElement('div');
+        userListContainer.className = 'collab-users';
+        userListContainer.innerHTML = '<h3>Active Users</h3><ul></ul>';
+        document.body.appendChild(userListContainer);
+        this.userListElement = userListContainer;
+    }
+    
+    addCollaborationCSS() {
+        if (document.getElementById('collaboration-styles')) return;
+        
+        const style = document.createElement('style');
+        style.id = 'collaboration-styles';
+        style.textContent = `
+            .collab-status {
+                position: fixed;
+                top: 10px;
+                right: 10px;
+                background: rgba(0, 0, 0, 0.8);
+                color: white;
+                padding: 8px 12px;
+                border-radius: 4px;
+                font-family: monospace;
+                font-size: 12px;
+                z-index: 1000;
+                display: flex;
+                align-items: center;
+                gap: 8px;
+            }
+            
+            .status-indicator {
+                width: 8px;
+                height: 8px;
+                border-radius: 50%;
+                background: #666;
+            }
+            
+            .status-indicator.status-success { background: #4CAF50; }
+            .status-indicator.status-error { background: #F44336; }
+            .status-indicator.status-warning { background: #FF9800; }
+            .status-indicator.status-info { background: #2196F3; }
+            
+            .collab-users {
+                position: fixed;
+                top: 50px;
+                right: 10px;
+                background: rgba(0, 0, 0, 0.8);
+                color: white;
+                padding: 8px 12px;
+                border-radius: 4px;
+                font-family: monospace;
+                font-size: 12px;
+                z-index: 1000;
+                min-width: 200px;
+            }
+            
+            .collab-users h3 {
+                margin: 0 0 8px 0;
+                font-size: 12px;
+                color: #ccc;
+            }
+            
+            .collab-users ul {
+                margin: 0;
+                padding: 0;
+                list-style: none;
+            }
+            
+            .collab-users li {
+                margin: 4px 0;
+                display: flex;
+                justify-content: space-between;
+            }
+            
+            .user-name {
+                font-weight: bold;
+            }
+            
+            .user-tabs {
+                color: #999;
+                font-size: 10px;
+            }
+        `;
+        document.head.appendChild(style);
+    }
+    
+    showStatus(message, type = 'info') {
+        if (!this.statusElement) return;
+        
+        const indicator = this.statusElement.querySelector('.status-indicator');
+        const text = this.statusElement.querySelector('.status-text');
+        
+        indicator.className = `status-indicator status-${type}`;
+        text.textContent = message;
+        
+        // Auto-hide info messages
+        if (type === 'info') {
+            setTimeout(() => {
+                if (text.textContent === message) {
+                    text.textContent = this.isConnected ? 'Connected' : 'Disconnected';
+                }
+            }, 3000);
+        }
+    }
+    
+    updateUserList(users) {
+        if (!this.userListElement) return;
+        
+        const list = this.userListElement.querySelector('ul');
+        list.innerHTML = '';
+        
+        users.forEach(user => {
+            const li = document.createElement('li');
+            li.innerHTML = `
+                <span class="user-name">${user.displayName}</span>
+                <span class="user-tabs">(${user.tabs.length} tab${user.tabs.length > 1 ? 's' : ''})</span>
+            `;
+            list.appendChild(li);
+        });
+    }
+    
+    // Feature management
+    enableCollaborativeFeatures() {
+        console.log('✨ Enabling collaborative features');
+        // This is where you'd enable real-time cursors, etc.
+    }
+    
+    // Action manager integration (required by existing code)
+    setActionManager(actionManager) {
+        this.actionManager = actionManager;
+        console.log('🔧 Action manager set on collaborative manager');
+    }
+    
+    // Legacy method for compatibility with CanvasActionManager
+    sendOperation(operationType, operationData) {
+        return this.broadcastOperation(operationType, operationData);
+    }
+    
+    // Canvas redraw helper
+    requestCanvasRedraw() {
+        try {
+            // Try different ways to trigger canvas redraw
+            if (this.app.graphCanvas && this.app.graphCanvas.setDirty) {
+                this.app.graphCanvas.setDirty(true, true);
+            } else if (this.graph.canvas && this.graph.canvas.setDirty) {
+                this.graph.canvas.setDirty(true, true);
+            } else if (this.app.graphCanvas && this.app.graphCanvas.draw) {
+                this.app.graphCanvas.draw(true);
+            } else if (this.graph.canvas && this.graph.canvas.draw) {
+                this.graph.canvas.draw(true);
+            } else {
+                // Fallback - try to find canvas and trigger redraw
+                const canvas = this.app.graphCanvas || this.graph.canvas;
+                if (canvas) {
+                    // Force a redraw by requesting animation frame
+                    requestAnimationFrame(() => {
+                        if (canvas.draw) canvas.draw(true);
+                    });
+                }
+            }
+        } catch (error) {
+            console.warn('Failed to trigger canvas redraw:', error.message);
+        }
+    }
+    
+    // Media upload functionality
+    async uploadMedia(file, nodeData) {
+        if (!this._hasValidSession || !this.currentProject) {
+            throw new Error('No active collaborative session. Please ensure you have loaded a canvas.');
+        }
+        
+        // Add uploader info to nodeData so server can exclude us from broadcast
+        const nodeDataWithUploader = {
+            ...nodeData,
+            uploaderUserId: this.currentUser?.userId,
+            uploaderSocketId: this.socket?.id
+        };
+        
+        const formData = new FormData();
+        formData.append('file', file);
+        formData.append('projectId', this.currentProject.id);
+        formData.append('nodeData', JSON.stringify(nodeDataWithUploader));
+        
+        try {
+            const response = await fetch(CONFIG.ENDPOINTS.UPLOAD, {
+                method: 'POST',
+                body: formData,
+                headers: {
+                    // Don't set Content-Type - let browser set it with boundary
+                }
+            });
+            
+            if (!response.ok) {
+                throw new Error(`Upload failed: ${response.statusText}`);
+            }
+            
+            const result = await response.json();
+            
+            // Server already broadcasts media_uploaded from the HTTP endpoint
+            // No need to emit it again from client
+            if (result.success) {
+                // Just trigger canvas save after upload
+                this.triggerCanvasSave();
+            }
+            
+            return result;
+            
+        } catch (error) {
+            console.error('Media upload error:', error);
+            throw error;
+        }
     }
     
     // Cleanup
-    setActionManager(actionManager) {
-        this.actionManager = actionManager;
-    }
-    
-    disconnect() {
-        console.log('🔌 Disconnecting collaborative session...');
-        
-        // Stop all timers
+    destroy() {
         this.stopPeriodicSync();
-        this.stopHeartbeat();
-        this.stopAutoSave();
         
-        // Clear flags
-        this.isConnecting = false;
-        this.isConnected = false;
-        
-        // Clear reconnection timer
-        if (this.reconnectTimer) {
-            clearTimeout(this.reconnectTimer);
-            this.reconnectTimer = null;
-        }
-        
-        // Clean up performance components
-        if (this.operationBatcher) {
-            this.operationBatcher.cleanup();
-        }
-        if (this.workerManager) {
-            this.workerManager.cleanup();
-        }
-        
-        // Clean up all resources
-        this.resourceManager.cleanupAll();
-        
-        // Disconnect socket
         if (this.socket) {
-            this.socket.removeAllListeners();
             this.socket.disconnect();
             this.socket = null;
         }
         
-        // Update connection state
-        if (this.connectionState.canTransition('disconnected')) {
-            this.connectionState.transition('disconnected');
+        if (this.statusElement) {
+            this.statusElement.remove();
         }
         
-        if (this.collaborationUI) {
-            this.collaborationUI.remove();
-            this.collaborationUI = null;
+        if (this.userListElement) {
+            this.userListElement.remove();
         }
         
-        console.log('🤝 Collaborative manager disconnected');
-    }
-    
-    /**
-     * Get comprehensive performance statistics
-     */
-    getPerformanceStats() {
-        const stats = {
-            timestamp: Date.now(),
-            connection: {
-                isConnected: this.isConnected,
-                sequenceNumber: this.sequenceNumber,
-                reconnectAttempts: this.reconnectAttempts
-            },
-            batching: null,
-            synchronization: null,
-            compression: null,
-            workers: null
-        };
-        
-        // Get batching statistics
-        if (this.operationBatcher) {
-            stats.batching = this.operationBatcher.getStats();
-        }
-        
-        // Get synchronization statistics  
-        if (this.stateSynchronizer) {
-            stats.synchronization = this.stateSynchronizer.getStats();
-        }
-        
-        // Get compression statistics
-        if (this.compressionManager) {
-            stats.compression = this.compressionManager.getStats();
-        }
-        
-        // Get worker statistics
-        if (this.workerManager) {
-            stats.workers = this.workerManager.getStats();
-        }
-        
-        return stats;
-    }
-    
-    /**
-     * Reset all performance statistics
-     */
-    resetPerformanceStats() {
-        if (this.operationBatcher) {
-            this.operationBatcher.resetStats();
-        }
-        if (this.compressionManager) {
-            this.compressionManager.resetStats();
-        }
-        console.log('📊 Performance statistics reset');
+        console.log('🧹 CollaborativeManager destroyed');
     }
 }
 
-// Make it globally available
+// Export for use
 window.CollaborativeManager = CollaborativeManager;

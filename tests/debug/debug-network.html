@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Network Debug</title>
+</head>
+<body>
+    <h1>Network Layer Debug</h1>
+    <div id="status"></div>
+    <button onclick="testNetwork()">Test Network Connection</button>
+    <pre id="log"></pre>
+    
+    <script src="http://localhost:3000/socket.io/socket.io.js"></script>
+    <script>
+        const log = (msg) => {
+            const logEl = document.getElementById('log');
+            logEl.textContent += msg + '\n';
+            console.log(msg);
+        };
+        
+        // Check if new architecture is loaded
+        log('Checking loaded components...');
+        log('NetworkLayer: ' + (typeof NetworkLayer !== 'undefined' ? 'LOADED' : 'NOT LOADED'));
+        log('OperationPipeline: ' + (typeof OperationPipeline !== 'undefined' ? 'LOADED' : 'NOT LOADED'));
+        log('CollaborativeArchitecture: ' + (typeof CollaborativeArchitecture !== 'undefined' ? 'LOADED' : 'NOT LOADED'));
+        log('Command: ' + (typeof Command !== 'undefined' ? 'LOADED' : 'NOT LOADED'));
+        log('');
+        
+        // Check app and its components
+        log('Checking app components...');
+        log('window.app: ' + (window.app ? 'EXISTS' : 'NOT EXISTS'));
+        if (window.app) {
+            log('app.networkLayer: ' + (window.app.networkLayer ? 'EXISTS' : 'NOT EXISTS'));
+            log('app.operationPipeline: ' + (window.app.operationPipeline ? 'EXISTS' : 'NOT EXISTS'));
+            log('app.collaborativeArchitecture: ' + (window.app.collaborativeArchitecture ? 'EXISTS' : 'NOT EXISTS'));
+            log('app.collaborativeManager: ' + (window.app.collaborativeManager ? 'EXISTS' : 'NOT EXISTS'));
+        }
+        log('');
+        
+        async function testNetwork() {
+            log('Testing network connection...');
+            
+            if (!window.app) {
+                log('ERROR: No app object found');
+                return;
+            }
+            
+            if (window.app.networkLayer) {
+                log('NetworkLayer found!');
+                log('Connected: ' + window.app.networkLayer.isConnected);
+                log('Current Project: ' + JSON.stringify(window.app.networkLayer.currentProject));
+                
+                if (!window.app.networkLayer.isConnected) {
+                    log('Attempting to connect...');
+                    try {
+                        await window.app.networkLayer.connect();
+                        log('Connected successfully!');
+                    } catch (e) {
+                        log('Connection failed: ' + e.message);
+                    }
+                }
+                
+                // Try to join project 1
+                if (window.app.networkLayer.isConnected) {
+                    log('Attempting to join project 1...');
+                    window.app.networkLayer.joinProject(1);
+                    
+                    setTimeout(() => {
+                        log('Current Project after join: ' + JSON.stringify(window.app.networkLayer.currentProject));
+                    }, 1000);
+                }
+            } else {
+                log('ERROR: NetworkLayer not found in app');
+            }
+        }
+        
+        // Listen for scripts loading
+        let scriptsLoaded = [];
+        const observer = new MutationObserver((mutations) => {
+            mutations.forEach((mutation) => {
+                mutation.addedNodes.forEach((node) => {
+                    if (node.tagName === 'SCRIPT' && node.src) {
+                        scriptsLoaded.push(node.src);
+                        if (node.src.includes('NetworkLayer') || 
+                            node.src.includes('OperationPipeline') ||
+                            node.src.includes('CollaborativeArchitecture')) {
+                            log('Script loaded: ' + node.src);
+                        }
+                    }
+                });
+            });
+        });
+        observer.observe(document.head, { childList: true });
+    </script>
+</body>
+</html>

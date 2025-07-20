@@ -1,0 +1,170 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Final Network Test</title>
+    <style>
+        body { font-family: monospace; padding: 20px; }
+        .success { color: green; font-weight: bold; }
+        .error { color: red; font-weight: bold; }
+        .warning { color: orange; }
+        pre { background: #f0f0f0; padding: 10px; }
+    </style>
+</head>
+<body>
+    <h1>Final Network Layer Test</h1>
+    <p>This test verifies the complete flow: Connect → Join Project → Broadcast</p>
+    
+    <button onclick="runFullTest()">Run Full Test</button>
+    <button onclick="checkCurrentStatus()">Check Current Status</button>
+    
+    <div id="status"></div>
+    <pre id="log"></pre>
+    
+    <script>
+        const log = (msg, type = 'info') => {
+            const timestamp = new Date().toLocaleTimeString();
+            const logEl = document.getElementById('log');
+            const className = type === 'error' ? 'error' : type === 'success' ? 'success' : '';
+            logEl.innerHTML += `[${timestamp}] <span class="${className}">${msg}</span>\n`;
+            console.log(msg);
+        };
+        
+        async function runFullTest() {
+            log('Starting full test...', 'info');
+            
+            // Open main window
+            const win = window.open('/', 'mainApp', 'width=1200,height=800');
+            
+            // Wait for app to load
+            await waitForApp(win);
+            
+            // Test 1: Check initial state
+            log('\n=== Test 1: Initial State ===');
+            const app = win.app;
+            if (!app.networkLayer) {
+                log('ERROR: NetworkLayer not found', 'error');
+                return;
+            }
+            
+            const initialStatus = app.networkLayer.getStatus();
+            log('Initial status: ' + JSON.stringify(initialStatus));
+            
+            // Test 2: Connect if needed
+            if (!initialStatus.connected) {
+                log('\n=== Test 2: Connecting ===');
+                try {
+                    await app.networkLayer.connect();
+                    log('Connected successfully!', 'success');
+                } catch (e) {
+                    log('Connection failed: ' + e.message, 'error');
+                    return;
+                }
+            } else {
+                log('\n=== Test 2: Already Connected ===', 'success');
+            }
+            
+            // Test 3: Join project
+            log('\n=== Test 3: Joining Project ===');
+            
+            // Get current canvas ID from navigator
+            let projectId = 1; // default
+            if (app.canvasNavigator && app.canvasNavigator.currentCanvasId) {
+                projectId = app.canvasNavigator.currentCanvasId;
+                log('Using current canvas ID: ' + projectId);
+            }
+            
+            app.networkLayer.joinProject(projectId);
+            
+            // Wait for join
+            await new Promise(resolve => setTimeout(resolve, 2500));
+            
+            const joinedStatus = app.networkLayer.getStatus();
+            log('Status after join: ' + JSON.stringify(joinedStatus));
+            
+            if (joinedStatus.project && joinedStatus.project.id) {
+                log('Successfully joined project!', 'success');
+            } else {
+                log('Failed to join project', 'error');
+                return;
+            }
+            
+            // Test 4: Test broadcast
+            log('\n=== Test 4: Testing Broadcast ===');
+            
+            const testCommand = {
+                id: 'test-' + Date.now(),
+                type: 'node_move',
+                params: { nodeId: 1, x: 100, y: 100 },
+                timestamp: Date.now()
+            };
+            
+            // Override broadcast to see if it works
+            const originalBroadcast = app.networkLayer.broadcast;
+            let broadcastCalled = false;
+            app.networkLayer.broadcast = function(command) {
+                broadcastCalled = true;
+                log('Broadcast called with: ' + JSON.stringify(command));
+                return originalBroadcast.call(this, command);
+            };
+            
+            app.networkLayer.broadcast(testCommand);
+            
+            if (broadcastCalled) {
+                log('Broadcast test passed!', 'success');
+            } else {
+                log('Broadcast was not called', 'error');
+            }
+            
+            // Final summary
+            log('\n=== FINAL SUMMARY ===');
+            const finalStatus = app.networkLayer.getStatus();
+            log('Connected: ' + (finalStatus.connected ? '✅' : '❌'));
+            log('Project: ' + (finalStatus.project ? '✅ ID: ' + finalStatus.project.id : '❌'));
+            log('Can broadcast: ' + (finalStatus.connected && finalStatus.project ? '✅' : '❌'));
+            
+            updateStatusDisplay(finalStatus);
+        }
+        
+        async function waitForApp(win) {
+            log('Waiting for app to load...');
+            return new Promise((resolve) => {
+                let attempts = 0;
+                const check = setInterval(() => {
+                    attempts++;
+                    if (win.app && win.app.networkLayer) {
+                        clearInterval(check);
+                        log('App loaded!', 'success');
+                        resolve();
+                    } else if (attempts > 60) {
+                        clearInterval(check);
+                        log('App load timeout', 'error');
+                        resolve();
+                    }
+                }, 100);
+            });
+        }
+        
+        function checkCurrentStatus() {
+            const win = window.open('', 'mainApp');
+            if (win && win.app && win.app.networkLayer) {
+                const status = win.app.networkLayer.getStatus();
+                log('\nCurrent NetworkLayer status:');
+                log(JSON.stringify(status, null, 2));
+                updateStatusDisplay(status);
+            } else {
+                log('Main window not found or app not loaded', 'error');
+            }
+        }
+        
+        function updateStatusDisplay(status) {
+            const statusEl = document.getElementById('status');
+            statusEl.innerHTML = `
+                <h3>Network Status</h3>
+                <p>Connected: ${status.connected ? '<span class="success">✅ YES</span>' : '<span class="error">❌ NO</span>'}</p>
+                <p>Project: ${status.project ? '<span class="success">✅ ' + status.project.id + '</span>' : '<span class="error">❌ None</span>'}</p>
+                <p>Tab ID: ${status.tabId}</p>
+            `;
+        }
+    </script>
+</body>
+</html>

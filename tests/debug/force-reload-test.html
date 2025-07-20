@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Force Reload Test</title>
+</head>
+<body>
+    <h1>Force Reload Network Layer Test</h1>
+    <button onclick="forceReload()">Force Reload NetworkLayer</button>
+    <pre id="log"></pre>
+    
+    <script>
+        const log = (msg) => {
+            const timestamp = new Date().toLocaleTimeString();
+            document.getElementById('log').textContent += `[${timestamp}] ${msg}\n`;
+            console.log(msg);
+        };
+        
+        function forceReload() {
+            log('Force reloading NetworkLayer...');
+            
+            // Remove any existing NetworkLayer
+            if (typeof NetworkLayer !== 'undefined') {
+                log('Removing existing NetworkLayer from window');
+                delete window.NetworkLayer;
+            }
+            
+            // Load with cache buster
+            const script = document.createElement('script');
+            script.src = `/js/core/NetworkLayer.js?t=${Date.now()}`;
+            
+            script.onload = () => {
+                log('Script loaded successfully');
+                log('typeof NetworkLayer: ' + typeof NetworkLayer);
+                
+                if (typeof NetworkLayer === 'undefined') {
+                    log('ERROR: NetworkLayer still undefined after load');
+                    
+                    // Check if it's in a different scope
+                    log('Checking window.NetworkLayer: ' + typeof window.NetworkLayer);
+                    log('Checking global this: ' + typeof globalThis.NetworkLayer);
+                } else {
+                    log('SUCCESS: NetworkLayer is defined!');
+                    testNetworkLayer();
+                }
+            };
+            
+            script.onerror = (error) => {
+                log('ERROR loading script: ' + error);
+            };
+            
+            document.head.appendChild(script);
+        }
+        
+        function testNetworkLayer() {
+            log('Testing NetworkLayer...');
+            
+            try {
+                const mockApp = {
+                    updateConnectionStatus: (status) => log('Status update: ' + status),
+                    updateActiveUsers: (users) => log('Users update: ' + JSON.stringify(users)),
+                    showError: (msg) => log('Error: ' + msg),
+                    handleStateSync: (state) => log('State sync')
+                };
+                
+                const nl = new NetworkLayer(mockApp);
+                log('NetworkLayer instance created');
+                log('Initial status: ' + JSON.stringify(nl.getStatus()));
+                
+                // Check if Socket.IO is available
+                log('Socket.IO available: ' + (typeof io !== 'undefined'));
+                
+                if (typeof io === 'undefined') {
+                    log('Loading Socket.IO...');
+                    const ioScript = document.createElement('script');
+                    ioScript.src = 'http://localhost:3000/socket.io/socket.io.js';
+                    ioScript.onload = async () => {
+                        log('Socket.IO loaded');
+                        try {
+                            await nl.connect();
+                            log('Connected!');
+                        } catch (e) {
+                            log('Connection failed: ' + e.message);
+                        }
+                    };
+                    ioScript.onerror = () => log('Failed to load Socket.IO');
+                    document.head.appendChild(ioScript);
+                }
+                
+            } catch (e) {
+                log('ERROR: ' + e.message);
+                log('Stack: ' + e.stack);
+            }
+        }
+        
+        // Auto-run on load
+        window.addEventListener('load', () => {
+            log('Page loaded, checking initial state...');
+            log('typeof NetworkLayer: ' + typeof NetworkLayer);
+            forceReload();
+        });
+    </script>
+</body>
+</html>

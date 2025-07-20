@@ -24,8 +24,7 @@ try {
 }
 
 try {
-    const collab = require('./src/realtime/collaboration');
-    CollaborationManager = collab.CollaborationManager;
+    CollaborationManager = require('./src/realtime/collaboration');
 } catch (error) {
     console.log('⚠️  Collaboration module not ready, using placeholder');
     CollaborationManager = class {
@@ -44,7 +43,14 @@ class ImageCanvasServer {
                 origin: ["http://localhost:8000", "http://127.0.0.1:8000", "http://localhost:8080", "http://127.0.0.1:8080"],
                 methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
                 credentials: true
-            }
+            },
+            // Allow multiple connections from same origin
+            allowEIO3: true,
+            // Increase ping timeout to prevent premature disconnections
+            pingTimeout: 60000,
+            pingInterval: 25000,
+            // Allow WebSocket and polling transports
+            transports: ['websocket', 'polling']
         });
         
         this.port = process.env.PORT || 3000;
@@ -159,14 +165,20 @@ class ImageCanvasServer {
                 console.log(`📤 Broadcasting media upload: ${fileInfo.original_name} to project_${projectId}`);
                 
                 // Get uploader's socket ID if available
-                let uploaderSocketId = null;
-                if (this.collaborationManager && parsedNodeData.uploaderUserId) {
-                    // Find the socket for this user
-                    for (const [socketId, session] of this.collaborationManager.userSessions) {
-                        if (session.userId === parsedNodeData.uploaderUserId && session.projectId === parseInt(projectId)) {
-                            uploaderSocketId = socketId;
-                            break;
+                let uploaderSocketId = parsedNodeData.uploaderSocketId || null;
+                
+                // If not provided, try to find it from user ID
+                if (!uploaderSocketId && this.collaborationManager && parsedNodeData.uploaderUserId) {
+                    try {
+                        // Find the socket for this user
+                        for (const [socketId, session] of this.collaborationManager.socketSessions) {
+                            if (session.userId === parsedNodeData.uploaderUserId && session.projectId === parseInt(projectId)) {
+                                uploaderSocketId = socketId;
+                                break;
+                            }
                         }
+                    } catch (e) {
+                        console.warn('Could not find uploader socket:', e.message);
                     }
                 }
                 
@@ -174,14 +186,18 @@ class ImageCanvasServer {
                     // Broadcast to everyone in the room EXCEPT the uploader
                     this.io.to(`project_${projectId}`).except(uploaderSocketId).emit('media_uploaded', {
                         fileInfo,
-                        nodeData: parsedNodeData
+                        nodeData: parsedNodeData,
+                        mediaUrl: `/uploads/${req.file.filename}`,
+                        fromSocketId: uploaderSocketId
                     });
                     console.log(`✅ Media upload broadcast sent to project_${projectId} (excluding uploader ${uploaderSocketId})`);
                 } else {
                     // Fallback: broadcast to everyone (shouldn't happen in normal usage)
                     this.io.to(`project_${projectId}`).emit('media_uploaded', {
                         fileInfo,
-                        nodeData: parsedNodeData
+                        nodeData: parsedNodeData,
+                        mediaUrl: `/uploads/${req.file.filename}`,
+                        fromSocketId: null
                     });
                     console.log(`✅ Media upload broadcast sent to project_${projectId} (uploader socket not found)`);
                 }
@@ -198,17 +214,29 @@ class ImageCanvasServer {
             }
         });
 
-        // Serve uploaded files
+        // Serve uploaded files with proper CORS headers
         this.app.get('/uploads/:filename', (req, res) => {
             const filename = req.params.filename;
             const filepath = path.join(__dirname, 'uploads', filename);
+            
+            // Set CORS headers for images
+            res.setHeader('Access-Control-Allow-Origin', '*');
+            res.setHeader('Access-Control-Allow-Methods', 'GET');
+            res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
+            
             res.sendFile(filepath);
         });
 
-        // Serve thumbnails
+        // Serve thumbnails with proper CORS headers
         this.app.get('/thumbnails/:size/:filename', (req, res) => {
             const { size, filename } = req.params;
             const thumbnailPath = path.join(__dirname, 'thumbnails', size, filename);
+            
+            // Set CORS headers for images
+            res.setHeader('Access-Control-Allow-Origin', '*');
+            res.setHeader('Access-Control-Allow-Methods', 'GET');
+            res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
+            
             res.sendFile(thumbnailPath);
         });
 
@@ -541,7 +569,6 @@ class ImageCanvasServer {
                 console.log(`🔌 WebSocket test: http://localhost:${this.port}/test-websocket`);
                 console.log(`📁 File uploads: http://localhost:${this.port}/uploads`);
                 console.log(`📋 Projects: http://localhost:${this.port}/projects`);
-                console.log(`🎯 Ready for Phase 2 development!`);
             });
         } catch (error) {
             console.error('❌ Failed to start server:', error);

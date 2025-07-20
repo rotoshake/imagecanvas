@@ -1,0 +1,1434 @@
+{
+  "counts": {
+    "CREATE": 12,
+    "ADD": 17,
+    "MEDIA_EVENT": 3,
+    "MEDIA_EMIT": 1,
+    "MEDIA_HANDLER": 1,
+    "OP": 6,
+    "APPLY": 3
+  },
+  "results": {
+    "js/dragdrop.js": [
+      {
+        "line": 260,
+        "type": "CREATE",
+        "code": "window.__traceNode('NodeFactory.createNode.BEFORE', { nodeType, location: 'dragdrop' });",
+        "context": [
+          {
+            "lineNum": 258,
+            "text": "                    ",
+            "isCurrent": false
+          },
+          {
+            "lineNum": 259,
+            "text": "                    // NOW create the node with the server URL",
+            "isCurrent": false
+          },
+          {
+            "lineNum": 260,
+            "text": "                    window.__traceNode('NodeFactory.createNode.BEFORE', { nodeType, location: 'dragdrop' });",
+            "isCurrent": true
+          },
+          {
+            "lineNum": 261,
+            "text": "                const node = NodeFactory.createNode(nodeType);",
+            "isCurrent": false
+          },
+          {
+            "lineNum": 262,
+            "text": "                window.__traceNode('NodeFactory.createNode.AFTER', { ",
+            "isCurrent": false
+          }
+        ]
+      },
+      {
+        "line": 262,
+        "type": "CREATE",
+        "code": "window.__traceNode('NodeFactory.createNode.AFTER', {",
+        "context": [
+          {
+            "lineNum": 260,
+            "text": "                    window.__traceNode('NodeFactory.createNode.BEFORE', { nodeType, location: 'dragdrop' });",
+            "isCurrent": false
+          },
+          {
+            "lineNum": 261,
+            "text": "                const node = NodeFactory.createNode(nodeType);",
+            "isCurrent": false
+          },
+          {
+            "lineNum": 262,
+            "text": "                window.__traceNode('NodeFactory.createNode.AFTER', { ",
+            "isCurrent": true
+          },
+          {
+            "lineNum": 263,
+            "text": "                    nodeId: node ? node.id : 'null', ",
+            "isCurrent": false
+          },
+          {
+            "lineNum": 264,
+            "text": "                    nodeType: node ? node.type : 'null',",
+            "isCurrent": false
+          }
+        ]
+      },
+      {
+        "line": 308,
+        "type": "CREATE",
+        "code": "window.__traceNode('NodeFactory.createNode.BEFORE', { nodeType, location: 'dragdrop' });",
+        "context": [
+          {
+            "lineNum": 306,
+            "text": "            ",
+            "isCurrent": false
+          },
+          {
+            "lineNum": 307,
+            "text": "            // Create node for local use only",
+            "isCurrent": false
+          },
+          {
+            "lineNum": 308,
+            "text": "            window.__traceNode('NodeFactory.createNode.BEFORE', { nodeType, location: 'dragdrop' });",
+            "isCurrent": true
+          },
+          {
+            "lineNum": 309,
+            "text": "                const node = NodeFactory.createNode(nodeType);",
+            "isCurrent": false
+          },
+          {
+            "lineNum": 310,
+            "text": "                window.__traceNode('NodeFactory.createNode.AFTER', { ",
+            "isCurrent": false
+          }
+        ]
+      },
+      {
+        "line": 310,
+        "type": "CREATE",
+        "code": "window.__traceNode('NodeFactory.createNode.AFTER', {",
+        "context": [
+          {
+            "lineNum": 308,
+            "text": "            window.__traceNode('NodeFactory.createNode.BEFORE', { nodeType, location: 'dragdrop' });",
+            "isCurrent": false
+          },
+          {
+            "lineNum": 309,
+            "text": "                const node = NodeFactory.createNode(nodeType);",
+            "isCurrent": false
+          },
+          {
+            "lineNum": 310,
+            "text": "                window.__traceNode('NodeFactory.createNode.AFTER', { ",
+            "isCurrent": true
+          },
+          {
+            "lineNum": 311,
+            "text": "                    nodeId: node ? node.id : 'null', ",
+            "isCurrent": false
+          },
+          {
+            "lineNum": 312,
+            "text": "                    nodeType: node ? node.type : 'null',",
+            "isCurrent": false
+          }
+        ]
+      },
+      {
+        "line": 156,
+        "type": "ADD",
+        "code": "this.graph.add(node);",
+        "context": [
+          {
+            "lineNum": 154,
+            "text": "                    currentNodeCount: this.graph._nodes.length ",
+            "isCurrent": false
+          },
+          {
+            "lineNum": 155,
+            "text": "                });",
+            "isCurrent": false
+          },
+          {
+            "lineNum": 156,
+            "text": "                this.graph.add(node);",
+            "isCurrent": true
+          },
+          {
+            "lineNum": 157,
+            "text": "                window.__traceNode('graph.add.AFTER', { ",
+            "isCurrent": false
+          },
+          {
+            "lineNum": 158,
+            "text": "                    nodeId: node.id, ",
+            "isCurrent": false
+          }
+        ]
+      },
+      {
+        "line": 156,
+        "type": "ADD",
+        "code": "this.graph.add(node);",
+        "context": [
+          {
+            "lineNum": 154,
+            "text": "                    currentNodeCount: this.graph._nodes.length ",
+            "isCurrent": false
+          },
+          {
+            "lineNum": 155,
+            "text": "                });",
+            "isCurrent": false
+          },
+          {
+            "lineNum": 156,
+            "text": "                this.graph.add(node);",
+            "isCurrent": true
+          },
+          {
+            "lineNum": 157,
+            "text": "                window.__traceNode('graph.add.AFTER', { ",
+            "isCurrent": false
+          },
+          {
+            "lineNum": 158,
+            "text": "                    nodeId: node.id, ",
+            "isCurrent": false
+          }
+        ]
+      },
+      {
+        "line": 166,
+        "type": "MEDIA_EVENT",
+        "code": "// Already broadcast via media_uploaded event",
+        "context": [
+          {
+            "lineNum": 164,
+            "text": "                    // Handle broadcasting based on node type",
+            "isCurrent": false
+          },
+          {
+            "lineNum": 165,
+            "text": "                    if (node._uploadedViaCollaboration) {",
+            "isCurrent": false
+          },
+          {
+            "lineNum": 166,
+            "text": "                        // Already broadcast via media_uploaded event",
+            "isCurrent": true
+          },
+          {
+            "lineNum": 167,
+            "text": "                        console.log('✅ Node uploaded and broadcast via server');",
+            "isCurrent": false
+          },
+          {
+            "lineNum": 168,
+            "text": "                    } else if (node._isLocalOnly && this.graph.canvas) {",
+            "isCurrent": false
+          }
+        ]
+      }
+    ],
+    "js/collaborative.js": [
+      {
+        "line": 454,
+        "type": "CREATE",
+        "code": "const node = NodeFactory.createNode(data.nodeData.type, {",
+        "context": [
+          {
+            "lineNum": 452,
+            "text": "        ",
+            "isCurrent": false
+          },
+          {
+            "lineNum": 453,
+            "text": "        // Use NodeFactory to properly create and initialize nodes",
+            "isCurrent": false
+          },
+          {
+            "lineNum": 454,
+            "text": "        const node = NodeFactory.createNode(data.nodeData.type, {",
+            "isCurrent": true
+          },
+          {
+            "lineNum": 455,
+            "text": "            id: data.nodeData.id,",
+            "isCurrent": false
+          },
+          {
+            "lineNum": 456,
+            "text": "            pos: [...data.nodeData.pos],",
+            "isCurrent": false
+          }
+        ]
+      },
+      {
+        "line": 896,
+        "type": "CREATE",
+        "code": "const node = LiteGraph.createNode(nodeData.type);",
+        "context": [
+          {
+            "lineNum": 894,
+            "text": "        // Add nodes from state",
+            "isCurrent": false
+          },
+          {
+            "lineNum": 895,
+            "text": "        state.nodes.forEach(nodeData => {",
+            "isCurrent": false
+          },
+          {
+            "lineNum": 896,
+            "text": "            const node = LiteGraph.createNode(nodeData.type);",
+            "isCurrent": true
+          },
+          {
+            "lineNum": 897,
+            "text": "            if (node) {",
+            "isCurrent": false
+          },
+          {
+            "lineNum": 898,
+            "text": "                node.id = nodeData.id;",
+            "isCurrent": false
+          }
+        ]
+      },
+      {
+        "line": 464,
+        "type": "ADD",
+        "code": "this.graph.add(node);",
+        "context": [
+          {
+            "lineNum": 462,
+            "text": "        if (node) {",
+            "isCurrent": false
+          },
+          {
+            "lineNum": 463,
+            "text": "            // Add the node to the graph",
+            "isCurrent": false
+          },
+          {
+            "lineNum": 464,
+            "text": "            this.graph.add(node);",
+            "isCurrent": true
+          },
+          {
+            "lineNum": 465,
+            "text": "            console.log('✅ Created remote node:', node.id, 'type:', node.type);",
+            "isCurrent": false
+          },
+          {
+            "lineNum": 466,
+            "text": "            ",
+            "isCurrent": false
+          }
+        ]
+      },
+      {
+        "line": 904,
+        "type": "ADD",
+        "code": "this.graph.add(node);",
+        "context": [
+          {
+            "lineNum": 902,
+            "text": "                Object.assign(node.flags, nodeData.flags);",
+            "isCurrent": false
+          },
+          {
+            "lineNum": 903,
+            "text": "                ",
+            "isCurrent": false
+          },
+          {
+            "lineNum": 904,
+            "text": "                this.graph.add(node);",
+            "isCurrent": true
+          },
+          {
+            "lineNum": 905,
+            "text": "            }",
+            "isCurrent": false
+          },
+          {
+            "lineNum": 906,
+            "text": "        });",
+            "isCurrent": false
+          }
+        ]
+      },
+      {
+        "line": 464,
+        "type": "ADD",
+        "code": "this.graph.add(node);",
+        "context": [
+          {
+            "lineNum": 462,
+            "text": "        if (node) {",
+            "isCurrent": false
+          },
+          {
+            "lineNum": 463,
+            "text": "            // Add the node to the graph",
+            "isCurrent": false
+          },
+          {
+            "lineNum": 464,
+            "text": "            this.graph.add(node);",
+            "isCurrent": true
+          },
+          {
+            "lineNum": 465,
+            "text": "            console.log('✅ Created remote node:', node.id, 'type:', node.type);",
+            "isCurrent": false
+          },
+          {
+            "lineNum": 466,
+            "text": "            ",
+            "isCurrent": false
+          }
+        ]
+      },
+      {
+        "line": 904,
+        "type": "ADD",
+        "code": "this.graph.add(node);",
+        "context": [
+          {
+            "lineNum": 902,
+            "text": "                Object.assign(node.flags, nodeData.flags);",
+            "isCurrent": false
+          },
+          {
+            "lineNum": 903,
+            "text": "                ",
+            "isCurrent": false
+          },
+          {
+            "lineNum": 904,
+            "text": "                this.graph.add(node);",
+            "isCurrent": true
+          },
+          {
+            "lineNum": 905,
+            "text": "            }",
+            "isCurrent": false
+          },
+          {
+            "lineNum": 906,
+            "text": "        });",
+            "isCurrent": false
+          }
+        ]
+      },
+      {
+        "line": 178,
+        "type": "MEDIA_EVENT",
+        "code": "this.socket.on('media_uploaded', (data) => {",
+        "context": [
+          {
+            "lineNum": 176,
+            "text": "        ",
+            "isCurrent": false
+          },
+          {
+            "lineNum": 177,
+            "text": "        // Media upload events",
+            "isCurrent": false
+          },
+          {
+            "lineNum": 178,
+            "text": "        this.socket.on('media_uploaded', (data) => {",
+            "isCurrent": true
+          },
+          {
+            "lineNum": 179,
+            "text": "            this.handleRemoteMediaUpload(data);",
+            "isCurrent": false
+          },
+          {
+            "lineNum": 180,
+            "text": "        });",
+            "isCurrent": false
+          }
+        ]
+      },
+      {
+        "line": 1154,
+        "type": "MEDIA_EVENT",
+        "code": "this.socket.emit('media_uploaded', {",
+        "context": [
+          {
+            "lineNum": 1152,
+            "text": "            // Broadcast the media upload event",
+            "isCurrent": false
+          },
+          {
+            "lineNum": 1153,
+            "text": "            if (result.success) {",
+            "isCurrent": false
+          },
+          {
+            "lineNum": 1154,
+            "text": "                this.socket.emit('media_uploaded', {",
+            "isCurrent": true
+          },
+          {
+            "lineNum": 1155,
+            "text": "                    projectId: this.currentProject.id,",
+            "isCurrent": false
+          },
+          {
+            "lineNum": 1156,
+            "text": "                    nodeData: nodeData,",
+            "isCurrent": false
+          }
+        ]
+      },
+      {
+        "line": 1154,
+        "type": "MEDIA_EMIT",
+        "code": "this.socket.emit('media_uploaded', {",
+        "context": [
+          {
+            "lineNum": 1152,
+            "text": "            // Broadcast the media upload event",
+            "isCurrent": false
+          },
+          {
+            "lineNum": 1153,
+            "text": "            if (result.success) {",
+            "isCurrent": false
+          },
+          {
+            "lineNum": 1154,
+            "text": "                this.socket.emit('media_uploaded', {",
+            "isCurrent": true
+          },
+          {
+            "lineNum": 1155,
+            "text": "                    projectId: this.currentProject.id,",
+            "isCurrent": false
+          },
+          {
+            "lineNum": 1156,
+            "text": "                    nodeData: nodeData,",
+            "isCurrent": false
+          }
+        ]
+      },
+      {
+        "line": 178,
+        "type": "MEDIA_HANDLER",
+        "code": "this.socket.on('media_uploaded', (data) => {",
+        "context": [
+          {
+            "lineNum": 176,
+            "text": "        ",
+            "isCurrent": false
+          },
+          {
+            "lineNum": 177,
+            "text": "        // Media upload events",
+            "isCurrent": false
+          },
+          {
+            "lineNum": 178,
+            "text": "        this.socket.on('media_uploaded', (data) => {",
+            "isCurrent": true
+          },
+          {
+            "lineNum": 179,
+            "text": "            this.handleRemoteMediaUpload(data);",
+            "isCurrent": false
+          },
+          {
+            "lineNum": 180,
+            "text": "        });",
+            "isCurrent": false
+          }
+        ]
+      },
+      {
+        "line": 356,
+        "type": "OP",
+        "code": "'node_create', 'node_delete', 'node_move', 'node_resize',",
+        "context": [
+          {
+            "lineNum": 354,
+            "text": "        // Save canvas state for structural changes",
+            "isCurrent": false
+          },
+          {
+            "lineNum": 355,
+            "text": "        const saveOperations = [",
+            "isCurrent": false
+          },
+          {
+            "lineNum": 356,
+            "text": "            'node_create', 'node_delete', 'node_move', 'node_resize',",
+            "isCurrent": true
+          },
+          {
+            "lineNum": 357,
+            "text": "            'node_property_update', 'layer_order_change'",
+            "isCurrent": false
+          },
+          {
+            "lineNum": 358,
+            "text": "        ];",
+            "isCurrent": false
+          }
+        ]
+      },
+      {
+        "line": 383,
+        "type": "OP",
+        "code": "case 'node_create':",
+        "context": [
+          {
+            "lineNum": 381,
+            "text": "            // Apply based on operation type",
+            "isCurrent": false
+          },
+          {
+            "lineNum": 382,
+            "text": "            switch (operation.type) {",
+            "isCurrent": false
+          },
+          {
+            "lineNum": 383,
+            "text": "                case 'node_create':",
+            "isCurrent": true
+          },
+          {
+            "lineNum": 384,
+            "text": "                    this.applyNodeCreate(operation.data);",
+            "isCurrent": false
+          },
+          {
+            "lineNum": 385,
+            "text": "                    break;",
+            "isCurrent": false
+          }
+        ]
+      },
+      {
+        "line": 842,
+        "type": "OP",
+        "code": "type: 'node_create',",
+        "context": [
+          {
+            "lineNum": 840,
+            "text": "        // Apply as a remote node creation",
+            "isCurrent": false
+          },
+          {
+            "lineNum": 841,
+            "text": "        this.applyRemoteOperation({",
+            "isCurrent": false
+          },
+          {
+            "lineNum": 842,
+            "text": "            type: 'node_create',",
+            "isCurrent": true
+          },
+          {
+            "lineNum": 843,
+            "text": "            data: { nodeData }",
+            "isCurrent": false
+          },
+          {
+            "lineNum": 844,
+            "text": "        });",
+            "isCurrent": false
+          }
+        ]
+      },
+      {
+        "line": 384,
+        "type": "APPLY",
+        "code": "this.applyNodeCreate(operation.data);",
+        "context": [
+          {
+            "lineNum": 382,
+            "text": "            switch (operation.type) {",
+            "isCurrent": false
+          },
+          {
+            "lineNum": 383,
+            "text": "                case 'node_create':",
+            "isCurrent": false
+          },
+          {
+            "lineNum": 384,
+            "text": "                    this.applyNodeCreate(operation.data);",
+            "isCurrent": true
+          },
+          {
+            "lineNum": 385,
+            "text": "                    break;",
+            "isCurrent": false
+          },
+          {
+            "lineNum": 386,
+            "text": "                case 'node_move':",
+            "isCurrent": false
+          }
+        ]
+      },
+      {
+        "line": 441,
+        "type": "APPLY",
+        "code": "applyNodeCreate(data) {",
+        "context": [
+          {
+            "lineNum": 439,
+            "text": "    ",
+            "isCurrent": false
+          },
+          {
+            "lineNum": 440,
+            "text": "    // Operation handlers",
+            "isCurrent": false
+          },
+          {
+            "lineNum": 441,
+            "text": "    applyNodeCreate(data) {",
+            "isCurrent": true
+          },
+          {
+            "lineNum": 442,
+            "text": "        window.__traceNode('applyNodeCreate.START', { ",
+            "isCurrent": false
+          },
+          {
+            "lineNum": 443,
+            "text": "            nodeId: data.node.id, ",
+            "isCurrent": false
+          }
+        ]
+      },
+      {
+        "line": 442,
+        "type": "APPLY",
+        "code": "window.__traceNode('applyNodeCreate.START', {",
+        "context": [
+          {
+            "lineNum": 440,
+            "text": "    // Operation handlers",
+            "isCurrent": false
+          },
+          {
+            "lineNum": 441,
+            "text": "    applyNodeCreate(data) {",
+            "isCurrent": false
+          },
+          {
+            "lineNum": 442,
+            "text": "        window.__traceNode('applyNodeCreate.START', { ",
+            "isCurrent": true
+          },
+          {
+            "lineNum": 443,
+            "text": "            nodeId: data.node.id, ",
+            "isCurrent": false
+          },
+          {
+            "lineNum": 444,
+            "text": "            nodeType: data.node.type,",
+            "isCurrent": false
+          }
+        ]
+      }
+    ],
+    "js/app.js": [
+      {
+        "line": 223,
+        "type": "CREATE",
+        "code": "createNode: (type) => NodeFactory.createNode(type),",
+        "context": [
+          {
+            "lineNum": 221,
+            "text": "// Custom LiteGraph compatibility object",
+            "isCurrent": false
+          },
+          {
+            "lineNum": 222,
+            "text": "window.LiteGraph = {",
+            "isCurrent": false
+          },
+          {
+            "lineNum": 223,
+            "text": "    createNode: (type) => NodeFactory.createNode(type),",
+            "isCurrent": true
+          },
+          {
+            "lineNum": 224,
+            "text": "    registerNodeType: (type, nodeClass) => NodeFactory.registerNodeType(type, nodeClass)",
+            "isCurrent": false
+          },
+          {
+            "lineNum": 225,
+            "text": "};",
+            "isCurrent": false
+          }
+        ]
+      },
+      {
+        "line": 168,
+        "type": "CREATE",
+        "code": "node = new ImageNode();",
+        "context": [
+          {
+            "lineNum": 166,
+            "text": "                case 'media/image':",
+            "isCurrent": false
+          },
+          {
+            "lineNum": 167,
+            "text": "                case 'canvas/image':",
+            "isCurrent": false
+          },
+          {
+            "lineNum": 168,
+            "text": "                    node = new ImageNode();",
+            "isCurrent": true
+          },
+          {
+            "lineNum": 169,
+            "text": "                    break;",
+            "isCurrent": false
+          },
+          {
+            "lineNum": 170,
+            "text": "                case 'media/video':",
+            "isCurrent": false
+          }
+        ]
+      },
+      {
+        "line": 172,
+        "type": "CREATE",
+        "code": "node = new VideoNode();",
+        "context": [
+          {
+            "lineNum": 170,
+            "text": "                case 'media/video':",
+            "isCurrent": false
+          },
+          {
+            "lineNum": 171,
+            "text": "                case 'canvas/video':",
+            "isCurrent": false
+          },
+          {
+            "lineNum": 172,
+            "text": "                    node = new VideoNode();",
+            "isCurrent": true
+          },
+          {
+            "lineNum": 173,
+            "text": "                    break;",
+            "isCurrent": false
+          },
+          {
+            "lineNum": 174,
+            "text": "                case 'media/text':",
+            "isCurrent": false
+          }
+        ]
+      }
+    ],
+    "js/canvas.js": [
+      {
+        "line": 1774,
+        "type": "CREATE",
+        "code": "const node = NodeFactory.createNode('media/text');",
+        "context": [
+          {
+            "lineNum": 1772,
+            "text": "        }",
+            "isCurrent": false
+          },
+          {
+            "lineNum": 1773,
+            "text": "        ",
+            "isCurrent": false
+          },
+          {
+            "lineNum": 1774,
+            "text": "        const node = NodeFactory.createNode('media/text');",
+            "isCurrent": true
+          },
+          {
+            "lineNum": 1775,
+            "text": "        if (node) {",
+            "isCurrent": false
+          },
+          {
+            "lineNum": 1776,
+            "text": "            node.pos = [pos[0] - node.size[0] / 2, pos[1] - node.size[1] / 2];",
+            "isCurrent": false
+          }
+        ]
+      },
+      {
+        "line": 1911,
+        "type": "CREATE",
+        "code": "const node = NodeFactory.createNode(nodeData.type);",
+        "context": [
+          {
+            "lineNum": 1909,
+            "text": "        }",
+            "isCurrent": false
+          },
+          {
+            "lineNum": 1910,
+            "text": "        ",
+            "isCurrent": false
+          },
+          {
+            "lineNum": 1911,
+            "text": "        const node = NodeFactory.createNode(nodeData.type);",
+            "isCurrent": true
+          },
+          {
+            "lineNum": 1912,
+            "text": "        if (!node) return null;",
+            "isCurrent": false
+          },
+          {
+            "lineNum": 1913,
+            "text": "        ",
+            "isCurrent": false
+          }
+        ]
+      },
+      {
+        "line": 655,
+        "type": "ADD",
+        "code": "this.graph.add(duplicate);",
+        "context": [
+          {
+            "lineNum": 653,
+            "text": "                    duplicate.pos[1] = selectedNode.pos[1] + offset;",
+            "isCurrent": false
+          },
+          {
+            "lineNum": 654,
+            "text": "                    ",
+            "isCurrent": false
+          },
+          {
+            "lineNum": 655,
+            "text": "                    this.graph.add(duplicate);",
+            "isCurrent": true
+          },
+          {
+            "lineNum": 656,
+            "text": "                    duplicates.push(duplicate);",
+            "isCurrent": false
+          },
+          {
+            "lineNum": 657,
+            "text": "                    ",
+            "isCurrent": false
+          }
+        ]
+      },
+      {
+        "line": 675,
+        "type": "ADD",
+        "code": "this.graph.add(duplicate);",
+        "context": [
+          {
+            "lineNum": 673,
+            "text": "                duplicate.pos[0] = node.pos[0] + 20;",
+            "isCurrent": false
+          },
+          {
+            "lineNum": 674,
+            "text": "                duplicate.pos[1] = node.pos[1] + 20;",
+            "isCurrent": false
+          },
+          {
+            "lineNum": 675,
+            "text": "                this.graph.add(duplicate);",
+            "isCurrent": true
+          },
+          {
+            "lineNum": 676,
+            "text": "                duplicates.push(duplicate);",
+            "isCurrent": false
+          },
+          {
+            "lineNum": 677,
+            "text": "                draggedDuplicate = duplicate;",
+            "isCurrent": false
+          }
+        ]
+      },
+      {
+        "line": 1404,
+        "type": "ADD",
+        "code": "this.graph.add(node);",
+        "context": [
+          {
+            "lineNum": 1402,
+            "text": "                node.pos[1] = mouseGraphPos[1] + offsetFromCenter[1];",
+            "isCurrent": false
+          },
+          {
+            "lineNum": 1403,
+            "text": "                ",
+            "isCurrent": false
+          },
+          {
+            "lineNum": 1404,
+            "text": "                this.graph.add(node);",
+            "isCurrent": true
+          },
+          {
+            "lineNum": 1405,
+            "text": "                newNodes.push(node);",
+            "isCurrent": false
+          },
+          {
+            "lineNum": 1406,
+            "text": "                ",
+            "isCurrent": false
+          }
+        ]
+      },
+      {
+        "line": 1434,
+        "type": "ADD",
+        "code": "this.graph.add(duplicate);",
+        "context": [
+          {
+            "lineNum": 1432,
+            "text": "                duplicate.pos[0] += offset;",
+            "isCurrent": false
+          },
+          {
+            "lineNum": 1433,
+            "text": "                duplicate.pos[1] += offset;",
+            "isCurrent": false
+          },
+          {
+            "lineNum": 1434,
+            "text": "                this.graph.add(duplicate);",
+            "isCurrent": true
+          },
+          {
+            "lineNum": 1435,
+            "text": "                duplicates.push(duplicate);",
+            "isCurrent": false
+          },
+          {
+            "lineNum": 1436,
+            "text": "                ",
+            "isCurrent": false
+          }
+        ]
+      },
+      {
+        "line": 1780,
+        "type": "ADD",
+        "code": "this.graph.add(node);",
+        "context": [
+          {
+            "lineNum": 1778,
+            "text": "                node.setText('Text');",
+            "isCurrent": false
+          },
+          {
+            "lineNum": 1779,
+            "text": "            }",
+            "isCurrent": false
+          },
+          {
+            "lineNum": 1780,
+            "text": "            this.graph.add(node);",
+            "isCurrent": true
+          },
+          {
+            "lineNum": 1781,
+            "text": "            this.selection.selectNode(node);",
+            "isCurrent": false
+          },
+          {
+            "lineNum": 1782,
+            "text": "            ",
+            "isCurrent": false
+          }
+        ]
+      },
+      {
+        "line": 655,
+        "type": "ADD",
+        "code": "this.graph.add(duplicate);",
+        "context": [
+          {
+            "lineNum": 653,
+            "text": "                    duplicate.pos[1] = selectedNode.pos[1] + offset;",
+            "isCurrent": false
+          },
+          {
+            "lineNum": 654,
+            "text": "                    ",
+            "isCurrent": false
+          },
+          {
+            "lineNum": 655,
+            "text": "                    this.graph.add(duplicate);",
+            "isCurrent": true
+          },
+          {
+            "lineNum": 656,
+            "text": "                    duplicates.push(duplicate);",
+            "isCurrent": false
+          },
+          {
+            "lineNum": 657,
+            "text": "                    ",
+            "isCurrent": false
+          }
+        ]
+      },
+      {
+        "line": 675,
+        "type": "ADD",
+        "code": "this.graph.add(duplicate);",
+        "context": [
+          {
+            "lineNum": 673,
+            "text": "                duplicate.pos[0] = node.pos[0] + 20;",
+            "isCurrent": false
+          },
+          {
+            "lineNum": 674,
+            "text": "                duplicate.pos[1] = node.pos[1] + 20;",
+            "isCurrent": false
+          },
+          {
+            "lineNum": 675,
+            "text": "                this.graph.add(duplicate);",
+            "isCurrent": true
+          },
+          {
+            "lineNum": 676,
+            "text": "                duplicates.push(duplicate);",
+            "isCurrent": false
+          },
+          {
+            "lineNum": 677,
+            "text": "                draggedDuplicate = duplicate;",
+            "isCurrent": false
+          }
+        ]
+      },
+      {
+        "line": 1404,
+        "type": "ADD",
+        "code": "this.graph.add(node);",
+        "context": [
+          {
+            "lineNum": 1402,
+            "text": "                node.pos[1] = mouseGraphPos[1] + offsetFromCenter[1];",
+            "isCurrent": false
+          },
+          {
+            "lineNum": 1403,
+            "text": "                ",
+            "isCurrent": false
+          },
+          {
+            "lineNum": 1404,
+            "text": "                this.graph.add(node);",
+            "isCurrent": true
+          },
+          {
+            "lineNum": 1405,
+            "text": "                newNodes.push(node);",
+            "isCurrent": false
+          },
+          {
+            "lineNum": 1406,
+            "text": "                ",
+            "isCurrent": false
+          }
+        ]
+      },
+      {
+        "line": 1434,
+        "type": "ADD",
+        "code": "this.graph.add(duplicate);",
+        "context": [
+          {
+            "lineNum": 1432,
+            "text": "                duplicate.pos[0] += offset;",
+            "isCurrent": false
+          },
+          {
+            "lineNum": 1433,
+            "text": "                duplicate.pos[1] += offset;",
+            "isCurrent": false
+          },
+          {
+            "lineNum": 1434,
+            "text": "                this.graph.add(duplicate);",
+            "isCurrent": true
+          },
+          {
+            "lineNum": 1435,
+            "text": "                duplicates.push(duplicate);",
+            "isCurrent": false
+          },
+          {
+            "lineNum": 1436,
+            "text": "                ",
+            "isCurrent": false
+          }
+        ]
+      },
+      {
+        "line": 1780,
+        "type": "ADD",
+        "code": "this.graph.add(node);",
+        "context": [
+          {
+            "lineNum": 1778,
+            "text": "                node.setText('Text');",
+            "isCurrent": false
+          },
+          {
+            "lineNum": 1779,
+            "text": "            }",
+            "isCurrent": false
+          },
+          {
+            "lineNum": 1780,
+            "text": "            this.graph.add(node);",
+            "isCurrent": true
+          },
+          {
+            "lineNum": 1781,
+            "text": "            this.selection.selectNode(node);",
+            "isCurrent": false
+          },
+          {
+            "lineNum": 1782,
+            "text": "            ",
+            "isCurrent": false
+          }
+        ]
+      },
+      {
+        "line": 2974,
+        "type": "OP",
+        "code": "this.collaborativeManager.sendOperation('node_create', { nodeData });",
+        "context": [
+          {
+            "lineNum": 2972,
+            "text": "        // We don't want to execute the action again locally",
+            "isCurrent": false
+          },
+          {
+            "lineNum": 2973,
+            "text": "        if (this.collaborativeManager?.isConnected) {",
+            "isCurrent": false
+          },
+          {
+            "lineNum": 2974,
+            "text": "            this.collaborativeManager.sendOperation('node_create', { nodeData });",
+            "isCurrent": true
+          },
+          {
+            "lineNum": 2975,
+            "text": "        }",
+            "isCurrent": false
+          },
+          {
+            "lineNum": 2976,
+            "text": "    }",
+            "isCurrent": false
+          }
+        ]
+      }
+    ],
+    "js/actions/UnifiedOperationHandler.js": [
+      {
+        "line": 303,
+        "type": "CREATE",
+        "code": "const node = NodeFactory.createNode(nodeInfo.type);",
+        "context": [
+          {
+            "lineNum": 301,
+            "text": "                for (const nodeInfo of nodesToCreate) {",
+            "isCurrent": false
+          },
+          {
+            "lineNum": 302,
+            "text": "                    // Create node using NodeFactory",
+            "isCurrent": false
+          },
+          {
+            "lineNum": 303,
+            "text": "                    const node = NodeFactory.createNode(nodeInfo.type);",
+            "isCurrent": true
+          },
+          {
+            "lineNum": 304,
+            "text": "                    if (!node) {",
+            "isCurrent": false
+          },
+          {
+            "lineNum": 305,
+            "text": "                        throw new Error(`Failed to create node of type: ${nodeInfo.type}`);",
+            "isCurrent": false
+          }
+        ]
+      },
+      {
+        "line": 317,
+        "type": "ADD",
+        "code": "graph.add(node);",
+        "context": [
+          {
+            "lineNum": 315,
+            "text": "                    ",
+            "isCurrent": false
+          },
+          {
+            "lineNum": 316,
+            "text": "                    // Add to graph",
+            "isCurrent": false
+          },
+          {
+            "lineNum": 317,
+            "text": "                    graph.add(node);",
+            "isCurrent": true
+          },
+          {
+            "lineNum": 318,
+            "text": "                    undoData.nodeIds.push(node.id);",
+            "isCurrent": false
+          },
+          {
+            "lineNum": 319,
+            "text": "                }",
+            "isCurrent": false
+          }
+        ]
+      },
+      {
+        "line": 290,
+        "type": "OP",
+        "code": "this.registerOperation('node_create', {",
+        "context": [
+          {
+            "lineNum": 288,
+            "text": "        ",
+            "isCurrent": false
+          },
+          {
+            "lineNum": 289,
+            "text": "        // Node Create Operation",
+            "isCurrent": false
+          },
+          {
+            "lineNum": 290,
+            "text": "        this.registerOperation('node_create', {",
+            "isCurrent": true
+          },
+          {
+            "lineNum": 291,
+            "text": "            description: 'Create new nodes',",
+            "isCurrent": false
+          },
+          {
+            "lineNum": 292,
+            "text": "            supportsTransactions: true,",
+            "isCurrent": false
+          }
+        ]
+      },
+      {
+        "line": 297,
+        "type": "OP",
+        "code": "const undoData = { type: 'node_create', nodeIds: [] };",
+        "context": [
+          {
+            "lineNum": 295,
+            "text": "                const canvas = app.graphCanvas;",
+            "isCurrent": false
+          },
+          {
+            "lineNum": 296,
+            "text": "                const graph = canvas.graph;",
+            "isCurrent": false
+          },
+          {
+            "lineNum": 297,
+            "text": "                const undoData = { type: 'node_create', nodeIds: [] };",
+            "isCurrent": true
+          },
+          {
+            "lineNum": 298,
+            "text": "                ",
+            "isCurrent": false
+          },
+          {
+            "lineNum": 299,
+            "text": "                const nodesToCreate = nodes || [nodeData];",
+            "isCurrent": false
+          }
+        ]
+      }
+    ]
+  },
+  "mediaHandlers": [
+    {
+      "file": "js/collaborative.js",
+      "line": 178,
+      "type": "MEDIA_HANDLER",
+      "code": "this.socket.on('media_uploaded', (data) => {",
+      "context": [
+        {
+          "lineNum": 176,
+          "text": "        ",
+          "isCurrent": false
+        },
+        {
+          "lineNum": 177,
+          "text": "        // Media upload events",
+          "isCurrent": false
+        },
+        {
+          "lineNum": 178,
+          "text": "        this.socket.on('media_uploaded', (data) => {",
+          "isCurrent": true
+        },
+        {
+          "lineNum": 179,
+          "text": "            this.handleRemoteMediaUpload(data);",
+          "isCurrent": false
+        },
+        {
+          "lineNum": 180,
+          "text": "        });",
+          "isCurrent": false
+        }
+      ]
+    }
+  ]
+}

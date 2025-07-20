@@ -523,6 +523,13 @@ class CanvasNavigator {
             this.currentCanvasId = newCanvas.id;
             
             // Join the project if collaborative
+            // Join using the new NetworkLayer if available
+            if (this.app.networkLayer && this.app.networkLayer.isConnected) {
+                console.log('🔌 Joining new project via NetworkLayer:', newCanvas.id);
+                this.app.networkLayer.joinProject(newCanvas.id);
+            }
+            
+            // Also join using old CollaborativeManager for backward compatibility
             if (this.collaborativeManager) {
                 this.collaborativeManager.joinProject(newCanvas.id).then(joined => {
                     if (!joined) {
@@ -607,6 +614,9 @@ class CanvasNavigator {
                 this.app.graph.clear();
             }
             
+            // Stop any existing auto-save
+            this.stopAutoSave();
+            
             // Clear the current canvas
             console.log('🧹 Clearing canvas, current nodes:', this.app.graph.nodes.length);
             this.app.graph.clear();
@@ -639,9 +649,18 @@ class CanvasNavigator {
                     console.log('🔌 Checking collaborative state:', {
                         hasManager: !!this.collaborativeManager,
                         isConnected: this.collaborativeManager?.isConnected,
-                        socket: !!this.collaborativeManager?.socket
+                        socket: !!this.collaborativeManager?.socket,
+                        hasNetworkLayer: !!this.app.networkLayer,
+                        networkConnected: this.app.networkLayer?.isConnected
                     });
                     
+                    // Join using the new NetworkLayer if available
+                    if (this.app.networkLayer && this.app.networkLayer.isConnected) {
+                        console.log('🔌 Joining project via NetworkLayer:', canvasId);
+                        this.app.networkLayer.joinProject(canvasId);
+                    }
+                    
+                    // Also join using old CollaborativeManager for backward compatibility
                     if (this.collaborativeManager) {
                         console.log('🔌 Checking collaborative state:', {
                             hasManager: !!this.collaborativeManager,
@@ -651,12 +670,19 @@ class CanvasNavigator {
                         
                         // Always attempt to join, let joinProject handle connection waiting
                         console.log('🔌 Joining collaborative project:', canvasId);
-                        const joined = await this.collaborativeManager.joinProject(canvasId);
+                        let joined = await this.collaborativeManager.joinProject(canvasId);
+                        
+                        if (!joined) {
+                            console.log('⚠️ First join attempt failed, retrying...');
+                            // Wait a bit and retry
+                            await new Promise(resolve => setTimeout(resolve, 2000));
+                            joined = await this.collaborativeManager.joinProject(canvasId);
+                        }
                         
                         if (joined) {
                             console.log('✅ Successfully joined collaborative project');
                         } else {
-                            console.log('⚠️ Failed to join collaborative project - will work offline');
+                            console.log('⚠️ Failed to join collaborative project after retry - will work offline');
                             this.collaborativeManager.showStatus('Working offline', 'warning');
                         }
                     }
@@ -672,9 +698,18 @@ class CanvasNavigator {
                     console.log('🔌 Checking collaborative state (empty canvas):', {
                         hasManager: !!this.collaborativeManager,
                         isConnected: this.collaborativeManager?.isConnected,
-                        socket: !!this.collaborativeManager?.socket
+                        socket: !!this.collaborativeManager?.socket,
+                        hasNetworkLayer: !!this.app.networkLayer,
+                        networkConnected: this.app.networkLayer?.isConnected
                     });
                     
+                    // Join using the new NetworkLayer if available
+                    if (this.app.networkLayer && this.app.networkLayer.isConnected) {
+                        console.log('🔌 Joining project via NetworkLayer (empty canvas):', canvasId);
+                        this.app.networkLayer.joinProject(canvasId);
+                    }
+                    
+                    // Also join using old CollaborativeManager for backward compatibility
                     if (this.collaborativeManager) {
                         // Always attempt to join, let joinProject handle connection waiting
                         console.log('🔌 Joining collaborative project (empty canvas):', canvasId);
@@ -691,6 +726,13 @@ class CanvasNavigator {
             } catch (error) {
                 console.error('Error loading canvas data:', error);
                 // Continue with empty canvas but still join project
+                // Join using the new NetworkLayer if available
+                if (this.app.networkLayer && this.app.networkLayer.isConnected) {
+                    console.log('🔌 Joining project via NetworkLayer (after error):', canvasId);
+                    this.app.networkLayer.joinProject(canvasId);
+                }
+                
+                // Also join using old CollaborativeManager for backward compatibility
                 if (this.collaborativeManager) {
                     const joined = await this.collaborativeManager.joinProject(canvasId);
                     if (!joined) {
@@ -701,6 +743,9 @@ class CanvasNavigator {
             
             // Update UI
             this.renderCanvasList();
+            
+            // Start auto-save for this canvas
+            this.startAutoSave();
             
             // Close navigator - DISABLED for testing
             // this.close();
@@ -744,6 +789,9 @@ class CanvasNavigator {
             if (canvasId === this.currentCanvasId) {
                 this.app.graph.clear();
                 this.currentCanvasId = null;
+                
+                // Stop auto-save
+                this.stopAutoSave();
                 
                 // Clear localStorage
                 localStorage.removeItem('lastCanvasId');
@@ -1003,6 +1051,13 @@ class CanvasNavigator {
             });
             
             // Join the project if collaborative
+            // Join using the new NetworkLayer if available
+            if (this.app.networkLayer && this.app.networkLayer.isConnected) {
+                console.log('🔌 Joining new project via NetworkLayer (saveAsNew):', newCanvas.id);
+                this.app.networkLayer.joinProject(newCanvas.id);
+            }
+            
+            // Also join using old CollaborativeManager for backward compatibility
             if (this.collaborativeManager) {
                 this.collaborativeManager.joinProject(newCanvas.id).then(joined => {
                     if (!joined) {
@@ -1060,24 +1115,23 @@ class CanvasNavigator {
                 return;
             }
             
-            // Check if we're in a duplicate tab by looking for session storage marker
+            // Generate a unique tab ID for this tab
             const tabId = Date.now() + '-' + Math.random();
-            const existingTabId = sessionStorage.getItem('imageCanvasTabId');
             
-            if (existingTabId) {
-                console.log('⚠️ Duplicate tab detected - starting fresh');
-                // This is a duplicate tab, don't load the last canvas
-                // Clear any residual state
-                this.app.graph.clear();
-                this.currentCanvasId = null;
-                
-                // Show the canvas navigator so user can choose
-                setTimeout(() => this.open(), 1000);
-                return;
+            // Use a more sophisticated duplicate detection that doesn't interfere with multiple tabs
+            // Store tab ID in a way that's unique to this exact tab instance
+            const tabKey = 'imageCanvasTab_' + window.name || 'default';
+            window.name = window.name || 'tab_' + tabId; // Ensure window has a name
+            
+            // Don't treat new tabs as duplicates - sessionStorage is shared between tabs!
+            // Only check for actual duplicates (same window reloaded)
+            const isReload = performance.navigation.type === 1;
+            
+            if (isReload) {
+                console.log('🔄 Page reloaded, continuing with same session');
+            } else {
+                console.log('📑 New tab opened, allowing independent session');
             }
-            
-            // Mark this tab
-            sessionStorage.setItem('imageCanvasTabId', tabId);
             
             // Get last used canvas from localStorage
             const lastCanvasId = localStorage.getItem('lastCanvasId');
@@ -1089,6 +1143,7 @@ class CanvasNavigator {
                     const canvases = await response.json();
                     const lastCanvas = canvases.find(c => c.id === parseInt(lastCanvasId));
                     if (lastCanvas) {
+                        console.log('🔄 Auto-loading last canvas:', lastCanvasId);
                         await this.loadCanvas(parseInt(lastCanvasId));
                         return;
                     }
@@ -1134,6 +1189,13 @@ class CanvasNavigator {
             const newCanvas = await response.json();
             
             // Join the project if collaborative
+            // Join using the new NetworkLayer if available
+            if (this.app.networkLayer && this.app.networkLayer.isConnected) {
+                console.log('🔌 Joining new project via NetworkLayer (createDefault):', newCanvas.id);
+                this.app.networkLayer.joinProject(newCanvas.id);
+            }
+            
+            // Also join using old CollaborativeManager for backward compatibility
             if (this.collaborativeManager) {
                 this.collaborativeManager.joinProject(newCanvas.id).then(joined => {
                     if (!joined) {
@@ -1155,6 +1217,82 @@ class CanvasNavigator {
             console.error('Failed to create default canvas:', error);
             return null;
         }
+    }
+    
+    // Auto-save functionality
+    startAutoSave() {
+        // Clear any existing timer
+        this.stopAutoSave();
+        
+        // Save every 30 seconds if there are changes
+        this.autoSaveTimer = setInterval(async () => {
+            if (this.currentCanvasId && this.app.graph._nodes && this.app.graph._nodes.length > 0) {
+                console.log('🔄 Auto-saving canvas to server...');
+                const saved = await this.saveCanvasToServer();
+                if (saved) {
+                    console.log('✅ Canvas auto-saved successfully');
+                } else {
+                    console.warn('⚠️ Canvas auto-save failed');
+                }
+            }
+        }, 30000); // 30 seconds
+        
+        console.log('🚀 Started auto-save timer');
+    }
+    
+    stopAutoSave() {
+        if (this.autoSaveTimer) {
+            clearInterval(this.autoSaveTimer);
+            this.autoSaveTimer = null;
+            console.log('⏹️ Stopped auto-save timer');
+        }
+    }
+    
+    async saveCanvasToServer() {
+        if (!this.currentCanvasId) {
+            console.warn('No canvas ID - cannot save');
+            return false;
+        }
+        
+        try {
+            // Serialize the current state
+            const canvasData = this.app.stateManager.serializeState(this.app.graph, this.app.graphCanvas);
+            
+            // Save to server
+            const response = await fetch(CONFIG.ENDPOINTS.PROJECT_CANVAS(this.currentCanvasId), {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    canvas_data: canvasData,
+                    userId: this.userId
+                })
+            });
+            
+            if (!response.ok) {
+                console.error('Failed to save canvas:', response.status, response.statusText);
+                return false;
+            }
+            
+            // Update last modified time in local cache
+            const canvas = this.canvases.find(c => c.id === this.currentCanvasId);
+            if (canvas) {
+                canvas.last_modified = new Date().toISOString();
+            }
+            
+            return true;
+        } catch (error) {
+            console.error('Error saving canvas to server:', error);
+            return false;
+        }
+    }
+    
+    // Manual save method
+    async saveCanvas() {
+        const saved = await this.saveCanvasToServer();
+        if (saved && this.collaborativeManager) {
+            this.collaborativeManager.showStatus('Canvas saved', 'success');
+        }
+        return saved;
     }
 }
 
