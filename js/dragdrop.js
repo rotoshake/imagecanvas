@@ -117,8 +117,20 @@ class DragDropManager {
         const newNodes = [];
         const cascadeOffset = 40; // Offset for multiple files
         
-        // Show initial loading message
-        const progressNotification = this.showProgressMessage(0, files.length);
+        // Show initial loading message using unified notifications
+        const progressId = 'file-upload-progress';
+        if (window.unifiedNotifications) {
+            window.unifiedNotifications.show({
+                id: progressId,
+                type: 'info',
+                message: `Loading images: 0/${files.length}`,
+                detail: 'Preparing...',
+                progress: { current: 0, total: files.length, showBar: true },
+                duration: 0, // Don't auto-dismiss
+                persistent: true,
+                closeable: false
+            });
+        }
         
         // Process files one by one to maintain UI responsiveness
         for (let i = 0; i < files.length; i++) {
@@ -126,7 +138,13 @@ class DragDropManager {
             
             try {
                 // Update progress
-                this.updateProgressMessage(progressNotification, i, files.length, file.name);
+                if (window.unifiedNotifications) {
+                    window.unifiedNotifications.update(progressId, {
+                        message: `Loading images: ${i}/${files.length}`,
+                        detail: file.name,
+                        progress: { current: i, total: files.length, showBar: true }
+                    });
+                }
                 
                 // Yield control to keep UI responsive - use requestAnimationFrame for better timing
                 await new Promise(resolve => requestAnimationFrame(resolve));
@@ -134,38 +152,132 @@ class DragDropManager {
                 const nodeData = await this.createNodeFromFile(file, dropPos, i * cascadeOffset);
                 if (nodeData) {
                     if (window.app?.operationPipeline) {
-                        // Use OperationPipeline for proper state sync
-                        console.log('🔄 Creating node via OperationPipeline...', {
-                            type: nodeData.type,
-                            pos: nodeData.pos
-                        });
                         try {
-                            const result = await window.app.operationPipeline.execute('node_create', {
-                                type: nodeData.type,
-                                pos: [...nodeData.pos],
-                                size: [...nodeData.size],
-                                properties: { ...nodeData.properties },
-                                imageData: nodeData.type === 'media/image' ? {
-                                    src: nodeData.dataURL,
-                                    filename: nodeData.properties.filename,
-                                    hash: nodeData.properties.hash
-                                } : undefined,
-                                videoData: nodeData.type === 'media/video' ? {
-                                    src: nodeData.dataURL,
-                                    filename: nodeData.properties.filename,
-                                    hash: nodeData.properties.hash
-                                } : undefined
-                            });
+                            // Create node immediately with local data
+                            const node = NodeFactory.createNode(nodeData.type);
+                            if (node) {
+                                node.pos = [...nodeData.pos];
+                                node.size = [...nodeData.size];
+                                node.properties = { ...nodeData.properties };
+                                
+                                // Load the media locally for immediate display
+                                if (nodeData.type === 'media/video') {
+                                    await node.setVideo(nodeData.dataURL, nodeData.properties.filename, nodeData.properties.hash);
+                                } else {
+                                    await node.setImage(nodeData.dataURL, nodeData.properties.filename, nodeData.properties.hash);
+                                }
+                                
+                                // Add to graph immediately
+                                this.graph.add(node);
+                                newNodes.push(node);
+                                
+                                // Start background upload if it's an image
+                                if (nodeData.type === 'media/image' && window.imageUploadManager) {
+                                    const uploadPromise = window.imageUploadManager.uploadImage(
+                                        nodeData.dataURL,
+                                        nodeData.properties.filename,
+                                        nodeData.properties.hash
+                                    );
+                                    
+                                    // Once uploaded, update the node with server URL
+                                    uploadPromise.then(async (uploadResult) => {
+                                        console.log('✅ Image uploaded, updating node with server URL');
+                                        
+                                        // Update the node's properties with the server URL
+                                        node.properties.serverUrl = uploadResult.url;
+                                        
+                                        // Update the image source to use the server URL
+                                        const fullUrl = CONFIG.SERVER.API_BASE + uploadResult.url;
+                                        if (node.img) {
+                                            node.img.src = fullUrl;
+                                        }
+                                        
+                                        // Mark node as temporary until server sync
+                                        node._isTemporary = true;
+                                        
+                                        // Sync with server
+                                        window.app.operationPipeline.execute('node_create', {
+                                            type: nodeData.type,
+                                            pos: [...node.pos],
+                                            size: [...node.size],
+                                            properties: { 
+                                                ...node.properties,
+                                                serverUrl: uploadResult.url,
+                                                src: uploadResult.url  // Server might expect src
+                                            },
+                                            imageData: {
+                                                src: CONFIG.SERVER.API_BASE + uploadResult.url,
+                                                filename: node.properties.filename,
+                                                hash: node.properties.hash
+                                            }
+                                            // Don't include the node ID - let server generate it
+                                        }).then(result => {
+                                            if (result.success && result.result?.node) {
+                                                console.log(`✅ Node synced with server, replacing temporary node`);
+                                                // Remove the temporary node
+                                                this.graph.remove(node);
+                                                // Update reference in newNodes array
+                                                const index = newNodes.indexOf(node);
+                                                if (index !== -1) {
+                                                    newNodes[index] = result.result.node;
+                                                }
+                                            } else {
+                                                // Sync failed, keep the temporary node
+                                                delete node._isTemporary;
+                                                console.warn('Server sync failed, keeping local node');
+                                            }
+                                        }).catch(error => {
+                                            // Sync failed, keep the temporary node
+                                            delete node._isTemporary;
+                                            console.warn('Background sync failed:', error.message);
+                                        });
+                                    }).catch(error => {
+                                        console.error('❌ Failed to upload/sync image:', error);
+                                        if (window.unifiedNotifications) {
+                                            window.unifiedNotifications.error(
+                                                'Failed to sync image with server',
+                                                { detail: error.message }
+                                            );
+                                        }
+                                    });
+                                } else {
+                                    // For non-image nodes, create normally
+                                    const result = await window.app.operationPipeline.execute('node_create', {
+                                        type: nodeData.type,
+                                        pos: [...nodeData.pos],
+                                        size: [...nodeData.size],
+                                        properties: { ...nodeData.properties },
+                                        videoData: nodeData.type === 'media/video' ? {
+                                            src: nodeData.dataURL,
+                                            filename: nodeData.properties.filename,
+                                            hash: nodeData.properties.hash
+                                        } : undefined
+                                    });
                             
-                            if (result.success && result.result?.node) {
-                                const createdNode = result.result.node;
-                                newNodes.push(createdNode);
-                                console.log('✅ Node created via OperationPipeline, ID:', createdNode.id);
-                            } else {
-                                console.error('❌ OperationPipeline returned no node');
+                                    if (result.success && result.result?.node) {
+                                        const createdNode = result.result.node;
+                                        // For videos, replace the local node
+                                        this.graph.remove(node);
+                                        newNodes[newNodes.indexOf(node)] = createdNode;
+                                        console.log('✅ Video node created via OperationPipeline, ID:', createdNode.id);
+                                    } else {
+                                        console.error('❌ OperationPipeline returned no node');
+                                    }
+                                }
                             }
                         } catch (error) {
                             console.error('Failed to create node via pipeline:', error);
+                            
+                            // Show user-friendly error message
+                            if (error.message && error.message.includes('timeout')) {
+                                if (window.unifiedNotifications) {
+                                    window.unifiedNotifications.warning(
+                                        'Network timeout - creating local node',
+                                        { detail: 'The image will sync when connection stabilizes' }
+                                    );
+                                }
+                            }
+                            
                             // Fallback to direct creation for offline mode
                             const node = NodeFactory.createNode(nodeData.type);
                             if (node) {
@@ -182,6 +294,9 @@ class DragDropManager {
                                 
                                 this.graph.add(node);
                                 newNodes.push(node);
+                                
+                                // Mark for later sync when connection improves
+                                node._needsServerSync = true;
                             }
                         }
                     } else {
@@ -219,7 +334,18 @@ class DragDropManager {
         }
         
         // Update final progress
-        this.updateProgressMessage(progressNotification, files.length, files.length, 'Complete!');
+        if (window.unifiedNotifications) {
+            window.unifiedNotifications.update(progressId, {
+                message: `Loading images: ${files.length}/${files.length}`,
+                detail: 'Complete!',
+                progress: { current: files.length, total: files.length, showBar: true }
+            });
+            
+            // Remove progress notification after a short delay
+            setTimeout(() => {
+                window.unifiedNotifications.remove(progressId);
+            }, 1000);
+        }
         
         // Select all new nodes
         if (newNodes.length > 0) {
@@ -230,13 +356,6 @@ class DragDropManager {
                 this.graph.canvas.stateManager.pushUndoState(this.graph, this.graph.canvas);
             }
         }
-        
-        // Hide progress notification after a short delay
-        setTimeout(() => {
-            if (progressNotification && progressNotification.remove) {
-                progressNotification.remove();
-            }
-        }, 1000);
     }
     
     async createNodeFromFile(file, basePos, offset) {
@@ -252,14 +371,33 @@ class DragDropManager {
         // Cache the media locally
         window.imageCache.set(hash, dataURL);
         
+        // Pre-load media to get correct dimensions
+        let size = [200, 200]; // Default fallback
+        let aspectRatio = undefined; // Let it use natural aspect ratio
+        
+        if (!isVideo) {
+            // For images, pre-load to get dimensions
+            try {
+                const img = await this.loadImageForDimensions(dataURL);
+                if (img.naturalWidth && img.naturalHeight) {
+                    const aspect = img.naturalWidth / img.naturalHeight;
+                    // Keep height at 200, adjust width for aspect ratio
+                    size = [200 * aspect, 200];
+                }
+            } catch (error) {
+                console.warn('Failed to pre-load image dimensions:', error);
+            }
+        }
+        // For videos, we'll let the video node handle dimensions after loading
+        
         // Return node data for OperationPipeline, not an actual node
         return {
             type: nodeType,
             pos: [
-                basePos[0] - 100 + offset, // Default size 200x200, so -100 to center
-                basePos[1] - 100 + offset
+                basePos[0] - (size[0] / 2) + offset, // Center based on actual size
+                basePos[1] - (size[1] / 2) + offset
             ],
-            size: [200, 200],
+            size: size,
             properties: {
                 filename: file.name,
                 hash: hash,
@@ -267,6 +405,15 @@ class DragDropManager {
             },
             dataURL: dataURL // Pass this for loading after node creation
         };
+    }
+    
+    loadImageForDimensions(src) {
+        return new Promise((resolve, reject) => {
+            const img = new Image();
+            img.onload = () => resolve(img);
+            img.onerror = reject;
+            img.src = src;
+        });
     }
     
     fileToDataURL(file) {
@@ -366,11 +513,15 @@ class DragDropManager {
     }
     
     showErrorMessage(message) {
-        this.showMessage(message, 'error');
+        if (window.unifiedNotifications) {
+            window.unifiedNotifications.error(message);
+        }
     }
     
     showSuccessMessage(message) {
-        this.showMessage(message, 'success');
+        if (window.unifiedNotifications) {
+            window.unifiedNotifications.success(message);
+        }
     }
     
     showProgressMessage(current, total) {

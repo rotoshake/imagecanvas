@@ -677,6 +677,8 @@ class FloatingPropertiesInspector {
         const input = document.createElement('input');
         input.type = 'text';
         input.className = 'property-input';
+        input.name = `property-${prop}`;
+        input.id = `property-input-${prop}`;
         input.value = mixed ? '' : (value || '');
         input.placeholder = mixed ? 'Mixed values' : '';
         
@@ -691,6 +693,8 @@ class FloatingPropertiesInspector {
         const input = document.createElement('input');
         input.type = 'number';
         input.className = 'property-input';
+        input.name = `property-${prop}`;
+        input.id = `property-input-${prop}`;
         
         // Add specific class for transform properties
         if (prop === 'x' || prop === 'y' || prop === 'width' || prop === 'height') {
@@ -727,6 +731,8 @@ class FloatingPropertiesInspector {
         const input = document.createElement('input');
         input.type = 'color';
         input.className = 'property-input';
+        input.name = `property-${prop}`;
+        input.id = `property-input-${prop}`;
         if (!mixed && value) {
             input.value = value.startsWith('#') ? value : `#${value}`;
         }
@@ -742,6 +748,8 @@ class FloatingPropertiesInspector {
         const input = document.createElement('input');
         input.type = 'range';
         input.className = 'property-input';
+        input.name = `property-${prop}`;
+        input.id = `property-input-${prop}`;
         input.value = mixed ? 0.5 : (value || 0);
         
         if (prop === 'bgAlpha') {
@@ -764,6 +772,8 @@ class FloatingPropertiesInspector {
     createSelectInput(prop, value, mixed) {
         const select = document.createElement('select');
         select.className = 'property-select';
+        select.name = `property-${prop}`;
+        select.id = `property-select-${prop}`;
         
         let options = [];
         if (prop === 'textAlign') {
@@ -813,6 +823,8 @@ class FloatingPropertiesInspector {
         
         const input = document.createElement('input');
         input.type = 'checkbox';
+        input.name = `property-${prop}`;
+        input.id = `property-checkbox-${prop}`;
         input.checked = mixed ? false : !!value;
         input.indeterminate = mixed;
         

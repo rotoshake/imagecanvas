@@ -152,6 +152,34 @@ class ImageCanvasApp {
         console.log('- Operational transformation for seamless collaboration');
         console.log('- Check the collaboration panel (top-right) for connection status');
     }
+    
+    /**
+     * Show a notification to the user (using unified notification system)
+     */
+    showNotification(options) {
+        if (window.unifiedNotifications) {
+            const { type = 'info', message, duration = 3000, detail } = options;
+            return window.unifiedNotifications.show({
+                type,
+                message,
+                detail,
+                duration
+            });
+        }
+        
+        // Fallback to simple notification if unified system not loaded
+        console.log(`[${options.type || 'info'}] ${options.message}`);
+    }
+    
+    /**
+     * Update connection status (using unified notification system)
+     */
+    updateConnectionStatus(status, detail) {
+        if (window.unifiedNotifications) {
+            window.unifiedNotifications.updateConnectionStatus(status, detail);
+        }
+        console.log(`Connection status: ${status}${detail ? ' - ' + detail : ''}`);
+    }
 }
 
 // ===================================

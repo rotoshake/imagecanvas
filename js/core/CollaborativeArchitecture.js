@@ -63,7 +63,17 @@ class CollaborativeArchitecture {
                 // Continue in offline mode
             }
             
-            // 7. Setup keyboard shortcuts for undo/redo
+            // 7. Initialize collaborative undo/redo manager
+            if (typeof CollaborativeUndoRedoManager !== 'undefined') {
+                this.app.undoRedoManager = new CollaborativeUndoRedoManager(this.app);
+                console.log('✅ Collaborative undo/redo manager initialized');
+            } else if (typeof HybridUndoRedoManager !== 'undefined') {
+                // Fallback to hybrid version if collaborative not available
+                this.app.undoRedoManager = new HybridUndoRedoManager(this.app);
+                console.log('✅ Hybrid undo/redo manager initialized (fallback)');
+            }
+            
+            // 8. Setup keyboard shortcuts for undo/redo
             this.setupKeyboardShortcuts();
             
             this.initialized = true;
@@ -85,15 +95,9 @@ class CollaborativeArchitecture {
         // Ensure commands are loaded
         await this.loadCommands();
         
-        // Create connection status indicator
-        this.connectionStatus = new ConnectionStatus(this.app);
-        this.app.connectionStatus = this.connectionStatus;
-        
-        // Connect app callbacks
-        this.app.updateConnectionStatus = (status) => {
-            console.log(`Connection status: ${status}`);
-            this.connectionStatus.updateStatus(status);
-        };
+        // Connection status is now handled by unified notifications
+        // updateConnectionStatus is already defined in app.js
+        console.log('✅ Connection status handled by unified notifications');
         
         this.app.updateActiveUsers = (users) => {
             console.log(`Active users:`, users);
@@ -202,14 +206,22 @@ class CollaborativeArchitecture {
             // Undo: Ctrl/Cmd + Z
             if ((e.ctrlKey || e.metaKey) && e.key === 'z' && !e.shiftKey) {
                 e.preventDefault();
-                this.operationPipeline.undo();
+                if (this.app.undoRedoManager) {
+                    this.app.undoRedoManager.undo();
+                } else {
+                    console.warn('Undo/redo manager not available');
+                }
             }
             
             // Redo: Ctrl/Cmd + Shift + Z or Ctrl/Cmd + Y
             else if (((e.ctrlKey || e.metaKey) && e.key === 'z' && e.shiftKey) ||
                      ((e.ctrlKey || e.metaKey) && e.key === 'y')) {
                 e.preventDefault();
-                this.operationPipeline.redo();
+                if (this.app.undoRedoManager) {
+                    this.app.undoRedoManager.redo();
+                } else {
+                    console.warn('Undo/redo manager not available');
+                }
             }
         });
     }

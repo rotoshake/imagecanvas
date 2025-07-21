@@ -83,7 +83,12 @@ class StateSyncManager {
             this.network.emit('execute_operation', serverRequest);
             
             // 3. Wait for server response (with timeout)
-            const response = await this.waitForServerResponse(operationId, 5000);
+            // Increase timeout for operations with image/video data or serverUrl
+            const hasMediaData = command.params.imageData || command.params.videoData || 
+                               (command.params.properties && command.params.properties.serverUrl);
+            const timeout = hasMediaData ? 30000 : 5000; // 30s for media, 5s for others
+            console.log(`⏱️ Waiting for server response with ${timeout}ms timeout for ${command.type} operation`);
+            const response = await this.waitForServerResponse(operationId, timeout);
             
             if (response.success) {
                 // Clean up optimistic nodes before server state update arrives
@@ -241,6 +246,7 @@ class StateSyncManager {
                 const node = await this.createNodeFromData(nodeData);
                 if (node) {
                     this.app.graph.add(node);
+                    console.log(`✅ Server node added successfully: ${node.id} (total nodes: ${this.app.graph.nodes.length})`);
                 } else {
                     console.error(`❌ Failed to create node from server data:`, nodeData);
                 }
@@ -529,12 +535,13 @@ class StateSyncManager {
         if (command.type === 'node_create') {
             // Find any nodes that were added optimistically
             const currentNodes = this.app.graph.nodes.slice(); // Make a copy to iterate safely
+            const nodesBeforeCleanup = currentNodes.length;
             
             for (const node of currentNodes) {
                 // Remove nodes that weren't in the rollback state (i.e., were added optimistically)
                 const wasInRollback = pending.rollbackData.nodes?.some(rollbackNode => rollbackNode.id === node.id);
                 if (!wasInRollback) {
-                    console.log(`🗑️ Removing optimistic node: ${node.id}:${node.type}`);
+                    console.log(`🗑️ Removing optimistic node: ${node.id}:${node.type} (created at ${node.pos[0]}, ${node.pos[1]})`);
                     // Also remove from selection to prevent issues
                     if (this.app.graphCanvas.selection) {
                         this.app.graphCanvas.selection.deselectNode(node);
@@ -542,6 +549,9 @@ class StateSyncManager {
                     this.app.graph.remove(node);
                 }
             }
+            
+            const nodesAfterCleanup = this.app.graph.nodes.length;
+            console.log(`🧹 Cleanup complete: removed ${nodesBeforeCleanup - nodesAfterCleanup} optimistic nodes`);
         }
         
         // For other operations, rollback data handling may be different

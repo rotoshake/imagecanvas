@@ -197,12 +197,10 @@ class OperationPipeline {
                 try {
                     const result = await this.app.stateSyncManager.executeOperation(command);
                     
-                    // Add to history
-                    if (!options.skipHistory) {
-                        this.addToHistory(command);
-                    }
+                    // Don't add to history here - CollaborativeUndoRedoManager handles it
+                    // and has access to the command with undo data
                     
-                    resolve({ success: true, result });
+                    resolve({ success: true, result: result.result });
                 } catch (error) {
                     // If state sync fails, we don't fall back to local execution
                     // This ensures consistency

@@ -1301,8 +1301,11 @@ class LGraphCanvas {
                 // No current canvas but we have content - create one automatically
                 const timestamp = new Date().toLocaleString();
                 window.canvasNavigator.saveAsNewCanvas(`Untitled Canvas - ${timestamp}`, true);
-                if (this.collaborativeManager) {
-                    this.collaborativeManager.showStatus('Canvas created and saved', 'success');
+                if (this.showNotification) {
+                    this.showNotification({
+                        type: 'success',
+                        message: 'Canvas created and saved'
+                    });
                 }
             } else if (this.collaborativeManager && this.collaborativeManager.save) {
                 this.collaborativeManager.save();
@@ -1554,9 +1557,6 @@ class LGraphCanvas {
         
         if (nodesToSync.length === 0) return;
         
-        console.log(`Converting ${nodesToSync.length} local duplicates to collaborative nodes`);
-        console.log('Before conversion - total nodes:', this.graph.nodes.length);
-        console.log('Nodes to sync:', nodesToSync.map(n => `${n.id}:${n.type}`));
         
         try {
             // Disable optimistic updates during this conversion to prevent conflicts
@@ -1581,22 +1581,15 @@ class LGraphCanvas {
             }));
             
             // Remove local duplicates first and clear them from selection
-            console.log('Nodes before removal:', this.graph.nodes.map(n => `${n.id}:${n.type}`));
             nodesToSync.forEach(node => {
-                console.log(`🗑️ Removing local node: ${node.id}:${node.type}`);
                 this.selection.deselectNode(node);
                 this.graph.remove(node);
                 delete node._needsCollaborativeSync;
             });
-            console.log('Nodes after removal:', this.graph.nodes.map(n => `${n.id}:${n.type}`));
-            
-            console.log('After removal - total nodes:', this.graph.nodes.length);
             
             // Create them through collaborative system at final positions
             const createdNodes = [];
             for (const nodeData of nodeDataArray) {
-                console.log(`Creating collaborative node: ${nodeData.type} at [${nodeData.pos[0]}, ${nodeData.pos[1]}]`);
-                
                 const result = await window.app.operationPipeline.execute('node_create', {
                     type: nodeData.type,
                     pos: nodeData.pos,
@@ -1608,59 +1601,56 @@ class LGraphCanvas {
                     aspectRatio: nodeData.aspectRatio
                 });
                 
-                console.log('Full result structure:', JSON.stringify(result, null, 2));
-                console.log('result.result contents:', result.result);
-                console.log('result.result.node contents:', result.result?.node);
-                
                 if (result && result.success) {
                     // The response structure is nested: result.result.result.node
                     let createdNode = null;
                     if (result.result && result.result.result && result.result.result.node) {
                         createdNode = result.result.result.node;
-                        console.log('✅ Found node in result.result.result.node');
                     } else if (result.result && result.result.node) {
                         createdNode = result.result.node;
-                        console.log('✅ Found node in result.result.node');
                     } else if (result.result && result.result.id) {
                         // Maybe the node IS the result.result
                         createdNode = result.result;
-                        console.log('✅ Found node in result.result directly');
-                    } else {
-                        console.log('❌ Node structure not found in expected locations');
-                        console.log('Available keys in result.result:', Object.keys(result.result || {}));
                     }
                     
-                    if (createdNode && createdNode.id) {
-                        console.log(`✅ Created collaborative node: ${createdNode.id}:${createdNode.type}`);
-                        createdNodes.push(createdNode);
-                    } else {
-                        console.warn('❌ Result structure unexpected, trying fallback search');
-                        // Try to find the created node by type and position in the graph
-                        const matchingNodes = this.graph.nodes.filter(n => 
-                            n.type === nodeData.type && 
-                            Math.abs(n.pos[0] - nodeData.pos[0]) < 5 && 
-                            Math.abs(n.pos[1] - nodeData.pos[1]) < 5 &&
-                            !createdNodes.includes(n) &&
-                            !n._needsCollaborativeSync  // Don't find the local duplicate
-                        );
-                        console.log('Matching nodes found by position:', matchingNodes.length);
-                        if (matchingNodes.length > 0) {
-                            const matchingNode = matchingNodes[0];
-                            console.log(`✅ Found matching node by position: ${matchingNode.id}:${matchingNode.type}`);
-                            createdNodes.push(matchingNode);
-                        }
+                    // Wait a bit for the server node to be added to the graph
+                    await new Promise(resolve => setTimeout(resolve, 100));
+                    
+                    // Find the created node by type and position in the graph
+                    // This is necessary because the server returns a different ID than the optimistic node
+                    const matchingNodes = this.graph.nodes.filter(n => 
+                        n.type === nodeData.type && 
+                        Math.abs(n.pos[0] - nodeData.pos[0]) < 5 && 
+                        Math.abs(n.pos[1] - nodeData.pos[1]) < 5 &&
+                        !createdNodes.some(cn => cn.id === n.id) &&
+                        !n._needsCollaborativeSync  // Don't find the local duplicate
+                    );
+                    
+                    if (matchingNodes.length > 0) {
+                        // Get the most recently added node (highest ID)
+                        const sortedNodes = matchingNodes.sort((a, b) => {
+                            // Server IDs are timestamps, so higher = newer
+                            const aId = parseInt(a.id) || 0;
+                            const bId = parseInt(b.id) || 0;
+                            return bId - aId;
+                        });
+                        createdNodes.push(sortedNodes[0]);
                     }
                 } else {
                     console.error('❌ Failed to create collaborative node:', result);
                 }
             }
             
-            console.log('After creation - total nodes:', this.graph.nodes.length);
-            console.log('Created nodes:', createdNodes.map(n => `${n.id}:${n.type}`));
-            
             // Clear and reselect the new collaborative nodes
             this.selection.clear();
-            createdNodes.forEach(node => this.selection.selectNode(node, true));
+            createdNodes.forEach(node => {
+                if (node && node.id) {
+                    this.selection.selectNode(node, true);
+                }
+            });
+            
+            // Force the canvas to update selection visuals
+            this.dirty_canvas = true;
             
             // Restore optimistic updates
             if (window.app.operationPipeline?.stateSyncManager) {
@@ -1673,19 +1663,16 @@ class LGraphCanvas {
             // If collaborative conversion failed (e.g., authentication error), 
             // we need to handle the local duplicates properly
             if (error.message && error.message.includes('Not authenticated')) {
-                console.log('Authentication error - keeping local duplicates but removing sync flags');
                 // Remove sync flags from local nodes so they don't cause issues
                 const stillPendingNodes = this.graph.nodes.filter(node => node._needsCollaborativeSync);
                 stillPendingNodes.forEach(node => {
                     delete node._needsCollaborativeSync;
-                    console.log(`Kept local node (no server sync): ${node.id}:${node.type}`);
                 });
             } else {
                 console.error('Unexpected error during conversion, cleaning up local duplicates');
                 // For other errors, remove the local duplicates to prevent phantom nodes
                 const stillPendingNodes = this.graph.nodes.filter(node => node._needsCollaborativeSync);
                 stillPendingNodes.forEach(node => {
-                    console.log(`Cleaning up failed duplicate: ${node.id}:${node.type}`);
                     this.selection.deselectNode(node);
                     this.graph.remove(node);
                 });
@@ -1846,11 +1833,11 @@ class LGraphCanvas {
                 const nodeIds = selected.map(n => n.id);
                 const positions = selected.map(n => [...n.pos]);
                 
-                // Send as a single batch move operation
+                // Send as a single batch move operation with alignment source
                 window.app.operationPipeline.execute('node_move', {
                     nodeIds: nodeIds,
                     positions: positions
-                });
+                }, { source: 'alignment' });
             }
         }
     }
@@ -2251,6 +2238,8 @@ class LGraphCanvas {
         
         // Create WYSIWYG textarea overlay
         const textarea = document.createElement('textarea');
+        textarea.name = `text-edit-${node.id}`;
+        textarea.id = `text-edit-${node.id}`;
         textarea.value = node.properties.text || '';
         textarea.style.position = 'fixed';
         textarea.style.zIndex = '10000';
@@ -2494,7 +2483,12 @@ class LGraphCanvas {
     }
     
     undo() {
-        if (this.stateManager && typeof this.stateManager.undo === 'function') {
+        // Use new hybrid undo/redo manager if available
+        if (window.app?.undoRedoManager) {
+            window.app.undoRedoManager.undo();
+        } 
+        // Fallback to state manager (which is disabled)
+        else if (this.stateManager && typeof this.stateManager.undo === 'function') {
             const success = this.stateManager.undo(this.graph, this);
             if (success) {
                 this.selection.clear();
@@ -2509,12 +2503,17 @@ class LGraphCanvas {
                 }
             }
         } else {
-            console.warn('State manager not available for undo');
+            console.warn('Undo/redo manager not available');
         }
     }
     
     redo() {
-        if (this.stateManager && typeof this.stateManager.redo === 'function') {
+        // Use new hybrid undo/redo manager if available
+        if (window.app?.undoRedoManager) {
+            window.app.undoRedoManager.redo();
+        }
+        // Fallback to state manager (which is disabled)
+        else if (this.stateManager && typeof this.stateManager.redo === 'function') {
             const success = this.stateManager.redo(this.graph, this);
             if (success) {
                 this.selection.clear();
@@ -2529,7 +2528,7 @@ class LGraphCanvas {
                 }
             }
         } else {
-            console.warn('State manager not available for redo');
+            console.warn('Undo/redo manager not available');
         }
     }
     

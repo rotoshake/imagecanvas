@@ -41,7 +41,7 @@ class ImageCanvasServer {
         this.io = socketIo(this.server, {
             cors: {
                 origin: ["http://localhost:8000", "http://127.0.0.1:8000", "http://localhost:8080", "http://127.0.0.1:8080"],
-                methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+                methods: ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
                 credentials: true
             },
             // Allow multiple connections from same origin
@@ -73,7 +73,7 @@ class ImageCanvasServer {
         this.app.use(cors({
             origin: ["http://localhost:8000", "http://127.0.0.1:8000", "http://localhost:8080", "http://127.0.0.1:8080"],
             credentials: true,
-            methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+            methods: ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
             allowedHeaders: ["Content-Type", "Authorization"]
         }));
         
@@ -132,7 +132,37 @@ class ImageCanvasServer {
             `);
         });
 
-        // File upload endpoint
+        // API upload endpoint for new HTTP upload system
+        this.app.post('/api/upload', this.uploadMiddleware, async (req, res) => {
+            try {
+                if (!req.file) {
+                    return res.status(400).json({ error: 'No file uploaded' });
+                }
+
+                const hash = req.body.hash || crypto.createHash('sha256').update(await fs.readFile(req.file.path)).digest('hex');
+                
+                // Generate thumbnails for images
+                if (req.file.mimetype.startsWith('image/')) {
+                    await this.generateThumbnails(req.file.path, req.file.filename);
+                }
+
+                // Return the URL for the uploaded file
+                res.json({
+                    success: true,
+                    url: `/uploads/${req.file.filename}`,
+                    hash: hash,
+                    filename: req.file.originalname,
+                    size: req.file.size
+                });
+
+                console.log(`✅ Image uploaded via API: ${req.file.originalname} -> ${req.file.filename}`);
+            } catch (error) {
+                console.error('Upload error:', error);
+                res.status(500).json({ error: 'Upload failed', details: error.message });
+            }
+        });
+
+        // File upload endpoint (legacy)
         this.app.post('/upload', this.uploadMiddleware, async (req, res) => {
             try {
                 if (!req.file) {
@@ -364,7 +394,20 @@ class ImageCanvasServer {
                 }
                 
                 // Parse existing canvas data or create new structure
-                let canvasData = project.canvas_data ? JSON.parse(project.canvas_data) : {};
+                let canvasData = {};
+                try {
+                    if (project.canvas_data) {
+                        canvasData = JSON.parse(project.canvas_data);
+                    }
+                } catch (error) {
+                    console.error('Failed to parse canvas_data:', error);
+                    canvasData = {};
+                }
+                
+                // Ensure canvasData is an object
+                if (!canvasData || typeof canvasData !== 'object') {
+                    canvasData = {};
+                }
                 
                 // Update navigation state
                 canvasData.navigation_state = navigation_state;

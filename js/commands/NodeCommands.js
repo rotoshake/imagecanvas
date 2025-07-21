@@ -212,12 +212,27 @@ class CreateNodeCommand extends Command {
         }
         
         // Handle media nodes
-        if (node.type === 'media/image' && this.params.imageData) {
-            await node.setImage(
-                this.params.imageData.src,
-                this.params.imageData.filename,
-                this.params.imageData.hash
-            );
+        if (node.type === 'media/image') {
+            if (this.params.properties && this.params.properties.serverUrl) {
+                // Image already uploaded, use server URL
+                // Construct full URL if it's a relative path
+                const url = this.params.properties.serverUrl.startsWith('http') 
+                    ? this.params.properties.serverUrl 
+                    : CONFIG.SERVER.API_BASE + this.params.properties.serverUrl;
+                    
+                await node.setImage(
+                    url,
+                    this.params.properties.filename,
+                    this.params.properties.hash
+                );
+            } else if (this.params.imageData) {
+                // Legacy: embedded image data
+                await node.setImage(
+                    this.params.imageData.src,
+                    this.params.imageData.filename,
+                    this.params.imageData.hash
+                );
+            }
         } else if (node.type === 'media/video' && this.params.videoData) {
             await node.setVideo(
                 this.params.videoData.src,

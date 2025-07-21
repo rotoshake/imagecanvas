@@ -672,8 +672,11 @@ class CanvasNavigator {
                     }
                     
                     // Show success
-                    if (this.networkLayer) {
-                        this.networkLayer.showStatus('Canvas loaded', 'success');
+                    if (this.app.showNotification) {
+                        this.app.showNotification({
+                            type: 'success',
+                            message: 'Canvas loaded'
+                        });
                     }
                 } else {
                     console.log('📭 No canvas data found - starting with empty canvas');
@@ -775,8 +778,11 @@ class CanvasNavigator {
             console.log('✅ Canvas deleted successfully');
             
             // Show success message
-            if (this.networkLayer) {
-                this.networkLayer.showStatus('Canvas deleted successfully', 'success');
+            if (this.app.showNotification) {
+                this.app.showNotification({
+                    type: 'success',
+                    message: 'Canvas deleted successfully'
+                });
             }
         } catch (error) {
             console.error('Failed to delete canvas:', error);
@@ -830,8 +836,11 @@ class CanvasNavigator {
             this.loadCanvases();
             
             // Show success message
-            if (this.networkLayer) {
-                this.networkLayer.showStatus(`Duplicated canvas: ${name}`, 'success');
+            if (this.app.showNotification) {
+                this.app.showNotification({
+                    type: 'success',
+                    message: `Duplicated canvas: ${name}`
+                });
             }
         } catch (error) {
             console.error('Failed to duplicate canvas:', error);
@@ -893,6 +902,8 @@ class CanvasNavigator {
         const input = document.createElement('input');
         input.type = 'text';
         input.className = 'canvas-title-input';
+        input.name = 'canvas-title';
+        input.id = `canvas-title-${canvas.id}`;
         input.value = currentName;
         input.style.cssText = `
             width: 100%;
@@ -970,8 +981,11 @@ class CanvasNavigator {
             this.renderCanvasList();
             
             // Show success
-            if (this.networkLayer) {
-                this.networkLayer.showStatus(`Renamed to "${newName}"`, 'success');
+            if (this.app.showNotification) {
+                this.app.showNotification({
+                    type: 'success',
+                    message: `Renamed to "${newName}"`
+                });
             }
         } catch (error) {
             console.error('Failed to rename canvas:', error);
@@ -1166,8 +1180,11 @@ class CanvasNavigator {
             await this.loadCanvases();
             
             // Show welcome message
-            if (this.networkLayer) {
-                this.networkLayer.showStatus('Welcome! Your first canvas has been created.', 'success');
+            if (this.app.showNotification) {
+                this.app.showNotification({
+                    type: 'success',
+                    message: 'Welcome! Your first canvas has been created.'
+                });
             }
             
             return newCanvas;
@@ -1247,8 +1264,11 @@ class CanvasNavigator {
     // Manual save method
     async saveCanvas() {
         const saved = await this.saveCanvasToServer();
-        if (saved && this.networkLayer) {
-            this.networkLayer.showStatus('Canvas saved', 'success');
+        if (saved && this.app.showNotification) {
+            this.app.showNotification({
+                type: 'success',
+                message: 'Canvas saved'
+            });
         }
         return saved;
     }

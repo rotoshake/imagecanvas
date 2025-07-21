@@ -254,12 +254,14 @@ class CleanupManager {
      * Setup global cleanup on page unload
      */
     setupGlobalCleanup() {
-        // Use both events for better coverage
-        window.addEventListener('beforeunload', () => {
+        // Use pagehide instead of unload (unload is deprecated)
+        window.addEventListener('pagehide', (event) => {
+            // pagehide fires when user navigates away
             this.cleanup();
         });
         
-        window.addEventListener('unload', () => {
+        // Keep beforeunload for additional coverage
+        window.addEventListener('beforeunload', () => {
             this.cleanup();
         });
         
