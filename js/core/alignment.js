@@ -506,9 +506,9 @@ class AutoAlignmentManager {
                 }
                 
                 // Broadcast position updates for collaboration
-                if (nodeIds.length > 0 && this.canvas.actionManager && this.canvas.collaborativeManager?.isConnected) {
-                    // Send batch move operation
-                    this.canvas.collaborativeManager.sendOperation('node_move', {
+                if (nodeIds.length > 0 && window.app?.operationPipeline) {
+                    // Send batch move operation through unified pipeline
+                    window.app.operationPipeline.execute('node_move', {
                         nodeIds: nodeIds,
                         positions: finalPositions
                     });
@@ -590,9 +590,9 @@ class AutoAlignmentManager {
                 }
                 
                 // Broadcast position updates for collaboration
-                if (nodeIds.length > 0 && this.canvas.actionManager && this.canvas.collaborativeManager?.isConnected) {
-                    // Send batch move operation
-                    this.canvas.collaborativeManager.sendOperation('node_move', {
+                if (nodeIds.length > 0 && window.app?.operationPipeline) {
+                    // Send batch move operation through unified pipeline
+                    window.app.operationPipeline.execute('node_move', {
                         nodeIds: nodeIds,
                         positions: finalPositions
                     });

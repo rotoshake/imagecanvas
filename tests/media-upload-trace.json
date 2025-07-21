@@ -1,5 +1,0 @@
-{
-  "issue": "Parameter mismatch in applyNodeCreate duplicate check",
-  "location": "collaborative.js line ~449",
-  "fix": "Change data.node.id to data.nodeData.id"
-}

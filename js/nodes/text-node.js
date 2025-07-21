@@ -153,6 +153,41 @@ class TextNode extends BaseNode {
         return Math.max(1, lineCount);
     }
     
+    validate() {
+        // Add bounds check
+        if (this.size[0] < this.minSize[0]) this.size[0] = this.minSize[0];
+        if (this.size[1] < this.minSize[1]) this.size[1] = this.minSize[1];
+        
+        // Ensure all properties have valid values
+        if (!this.properties.textAlign) {
+            this.properties.textAlign = 'left';
+        }
+        if (!this.properties.fontFamily) {
+            this.properties.fontFamily = 'Arial';
+        }
+        if (typeof this.properties.fontSize !== 'number') {
+            this.properties.fontSize = 16;
+        }
+        if (typeof this.properties.leadingFactor !== 'number') {
+            this.properties.leadingFactor = 1.0;
+        }
+        if (typeof this.properties.bgAlpha !== 'number') {
+            this.properties.bgAlpha = 0.0;
+        }
+        if (typeof this.properties.padding !== 'number') {
+            this.properties.padding = 10;
+        }
+        if (!this.properties.bgColor) {
+            this.properties.bgColor = '#fff';
+        }
+        if (!this.properties.textColor) {
+            this.properties.textColor = '#fff';
+        }
+        if (this.properties.text === undefined || this.properties.text === null) {
+            this.properties.text = '';
+        }
+    }
+    
     onDrawForeground(ctx) {
         this.validate();
         

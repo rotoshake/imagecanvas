@@ -33,26 +33,13 @@ class ImageCanvasApp {
             NodeFactory.registerNodeType('media/video', VideoNode);
             NodeFactory.registerNodeType('media/text', TextNode);
             
-            // Load saved state
-            await this.stateManager.loadState(this.graph, this.graphCanvas);
+            // State will be loaded from server when joining a project
+            // No local state loading needed with server-authoritative sync
+            console.log('📥 State will be loaded from server');
             
-            // Initialize collaborative features (Phase 2)
-            if (typeof CollaborativeManager !== 'undefined') {
-                this.collaborativeManager = new CollaborativeManager(this);
-                
-                // Initialize the collaborative manager
-                await this.collaborativeManager.initialize();
-                
-                // Connect collaborative manager to canvas for operation broadcasting
-                this.graphCanvas.collaborativeManager = this.collaborativeManager;
-                
-                // Set up action manager
-                this.graphCanvas.setActionManager(this.collaborativeManager);
-                
-                console.log('🤝 Collaborative features initialized');
-            } else {
-                console.log('📱 Running in single-user mode (collaborative features not loaded)');
-            }
+            // Collaborative features are now handled by CollaborativeArchitecture
+            // which is automatically initialized by AutoInit.js
+            console.log('🤝 Collaborative features handled by new architecture');
             
             // Setup auto-save
             this.setupAutoSave();
@@ -69,16 +56,8 @@ class ImageCanvasApp {
     }
     
     setupAutoSave() {
-        // Save state periodically
-        this.autoSaveInterval = setInterval(() => {
-            this.stateManager.saveState(this.graph, this.graphCanvas);
-        }, 10000);
-        
-        // Save on page unload
-        this.beforeUnloadHandler = () => {
-            this.stateManager.saveState(this.graph, this.graphCanvas);
-        };
-        window.addEventListener('beforeunload', this.beforeUnloadHandler);
+        // Auto-save disabled - server handles all persistence with state sync
+        console.log('💾 Client-side auto-save disabled (server-authoritative mode)');
     }
     
     setupCleanup() {
@@ -89,6 +68,8 @@ class ImageCanvasApp {
     }
     
     cleanup() {
+        console.log('🧹 Cleaning up ImageCanvasApp...');
+        
         if (this.autoSaveInterval) {
             clearInterval(this.autoSaveInterval);
         }
@@ -101,9 +82,36 @@ class ImageCanvasApp {
             window.removeEventListener('beforeunload', this.cleanupHandler);
         }
         
+        // Clean up components
         if (this.graphCanvas) {
             this.graphCanvas.cleanup();
         }
+        
+        if (this.dragDropManager?.cleanup) {
+            this.dragDropManager.cleanup();
+        }
+        
+        
+        if (this.networkLayer?.cleanup) {
+            this.networkLayer.cleanup();
+        }
+        
+        if (this.stateSyncManager?.cleanup) {
+            this.stateSyncManager.cleanup();
+        }
+        
+        if (this.operationPipeline?.cleanup) {
+            this.operationPipeline.cleanup();
+        }
+        
+        // Clear references
+        this.graph = null;
+        this.graphCanvas = null;
+        this.dragDropManager = null;
+        this.stateManager = null;
+        this.networkLayer = null;
+        this.stateSyncManager = null;
+        this.operationPipeline = null;
     }
     
     logControls() {
@@ -209,6 +217,9 @@ class NodeFactory {
     }
 }
 
+// Export NodeFactory globally
+window.NodeFactory = NodeFactory;
+
 // ===================================
 // GLOBAL INSTANCES AND COMPATIBILITY
 // ===================================
@@ -246,17 +257,33 @@ async function initApp() {
         app.canvasNavigator = new CanvasNavigator(app);
         window.canvasNavigator = app.canvasNavigator;
         
+        // Initialize Floating Properties Inspector
+        app.propertiesInspector = new FloatingPropertiesInspector(app.graphCanvas);
+        window.propertiesInspector = app.propertiesInspector;
+        
         // Load last canvas or create default
-        // Increase delay to ensure collaborative manager is ready
+        // Wait for network connection and architecture initialization
         setTimeout(() => {
-            console.log('🚀 Loading startup canvas...');
-            console.log('📊 Collaborative manager status:', {
-                exists: !!app.collaborativeManager,
-                isConnected: app.collaborativeManager?.isConnected,
-                isConnecting: app.collaborativeManager?.isConnecting
-            });
-            app.canvasNavigator.loadStartupCanvas();
-        }, 1000);
+            console.log('🚀 Preparing to load startup canvas...');
+            
+            // Check if collaborative architecture is ready
+            const checkAndLoad = () => {
+                if (app.collaborativeArchitecture?.initialized) {
+                    console.log('✅ Collaborative architecture ready');
+                    console.log('📊 Network status:', {
+                        hasNetworkLayer: !!app.networkLayer,
+                        isConnected: app.networkLayer?.isConnected,
+                        hasStateSyncManager: !!app.stateSyncManager
+                    });
+                    app.canvasNavigator.loadStartupCanvas();
+                } else {
+                    console.log('⏳ Waiting for collaborative architecture...');
+                    setTimeout(checkAndLoad, 500);
+                }
+            };
+            
+            checkAndLoad();
+        }, 500);
         
     } catch (error) {
         console.error('Failed to initialize application:', error);

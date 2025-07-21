@@ -147,12 +147,15 @@ class ImageNode extends BaseNode {
     }
     
     onResize() {
-        if (this.aspectRatio === this.originalAspect) {
+        const currentAspect = this.size[0] / this.size[1];
+        const tolerance = 0.001; // Small tolerance for floating point comparison
+        
+        if (Math.abs(this.aspectRatio - this.originalAspect) < tolerance) {
             // Maintain original aspect ratio
             this.size[1] = this.size[0] / this.aspectRatio;
         } else {
             // Update aspect ratio for non-uniform scaling
-            this.aspectRatio = this.size[0] / this.size[1];
+            this.aspectRatio = currentAspect;
         }
     }
     

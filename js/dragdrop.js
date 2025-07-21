@@ -131,24 +131,78 @@ class DragDropManager {
                 // Yield control to keep UI responsive - use requestAnimationFrame for better timing
                 await new Promise(resolve => requestAnimationFrame(resolve));
                 
-                const node = await this.createNodeFromFile(file, dropPos, i * cascadeOffset);
-                if (node) {
-                    // Only add to graph if node creation was successful
-                    this.graph.add(node);
-                    newNodes.push(node);
-                    
-                    // Handle broadcasting based on node type
-                    if (node._uploadedViaCollaboration) {
-                        // Already broadcast via media_uploaded event
-                        console.log('✅ Node uploaded and broadcast via server');
-                    } else if (node._isLocalOnly && this.graph.canvas) {
-                        // Local-only node - don't broadcast in collaborative mode
-                        console.log('📍 Local-only node, not broadcasting');
-                        // Could show a warning that this won't sync
-                        this.showMessage('Image saved locally only (not synced)', 'warning');
-                    } else if (this.graph.canvas) {
-                        // This shouldn't happen with new flow
-                        console.warn('⚠️ Unexpected node state');
+                const nodeData = await this.createNodeFromFile(file, dropPos, i * cascadeOffset);
+                if (nodeData) {
+                    if (window.app?.operationPipeline) {
+                        // Use OperationPipeline for proper state sync
+                        console.log('🔄 Creating node via OperationPipeline...', {
+                            type: nodeData.type,
+                            pos: nodeData.pos
+                        });
+                        try {
+                            const result = await window.app.operationPipeline.execute('node_create', {
+                                type: nodeData.type,
+                                pos: [...nodeData.pos],
+                                size: [...nodeData.size],
+                                properties: { ...nodeData.properties },
+                                imageData: nodeData.type === 'media/image' ? {
+                                    src: nodeData.dataURL,
+                                    filename: nodeData.properties.filename,
+                                    hash: nodeData.properties.hash
+                                } : undefined,
+                                videoData: nodeData.type === 'media/video' ? {
+                                    src: nodeData.dataURL,
+                                    filename: nodeData.properties.filename,
+                                    hash: nodeData.properties.hash
+                                } : undefined
+                            });
+                            
+                            if (result.success && result.result?.node) {
+                                const createdNode = result.result.node;
+                                newNodes.push(createdNode);
+                                console.log('✅ Node created via OperationPipeline, ID:', createdNode.id);
+                            } else {
+                                console.error('❌ OperationPipeline returned no node');
+                            }
+                        } catch (error) {
+                            console.error('Failed to create node via pipeline:', error);
+                            // Fallback to direct creation for offline mode
+                            const node = NodeFactory.createNode(nodeData.type);
+                            if (node) {
+                                node.pos = [...nodeData.pos];
+                                node.size = [...nodeData.size];
+                                node.properties = { ...nodeData.properties };
+                                
+                                // Load the media
+                                if (nodeData.type === 'media/video') {
+                                    await node.setVideo(nodeData.dataURL, nodeData.properties.filename, nodeData.properties.hash);
+                                } else {
+                                    await node.setImage(nodeData.dataURL, nodeData.properties.filename, nodeData.properties.hash);
+                                }
+                                
+                                this.graph.add(node);
+                                newNodes.push(node);
+                            }
+                        }
+                    } else {
+                        // No pipeline available - create locally
+                        console.log('📍 Creating node directly (no pipeline)');
+                        const node = NodeFactory.createNode(nodeData.type);
+                        if (node) {
+                            node.pos = [...nodeData.pos];
+                            node.size = [...nodeData.size];
+                            node.properties = { ...nodeData.properties };
+                            
+                            // Load the media
+                            if (nodeData.type === 'media/video') {
+                                await node.setVideo(nodeData.dataURL, nodeData.properties.filename, nodeData.properties.hash);
+                            } else {
+                                await node.setImage(nodeData.dataURL, nodeData.properties.filename, nodeData.properties.hash);
+                            }
+                            
+                            this.graph.add(node);
+                            newNodes.push(node);
+                        }
                     }
                     
                     // Trigger redraw to show new node immediately
@@ -190,116 +244,29 @@ class DragDropManager {
         const isVideo = file.type.startsWith('video/') || file.type === 'image/gif';
         const nodeType = isVideo ? 'media/video' : 'media/image';
         
-        // Check if collaborative features are available
-        const collaborativeManager = window.app?.collaborativeManager;
-        if (collaborativeManager && collaborativeManager.isConnected && collaborativeManager.currentProject) {
-            console.log('📤 Attempting collaborative upload for:', file.name);
-            
-            try {
-                // Generate a temporary ID for the node
-                const tempNodeId = 'node_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
-                
-                // Prepare node data for collaborative upload
-                const nodeData = {
-                    id: tempNodeId,
-                    type: nodeType,
-                    pos: [
-                        basePos[0] - 100 + offset, // Default size 200x200, so -100 to center
-                        basePos[1] - 100 + offset
-                    ],
-                    size: [200, 200],
-                    title: file.name,
-                    properties: {
-                        filename: file.name,
-                        hash: null // Will be generated server-side
-                    },
-                    flags: { hide_title: true },
-                    aspectRatio: 1,
-                    rotation: 0,
-                    projectId: collaborativeManager.currentProject.id
-                };
-                
-                // Upload to server FIRST - this will broadcast to other users
-                const uploadResult = await collaborativeManager.uploadMedia(file, nodeData);
-                
-                if (uploadResult && uploadResult.success) {
-                    const mediaUrl = `${CONFIG.SERVER.API_BASE}${uploadResult.mediaUrl}`;
-                    
-                    // NOW create the node with the server URL
-                    const node = NodeFactory.createNode(nodeType);
-                    if (!node) {
-                        throw new Error(`Failed to create ${nodeType} node`);
-                    }
-                    
-                    // Set all properties
-                    node.id = tempNodeId; // Use the same ID
-                    node.pos = nodeData.pos;
-                    node.size = nodeData.size;
-                    node.properties.hash = uploadResult.fileInfo.file_hash;
-                    node.properties.filename = uploadResult.fileInfo.original_name;
-                    node.properties.serverFilename = uploadResult.fileInfo.filename;
-                    
-                    // Load the media from server URL
-                    if (isVideo) {
-                        await node.setVideo(mediaUrl, file.name, uploadResult.fileInfo.file_hash);
-                    } else {
-                        await node.setImage(mediaUrl, file.name, uploadResult.fileInfo.file_hash);
-                    }
-                    
-                    // Mark that this node was uploaded via collaboration
-                    node._uploadedViaCollaboration = true;
-                    
-                    console.log('✅ Collaborative upload successful, node created with server URL');
-                    return node;
-                } else {
-                    throw new Error('Upload failed: ' + (uploadResult?.error || 'Unknown error'));
-                }
-            } catch (error) {
-                console.error('❌ Collaborative upload error:', error);
-                // In collaborative mode, we do NOT fall back to local
-                // Show error to user
-                this.showErrorMessage(`Failed to upload ${file.name}: ${error.message}`);
-                return null; // Return null to indicate failure
-            }
-        } else {
-            // Not in collaborative mode or not connected
-            console.log('📱 Using local processing for:', file.name);
-            
-            // Create node for local use only
-            const node = NodeFactory.createNode(nodeType);
-            if (!node) {
-                throw new Error(`Failed to create ${nodeType} node`);
-            }
-            
-            // Set position
-            node.pos = [
-                basePos[0] - node.size[0] / 2 + offset,
-                basePos[1] - node.size[1] / 2 + offset
-            ];
-            
-            // Process file locally
-            const dataURL = await this.fileToDataURL(file);
-            const hash = await HashUtils.hashImageData(dataURL);
-            
-            // Cache the media locally
-            window.imageCache.set(hash, dataURL);
-            
-            // Set node properties
-            node.properties.hash = hash;
-            node.properties.filename = file.name;
-            
-            // Load the media locally
-            if (isVideo) {
-                await node.setVideo(dataURL, file.name, hash);
-            } else {
-                await node.setImage(dataURL, file.name, hash);
-            }
-            
-            // Mark as local-only
-            node._isLocalOnly = true;
-            
-            return node;
-        }
+        // Process file to get data URL and hash
+        console.log('📱 Processing file for state sync:', file.name);
+        const dataURL = await this.fileToDataURL(file);
+        const hash = await HashUtils.hashImageData(dataURL);
+        
+        // Cache the media locally
+        window.imageCache.set(hash, dataURL);
+        
+        // Return node data for OperationPipeline, not an actual node
+        return {
+            type: nodeType,
+            pos: [
+                basePos[0] - 100 + offset, // Default size 200x200, so -100 to center
+                basePos[1] - 100 + offset
+            ],
+            size: [200, 200],
+            properties: {
+                filename: file.name,
+                hash: hash,
+                src: dataURL
+            },
+            dataURL: dataURL // Pass this for loading after node creation
+        };
     }
     
     fileToDataURL(file) {

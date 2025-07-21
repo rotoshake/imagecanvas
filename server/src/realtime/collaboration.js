@@ -1,4 +1,5 @@
 const { v4: uuidv4 } = require('uuid');
+const CanvasStateManager = require('./CanvasStateManager');
 
 /**
  * Fixed Collaboration Manager - Supports multiple tabs per user
@@ -6,11 +7,15 @@ const { v4: uuidv4 } = require('uuid');
  * 1. Each tab gets a unique socket connection
  * 2. Multiple tabs can share the same user account
  * 3. Operations sync across all tabs of the same user
+ * 4. Server maintains authoritative state
  */
 class CollaborationManager {
     constructor(io, db) {
         this.io = io;
         this.db = db;
+        
+        // State manager for authoritative canvas state
+        this.stateManager = new CanvasStateManager(db);
         
         // Track sessions by socket ID
         this.socketSessions = new Map(); // socketId -> session info
@@ -37,9 +42,18 @@ class CollaborationManager {
                 await this.handleLeaveProject(socket, data);
             });
             
-            // Canvas operations
+            // Canvas operations (legacy)
             socket.on('canvas_operation', async (data) => {
                 await this.handleCanvasOperation(socket, data);
+            });
+            
+            // State-based operations (new)
+            socket.on('execute_operation', async (data) => {
+                await this.handleExecuteOperation(socket, data);
+            });
+            
+            socket.on('request_full_sync', async (data) => {
+                await this.handleRequestFullSync(socket, data);
             });
             
             // Sync operations
@@ -208,6 +222,13 @@ class CollaborationManager {
             operation.sequence
         );
         
+        // Apply operation to state manager for persistence
+        try {
+            await this.applyOperationToState(projectId, operation);
+        } catch (error) {
+            console.error('❌ Failed to apply operation to state manager:', error);
+        }
+        
         // Broadcast to ALL sockets in the room (including sender's other tabs)
         this.io.to(`project_${projectId}`).emit('canvas_operation', {
             operation: operation,
@@ -217,6 +238,66 @@ class CollaborationManager {
         });
         
         console.log(`📤 Operation ${operation.type} from ${session.username} (${session.tabId})`);
+    }
+    
+    /**
+     * Apply canvas operation to state manager for persistence
+     */
+    async applyOperationToState(projectId, operation) {
+        // Convert legacy canvas operation to state manager format
+        const stateOperation = this.convertToStateOperation(operation);
+        
+        if (stateOperation) {
+            const result = await this.stateManager.executeOperation(projectId, stateOperation, operation.userId);
+            return result;
+        } else {
+            console.warn(`⚠️ No state operation created for canvas operation:`, operation.type);
+        }
+    }
+    
+    /**
+     * Convert legacy canvas operation to state manager operation format
+     */
+    convertToStateOperation(operation) {
+        switch (operation.type) {
+            case 'add':
+                return {
+                    type: 'node_create',
+                    params: {
+                        id: operation.data.id,
+                        type: operation.data.type,
+                        pos: [operation.data.x || 0, operation.data.y || 0],
+                        size: [operation.data.width || 150, operation.data.height || 100],
+                        title: operation.data.content || operation.data.src || '',
+                        properties: {
+                            ...operation.data,
+                            content: operation.data.content,
+                            src: operation.data.src
+                        }
+                    }
+                };
+            
+            case 'update':
+                return {
+                    type: 'node_property_update',
+                    params: {
+                        nodeId: operation.data.id,
+                        properties: operation.data
+                    }
+                };
+            
+            case 'delete':
+                return {
+                    type: 'node_delete',
+                    params: {
+                        nodeId: operation.data.id
+                    }
+                };
+            
+            default:
+                console.warn('Unknown canvas operation type for state conversion:', operation.type);
+                return null;
+        }
     }
     
     async handleSyncCheck(socket, { projectId, lastSequence }) {
@@ -317,6 +398,95 @@ class CollaborationManager {
         // Similar to disconnect but initiated by user
         this.handleDisconnect(socket);
         socket.emit('project_left', { projectId });
+    }
+    
+    /**
+     * Handle state-based operation execution
+     */
+    async handleExecuteOperation(socket, data) {
+        const { operationId, type, params, stateVersion } = data;
+        const session = this.socketSessions.get(socket.id);
+        
+        if (!session) {
+            socket.emit('operation_rejected', {
+                operationId,
+                error: 'Not authenticated'
+            });
+            return;
+        }
+        
+        const projectId = session.projectId;
+        
+        try {
+            // Execute operation on server state
+            const result = await this.stateManager.executeOperation(
+                projectId,
+                { type, params },
+                session.userId
+            );
+            
+            if (result.success) {
+                // Send acknowledgment to originator
+                socket.emit('operation_ack', {
+                    operationId,
+                    stateVersion: result.stateVersion
+                });
+                
+                // Broadcast state update to all clients in project
+                this.io.to(`project_${projectId}`).emit('state_update', {
+                    stateVersion: result.stateVersion,
+                    changes: result.changes,
+                    operationId,
+                    fromUserId: session.userId,
+                    fromTabId: session.tabId
+                });
+                
+                console.log(`✅ Operation ${type} executed, new version: ${result.stateVersion}`);
+            } else {
+                // Reject operation
+                socket.emit('operation_rejected', {
+                    operationId,
+                    error: result.error,
+                    stateVersion: result.stateVersion
+                });
+                
+                console.log(`❌ Operation ${type} rejected: ${result.error}`);
+            }
+        } catch (error) {
+            console.error('Error executing operation:', error);
+            socket.emit('operation_rejected', {
+                operationId,
+                error: 'Internal server error'
+            });
+        }
+    }
+    
+    /**
+     * Handle full state sync request
+     */
+    async handleRequestFullSync(socket, data) {
+        const session = this.socketSessions.get(socket.id);
+        if (!session) {
+            socket.emit('error', { message: 'Not authenticated' });
+            return;
+        }
+        
+        const projectId = data.projectId || session.projectId;
+        
+        try {
+            // Get full state from state manager
+            const fullState = await this.stateManager.getFullState(projectId);
+            
+            socket.emit('full_state_sync', {
+                state: fullState,
+                stateVersion: fullState.version
+            });
+            
+            console.log(`📤 Sent full state sync to ${session.username}, version: ${fullState.version}`);
+        } catch (error) {
+            console.error('Error sending full state sync:', error);
+            socket.emit('error', { message: 'Failed to sync state' });
+        }
     }
 }
 

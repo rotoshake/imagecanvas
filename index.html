@@ -32,7 +32,7 @@
     
     <!-- Main application -->
     <script src="js/graph.js"></script>
-    <script src="js/actions/CanvasActionManager.js"></script>
+    <!-- CanvasActionManager removed - actions now handled by OperationPipeline -->
     
     <!-- Performance optimization components (Phase 3) -->
     <script src="js/actions/OperationBatcher.js"></script>
@@ -63,28 +63,32 @@
     <script src="js/actions/ConnectionStateMachine.js"></script>
     <script src="js/actions/ResourceManager.js"></script>
     <script src="js/actions/ErrorBoundary.js"></script>
-    <script src="js/actions/TransactionManager.js"></script>
-    <script src="js/actions/UnifiedOperationHandler.js"></script>
-    <script src="js/collaborative.js"></script>
+    <!-- Legacy collaborative systems removed - now using new architecture -->
     
     <!-- New Collaborative Architecture -->
     <script src="js/commands/Command.js"></script>
     <script src="js/commands/NodeCommands.js"></script>
+    <script src="js/commands/NodeCommandsExtended.js"></script>
+    <script src="js/core/CleanupManager.js"></script>
+    <script src="js/core/OperationDependencyTracker.js"></script>
     <script src="js/core/OperationPipeline.js"></script>
     <script src="js/core/NetworkLayer.js"></script>
-    <script src="js/core/MigrationAdapter.js"></script>
+    <!-- MigrationAdapter no longer needed after full migration -->
     <script src="js/core/PersistenceHandler.js"></script>
+    <script src="js/core/StateSyncManager.js"></script>
+    <!-- UniversalOperationRouter no longer needed after full migration -->
     <script src="js/core/CollaborativeArchitecture.js"></script>
     <script src="js/core/CanvasIntegration.js"></script>
     <script src="js/core/AutoInit.js"></script>
     
     <!-- UI Components -->
     <script src="js/ui/canvas-navigator.js"></script>
+    <script src="js/ui/floating-properties-inspector.js"></script>
+    <script src="js/ui/connection-status.js"></script>
     
     <script src="js/app.js"></script>
     
-    <!-- Disable legacy systems to prevent conflicts -->
-    <script src="js/core/DisableLegacySystems.js"></script>
+    <!-- DisableLegacySystems no longer needed after full migration -->
     
     <!-- Initialize global error boundary -->
     <script>

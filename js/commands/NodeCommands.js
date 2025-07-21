@@ -194,6 +194,23 @@ class CreateNodeCommand extends Command {
             Object.assign(node.properties, this.params.properties);
         }
         
+        // Apply additional node attributes for duplication support
+        if (this.params.title !== undefined) {
+            node.title = this.params.title;
+        }
+        
+        if (this.params.rotation !== undefined) {
+            node.rotation = this.params.rotation;
+        }
+        
+        if (this.params.aspectRatio !== undefined) {
+            node.aspectRatio = this.params.aspectRatio;
+        }
+        
+        if (this.params.flags) {
+            Object.assign(node.flags, this.params.flags);
+        }
+        
         // Handle media nodes
         if (node.type === 'media/image' && this.params.imageData) {
             await node.setImage(
@@ -251,7 +268,7 @@ class DeleteNodeCommand extends Command {
     }
     
     async execute(context) {
-        const { graph } = context;
+        const { graph, canvas } = context;
         
         // Store nodes for undo
         this.undoData = { nodes: [] };
@@ -270,6 +287,11 @@ class DeleteNodeCommand extends Command {
                     flags: { ...node.flags },
                     title: node.title
                 });
+                
+                // Clear from selection if selected
+                if (canvas?.selection) {
+                    canvas.selection.deselectNode(node);
+                }
                 
                 // Remove from graph
                 graph.remove(node);

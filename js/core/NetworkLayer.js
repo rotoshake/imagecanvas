@@ -20,6 +20,9 @@ class NetworkLayer {
         this.sessionId = this.generateSessionId();
         this.tabId = window.__imageCanvasTabId || this.generateTabId();
         
+        // Event handlers for state-based sync
+        this.eventHandlers = new Map();
+        
         console.log(`🌐 NetworkLayer initialized (tab: ${this.tabId})`);
     }
     
@@ -54,6 +57,11 @@ class NetworkLayer {
                 
                 console.log(`🔌 Attempting to connect to ${this.serverUrl}...`);
                 
+                // Update status to connecting
+                if (this.app.updateConnectionStatus) {
+                    this.app.updateConnectionStatus('connecting');
+                }
+                
                 this.socket = io(this.serverUrl, {
                     transports: ['websocket'],
                     reconnection: true,
@@ -68,6 +76,11 @@ class NetworkLayer {
                     this.reconnectAttempts = 0;
                     console.log('✅ Connected to server');
                     
+                    // Update status to connected
+                    if (this.app.updateConnectionStatus) {
+                        this.app.updateConnectionStatus('connected');
+                    }
+                    
                     // Send session info
                     this.socket.emit('session_init', {
                         sessionId: this.sessionId,
@@ -81,6 +94,12 @@ class NetworkLayer {
                 this.socket.on('connect_error', (error) => {
                     this.reconnectAttempts++;
                     console.error('❌ Connection error:', error.message);
+                    
+                    // Update status to error
+                    if (this.app.updateConnectionStatus) {
+                        this.app.updateConnectionStatus('error');
+                    }
+                    
                     if (this.reconnectAttempts === 1) {
                         reject(error);
                     }
@@ -113,10 +132,10 @@ class NetworkLayer {
             }
         });
         
-        // Operation events - server emits 'canvas_operation'
-        this.socket.on('canvas_operation', (data) => {
-            this.handleIncomingOperation(data);
-        });
+        // Operation events - DISABLED in favor of state sync
+        // this.socket.on('canvas_operation', (data) => {
+        //     this.handleIncomingOperation(data);
+        // });
         
         // Project events
         this.socket.on('project_joined', (data) => {
@@ -125,6 +144,12 @@ class NetworkLayer {
             if (data.project && data.project.id) {
                 this.currentProject = { id: data.project.id };
                 console.log('✅ Current project set to:', this.currentProject);
+                
+                // Request full state sync after joining project
+                if (this.app.stateSyncManager) {
+                    console.log('📥 Requesting initial state sync...');
+                    this.app.stateSyncManager.requestFullSync();
+                }
             } else {
                 console.warn('⚠️ Invalid project_joined data:', data);
             }
@@ -140,9 +165,26 @@ class NetworkLayer {
             this.app.updateActiveUsers(data.users);
         });
         
-        // State sync events
+        // Legacy state sync events
         this.socket.on('state_sync', (data) => {
             this.handleStateSync(data);
+        });
+        
+        // New state-based sync events
+        this.socket.on('state_update', (data) => {
+            this.emitLocal('state_update', data);
+        });
+        
+        this.socket.on('operation_ack', (data) => {
+            this.emitLocal('operation_ack', data);
+        });
+        
+        this.socket.on('operation_rejected', (data) => {
+            this.emitLocal('operation_rejected', data);
+        });
+        
+        this.socket.on('full_state_sync', (data) => {
+            this.emitLocal('full_state_sync', data);
         });
         
         // Error events
@@ -150,6 +192,53 @@ class NetworkLayer {
             console.error('⚠️ Server error:', data.message);
             this.app.showError(data.message);
         });
+    }
+    
+    /**
+     * Add event listener (for state-based operations)
+     */
+    on(event, handler) {
+        if (!this.eventHandlers.has(event)) {
+            this.eventHandlers.set(event, []);
+        }
+        this.eventHandlers.get(event).push(handler);
+    }
+    
+    /**
+     * Remove event listener
+     */
+    off(event, handler) {
+        const handlers = this.eventHandlers.get(event);
+        if (handlers) {
+            const index = handlers.indexOf(handler);
+            if (index > -1) {
+                handlers.splice(index, 1);
+            }
+        }
+    }
+    
+    /**
+     * Emit to local handlers
+     */
+    emitLocal(event, data) {
+        const handlers = this.eventHandlers.get(event);
+        if (handlers) {
+            handlers.forEach(handler => {
+                try {
+                    handler(data);
+                } catch (error) {
+                    console.error(`Error in ${event} handler:`, error);
+                }
+            });
+        }
+    }
+    
+    /**
+     * Emit to server
+     */
+    emit(event, data) {
+        if (!this.socket) return;
+        this.socket.emit(event, data);
     }
     
     /**
@@ -323,6 +412,23 @@ class NetworkLayer {
         
         this.isConnected = false;
         this.currentProject = null;
+    }
+    
+    /**
+     * Cleanup resources
+     */
+    cleanup() {
+        console.log('🧹 Cleaning up NetworkLayer...');
+        
+        // Clear event handlers
+        this.eventHandlers.clear();
+        
+        // Disconnect socket
+        this.disconnect();
+        
+        // Clear references
+        this.app = null;
+        this.currentUser = null;
     }
     
     /**

@@ -56,40 +56,16 @@ class StateManager {
     }
     
     async saveState(graph, canvas) {
-        const state = this.serializeState(graph, canvas);
-        
-        try {
-            if (this.db) {
-                await this.putToDB(this.stateKey, state);
-            } else {
-                localStorage.setItem(this.stateKey, JSON.stringify(state));
-            }
-        } catch (error) {
-            console.warn('Failed to save state:', error);
-            this.handleStorageError(error);
-        }
+        // State saving disabled - using server-authoritative state sync
+        console.log('💾 StateManager: save disabled (server-authoritative mode)');
+        return;
     }
     
     async loadState(graph, canvas, externalState = null) {
-        try {
-            let state;
-            
-            if (externalState) {
-                // Use provided state data
-                state = externalState;
-            } else if (this.db) {
-                state = await this.getFromDB(this.stateKey);
-            } else {
-                const saved = localStorage.getItem(this.stateKey);
-                state = saved ? JSON.parse(saved) : null;
-            }
-            
-            if (state) {
-                await this.deserializeState(state, graph, canvas);
-            }
-        } catch (error) {
-            console.warn('Failed to load state:', error);
-        }
+        // State loading disabled - using server-authoritative state sync
+        console.log('📥 StateManager: load disabled (server-authoritative mode)');
+        // State will be loaded from server via StateSyncManager
+        return;
     }
     
     serializeState(graph, canvas) {
@@ -405,67 +381,21 @@ class StateManager {
     
     // Undo/Redo functionality
     pushUndoState(graph, canvas) {
-        try {
-            // Ensure undoStack exists
-            if (!Array.isArray(this.undoStack)) {
-                this.undoStack = [];
-            }
-            
-            const state = this.serializeUndoState(graph, canvas); // Use undo-specific serialization
-            const stateString = JSON.stringify(state);
-            
-            this.undoStack.push(stateString);
-            
-            if (this.undoStack.length > this.maxUndoStates) {
-                this.undoStack.shift();
-            }
-            
-            this.redoStack = []; // Clear redo stack when new operation is performed
-            this.saveUndoStack();
-            
-            console.log('Pushed undo state, stack size:', this.undoStack.length);
-        } catch (error) {
-            console.warn('Failed to push undo state:', error);
-        }
+        // Undo/redo disabled - using server-authoritative state sync
+        console.log('↩️ StateManager: undo push disabled (server handles history)');
+        return;
     }
     
     undo(graph, canvas) {
-        if (!Array.isArray(this.undoStack) || this.undoStack.length < 2) {
-            console.log('Nothing to undo');
-            return false;
-        }
-        
-        const current = this.undoStack.pop();
-        if (!Array.isArray(this.redoStack)) {
-            this.redoStack = [];
-        }
-        this.redoStack.push(current);
-        
-        const prev = this.undoStack[this.undoStack.length - 1];
-        this.loadUndoState(prev, graph, canvas);
-        this.saveUndoStack();
-        
-        console.log('Undo performed, stack size:', this.undoStack.length);
-        return true;
+        // Undo disabled - using server-authoritative state sync
+        console.log('↩️ StateManager: undo disabled (use server history)');
+        return false;
     }
     
     redo(graph, canvas) {
-        if (!Array.isArray(this.redoStack) || this.redoStack.length === 0) {
-            console.log('Nothing to redo');
-            return false;
-        }
-        
-        const state = this.redoStack.pop();
-        if (!Array.isArray(this.undoStack)) {
-            this.undoStack = [];
-        }
-        this.undoStack.push(state);
-        
-        this.loadUndoState(state, graph, canvas);
-        this.saveUndoStack();
-        
-        console.log('Redo performed, stack size:', this.undoStack.length);
-        return true;
+        // Redo disabled - using server-authoritative state sync
+        console.log('↩️ StateManager: redo disabled (use server history)');
+        return false;
     }
     
     async loadUndoState(stateString, graph, canvas) {

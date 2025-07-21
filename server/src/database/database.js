@@ -109,6 +109,16 @@ class Database {
                 last_activity DATETIME DEFAULT CURRENT_TIMESTAMP
             );
             
+            -- Canvas state for server-authoritative sync
+            CREATE TABLE IF NOT EXISTS canvases (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                project_id INTEGER NOT NULL REFERENCES projects(id),
+                data JSON NOT NULL,
+                version INTEGER DEFAULT 1,
+                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(project_id)
+            );
+            
             -- Indexes for performance
             CREATE INDEX IF NOT EXISTS idx_projects_owner ON projects(owner_id);
             CREATE INDEX IF NOT EXISTS idx_project_versions_project ON project_versions(project_id);
@@ -116,6 +126,7 @@ class Database {
             CREATE INDEX IF NOT EXISTS idx_files_hash ON files(file_hash);
             CREATE INDEX IF NOT EXISTS idx_active_sessions_project ON active_sessions(project_id);
             CREATE INDEX IF NOT EXISTS idx_active_sessions_user ON active_sessions(user_id);
+            CREATE INDEX IF NOT EXISTS idx_canvases_project ON canvases(project_id);
         `;
         
         await this.exec(schema);

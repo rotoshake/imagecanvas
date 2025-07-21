@@ -10,8 +10,8 @@ class CollaborativeArchitecture {
         // Core components
         this.operationPipeline = null;
         this.networkLayer = null;
-        this.migrationAdapter = null;
         this.persistenceHandler = null;
+        this.stateSyncManager = null;
         
         console.log('🏗️ CollaborativeArchitecture ready');
     }
@@ -36,22 +36,24 @@ class CollaborativeArchitecture {
             this.networkLayer = new NetworkLayer(this.app);
             this.app.networkLayer = this.networkLayer;
             
-            // 3. Create Migration Adapter
-            this.migrationAdapter = new MigrationAdapter(this.app);
-            this.app.migrationAdapter = this.migrationAdapter;
+            // Migration adapter no longer needed after full migration
             
             // 4. Create Persistence Handler
             this.persistenceHandler = new PersistenceHandler(this.app);
             this.app.persistenceHandler = this.persistenceHandler;
             
-            // 4. Connect components
+            // 5. Create State Sync Manager (depends on network layer)
+            this.stateSyncManager = new StateSyncManager(this.app, this.networkLayer);
+            this.app.stateSyncManager = this.stateSyncManager;
+            
+            // 6. Connect components
             await this.connectComponents();
             
-            // 5. Initialize migration adapter
-            this.migrationAdapter.initialize();
             
             // 6. Initialize persistence handler
             this.persistenceHandler.initialize();
+            
+            // Universal operation router no longer needed after full migration
             
             // 6. Connect to server
             try {
@@ -83,10 +85,14 @@ class CollaborativeArchitecture {
         // Ensure commands are loaded
         await this.loadCommands();
         
+        // Create connection status indicator
+        this.connectionStatus = new ConnectionStatus(this.app);
+        this.app.connectionStatus = this.connectionStatus;
+        
         // Connect app callbacks
         this.app.updateConnectionStatus = (status) => {
             console.log(`Connection status: ${status}`);
-            // Update UI if needed
+            this.connectionStatus.updateStatus(status);
         };
         
         this.app.updateActiveUsers = (users) => {
@@ -215,14 +221,16 @@ class CollaborativeArchitecture {
         const status = {
             pipeline: this.operationPipeline ? '✅' : '❌',
             network: this.networkLayer ? '✅' : '❌',
-            migration: this.migrationAdapter ? '✅' : '❌',
+            persistence: this.persistenceHandler ? '✅' : '❌',
+            stateSync: this.stateSyncManager ? '✅' : '❌',
             connected: this.networkLayer?.isConnected ? '✅' : '❌'
         };
         
         console.log('=== Architecture Status ===');
         console.log(`Pipeline: ${status.pipeline}`);
         console.log(`Network: ${status.network}`);
-        console.log(`Migration: ${status.migration}`);
+        console.log(`Persistence: ${status.persistence}`);
+        console.log(`State Sync: ${status.stateSync}`);
         console.log(`Connected: ${status.connected}`);
         console.log('========================');
     }
@@ -239,18 +247,9 @@ class CollaborativeArchitecture {
     }
     
     /**
-     * Get migration statistics
-     */
-    getMigrationStats() {
-        return this.migrationAdapter?.getStats() || null;
-    }
-    
-    /**
      * Enable debug mode
      */
     enableDebugMode() {
-        this.migrationAdapter?.enableDebugLogging();
-        
         // Add debug UI
         this.addDebugUI();
     }
@@ -275,18 +274,11 @@ class CollaborativeArchitecture {
         `;
         
         const updateDebug = () => {
-            const stats = this.getMigrationStats();
             const history = this.operationPipeline.getHistoryInfo();
             const network = this.networkLayer.getStatus();
             
             debugDiv.innerHTML = `
                 <h3 style="margin: 0 0 10px 0;">Collaborative Debug</h3>
-                <div><strong>Migration Stats:</strong></div>
-                <div>Intercepted: ${stats?.intercepted || 0}</div>
-                <div>Routed: ${stats?.routed || 0}</div>
-                <div>Failed: ${stats?.failed || 0}</div>
-                <div>Success: ${stats?.successRate || 'N/A'}</div>
-                <hr style="margin: 10px 0;">
                 <div><strong>History:</strong></div>
                 <div>Size: ${history.size} (${history.index + 1})</div>
                 <div>Can Undo: ${history.canUndo ? '✅' : '❌'}</div>

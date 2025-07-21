@@ -14,9 +14,14 @@ class CanvasNavigator {
         this.setupEventListeners();
     }
     
-    // Get collaborative manager from app when needed
-    get collaborativeManager() {
-        return this.app.collaborativeManager;
+    // Get network layer from app when needed
+    get networkLayer() {
+        return this.app.networkLayer;
+    }
+    
+    // Get persistence handler from app when needed
+    get persistenceHandler() {
+        return this.app.persistenceHandler;
     }
     
     createUI() {
@@ -529,22 +534,13 @@ class CanvasNavigator {
                 this.app.networkLayer.joinProject(newCanvas.id);
             }
             
-            // Also join using old CollaborativeManager for backward compatibility
-            if (this.collaborativeManager) {
-                this.collaborativeManager.joinProject(newCanvas.id).then(joined => {
-                    if (!joined) {
-                        console.log('⚠️ Failed to join new project');
-                    }
-                });
-            }
+            // Project joining is now handled by NetworkLayer
             
             // Refresh the list
             this.loadCanvases();
             
             // Show success message
-            if (this.collaborativeManager) {
-                this.collaborativeManager.showStatus(`Created new canvas: ${name}`, 'success');
-            }
+            console.log(`✅ Created new canvas: ${name}`);
         } catch (error) {
             console.error('Failed to create canvas:', error);
             alert('Failed to create canvas');
@@ -562,47 +558,52 @@ class CanvasNavigator {
                 return;
             }
             
-            // Check if we're already trying to connect to this canvas
-            if (this.collaborativeManager && this.collaborativeManager.isConnecting) {
-                console.log('⏳ Connection already in progress, waiting...');
-                // Wait for current connection attempt to complete
+            // Check if network layer is connected
+            if (this.networkLayer && !this.networkLayer.isConnected) {
+                console.log('⏳ Waiting for network connection...');
+                // Wait for connection
                 let attempts = 0;
-                while (this.collaborativeManager.isConnecting && attempts < 30) {
+                while (!this.networkLayer.isConnected && attempts < 30) {
                     await new Promise(resolve => setTimeout(resolve, 100));
                     attempts++;
                 }
-                if (this.collaborativeManager.isConnecting) {
-                    console.error('⚠️ Connection timeout - proceeding anyway');
+                if (!this.networkLayer.isConnected) {
+                    console.error('⚠️ Network connection timeout - proceeding anyway');
                 }
             }
             
             // Disconnect from current project first
-            if (this.collaborativeManager && this.collaborativeManager.isConnected && this.collaborativeManager.currentProject) {
+            if (this.networkLayer && this.networkLayer.isConnected && this.networkLayer.currentProject) {
                 console.log('Leaving current project before switching...');
-                // Stop all sync timers
-                this.collaborativeManager.stopPeriodicSync();
-                this.collaborativeManager.stopAutoSave();
-                this.collaborativeManager.stopHeartbeat();
+                // NetworkLayer handles its own cleanup
                 
                 // Leave the current project room and wait for confirmation
-                if (this.collaborativeManager.currentProject.id) {
-                    await this.leaveProjectAndWait(this.collaborativeManager.currentProject.id);
+                if (this.networkLayer.currentProject.id) {
+                    await this.leaveProjectAndWait(this.networkLayer.currentProject.id);
                 }
                 
-                // Clear the current project reference
-                this.collaborativeManager.currentProject = null;
-                this.collaborativeManager.sequenceNumber = 0;
+                // NetworkLayer manages its own state
             }
             
             // Save current canvas if needed
-            if (this.currentCanvasId && this.collaborativeManager) {
+            if (this.currentCanvasId && this.networkLayer) {
                 // Force save even if hasUnsavedChanges is false, to ensure we don't lose data
-                if (this.app.graph.nodes.length > 0 || this.collaborativeManager.hasUnsavedChanges) {
+                if (this.app.graph.nodes.length > 0) {
                     console.log('💾 Saving current canvas before switching...');
                     console.log('💾 Current canvas ID:', this.currentCanvasId);
                     console.log('💾 Current nodes:', this.app.graph.nodes.length);
-                    this.collaborativeManager.hasUnsavedChanges = true;
-                    await this.collaborativeManager.save();
+                    // Mark as needing save
+                    // Saving is now handled by PersistenceHandler
+                    if (this.persistenceHandler) {
+                        try {
+                            await this.persistenceHandler.save();
+                        } catch (error) {
+                            console.error('💾 Failed to save before canvas switch:', error);
+                            // Continue with canvas switch even if save fails
+                        }
+                    } else {
+                        console.warn('💾 No persistence handler available - skipping save');
+                    }
                     console.log('💾 Save completed');
                 } else {
                     console.log('💾 No nodes to save in current canvas');
@@ -627,9 +628,9 @@ class CanvasNavigator {
             localStorage.setItem('lastCanvasId', canvasId.toString());
             
             // Reset collaborative manager state
-            if (this.collaborativeManager) {
-                this.collaborativeManager.hasUnsavedChanges = false;
-                this.collaborativeManager.lastSaveTime = Date.now();
+            if (this.networkLayer) {
+                this.networkLayer.hasUnsavedChanges = false;
+                this.networkLayer.lastSaveTime = Date.now();
             }
             
             // Load the canvas data
@@ -640,104 +641,75 @@ class CanvasNavigator {
                 const data = await response.json();
                 
                 if (data.canvas_data) {
-                    // Load the state with external data
-                    console.log('📥 Loading canvas data, nodes:', data.canvas_data.nodes?.length || 0);
-                    await this.app.stateManager.loadState(this.app.graph, this.app.graphCanvas, data.canvas_data);
-                    console.log('✅ Canvas data loaded, current nodes:', this.app.graph.nodes.length);
+                    // With state sync, we don't load from the REST endpoint
+                    // The state will come from the WebSocket after joining
+                    console.log('📥 Canvas metadata loaded, state will sync from server');
                     
                     // NOW join the new project if collaborative
                     console.log('🔌 Checking collaborative state:', {
-                        hasManager: !!this.collaborativeManager,
-                        isConnected: this.collaborativeManager?.isConnected,
-                        socket: !!this.collaborativeManager?.socket,
+                        hasManager: !!this.networkLayer,
+                        isConnected: this.networkLayer?.isConnected,
+                        socket: !!this.networkLayer?.socket,
                         hasNetworkLayer: !!this.app.networkLayer,
                         networkConnected: this.app.networkLayer?.isConnected
                     });
                     
-                    // Join using the new NetworkLayer if available
-                    if (this.app.networkLayer && this.app.networkLayer.isConnected) {
-                        console.log('🔌 Joining project via NetworkLayer:', canvasId);
-                        this.app.networkLayer.joinProject(canvasId);
-                    }
-                    
-                    // Also join using old CollaborativeManager for backward compatibility
-                    if (this.collaborativeManager) {
-                        console.log('🔌 Checking collaborative state:', {
-                            hasManager: !!this.collaborativeManager,
-                            isConnected: this.collaborativeManager?.isConnected,
-                            socket: !!this.collaborativeManager?.socket
-                        });
-                        
-                        // Always attempt to join, let joinProject handle connection waiting
-                        console.log('🔌 Joining collaborative project:', canvasId);
-                        let joined = await this.collaborativeManager.joinProject(canvasId);
-                        
-                        if (!joined) {
-                            console.log('⚠️ First join attempt failed, retrying...');
-                            // Wait a bit and retry
-                            await new Promise(resolve => setTimeout(resolve, 2000));
-                            joined = await this.collaborativeManager.joinProject(canvasId);
-                        }
-                        
-                        if (joined) {
-                            console.log('✅ Successfully joined collaborative project');
+                    // Join using the new NetworkLayer
+                    if (this.app.networkLayer) {
+                        if (this.app.networkLayer.isConnected) {
+                            console.log('🔌 Joining project via NetworkLayer:', canvasId);
+                            this.app.networkLayer.joinProject(canvasId);
                         } else {
-                            console.log('⚠️ Failed to join collaborative project after retry - will work offline');
-                            this.collaborativeManager.showStatus('Working offline', 'warning');
+                            console.log('⚠️ NetworkLayer not connected yet, waiting...');
+                            // Wait for connection
+                            setTimeout(() => {
+                                if (this.app.networkLayer.isConnected) {
+                                    console.log('🔌 Now connected, joining project:', canvasId);
+                                    this.app.networkLayer.joinProject(canvasId);
+                                }
+                            }, 1000);
                         }
                     }
                     
                     // Show success
-                    if (this.collaborativeManager) {
-                        this.collaborativeManager.showStatus('Canvas loaded', 'success');
+                    if (this.networkLayer) {
+                        this.networkLayer.showStatus('Canvas loaded', 'success');
                     }
                 } else {
                     console.log('📭 No canvas data found - starting with empty canvas');
                     
                     // Still need to join the project for collaboration
                     console.log('🔌 Checking collaborative state (empty canvas):', {
-                        hasManager: !!this.collaborativeManager,
-                        isConnected: this.collaborativeManager?.isConnected,
-                        socket: !!this.collaborativeManager?.socket,
+                        hasManager: !!this.networkLayer,
+                        isConnected: this.networkLayer?.isConnected,
+                        socket: !!this.networkLayer?.socket,
                         hasNetworkLayer: !!this.app.networkLayer,
                         networkConnected: this.app.networkLayer?.isConnected
                     });
                     
-                    // Join using the new NetworkLayer if available
-                    if (this.app.networkLayer && this.app.networkLayer.isConnected) {
-                        console.log('🔌 Joining project via NetworkLayer (empty canvas):', canvasId);
-                        this.app.networkLayer.joinProject(canvasId);
-                    }
-                    
-                    // Also join using old CollaborativeManager for backward compatibility
-                    if (this.collaborativeManager) {
-                        // Always attempt to join, let joinProject handle connection waiting
-                        console.log('🔌 Joining collaborative project (empty canvas):', canvasId);
-                        const joined = await this.collaborativeManager.joinProject(canvasId);
-                        
-                        if (joined) {
-                            console.log('✅ Successfully joined collaborative project');
+                    // Join using the new NetworkLayer
+                    if (this.app.networkLayer) {
+                        if (this.app.networkLayer.isConnected) {
+                            console.log('🔌 Joining project via NetworkLayer (empty canvas):', canvasId);
+                            this.app.networkLayer.joinProject(canvasId);
                         } else {
-                            console.log('⚠️ Failed to join collaborative project - will work offline');
-                            this.collaborativeManager.showStatus('Working offline', 'warning');
+                            console.log('⚠️ NetworkLayer not connected yet, waiting...');
+                            setTimeout(() => {
+                                if (this.app.networkLayer.isConnected) {
+                                    console.log('🔌 Now connected, joining project:', canvasId);
+                                    this.app.networkLayer.joinProject(canvasId);
+                                }
+                            }, 1000);
                         }
                     }
                 }
             } catch (error) {
                 console.error('Error loading canvas data:', error);
                 // Continue with empty canvas but still join project
-                // Join using the new NetworkLayer if available
+                // Join using the new NetworkLayer
                 if (this.app.networkLayer && this.app.networkLayer.isConnected) {
                     console.log('🔌 Joining project via NetworkLayer (after error):', canvasId);
                     this.app.networkLayer.joinProject(canvasId);
-                }
-                
-                // Also join using old CollaborativeManager for backward compatibility
-                if (this.collaborativeManager) {
-                    const joined = await this.collaborativeManager.joinProject(canvasId);
-                    if (!joined) {
-                        console.log('⚠️ Failed to join project after error');
-                    }
                 }
             }
             
@@ -803,8 +775,8 @@ class CanvasNavigator {
             console.log('✅ Canvas deleted successfully');
             
             // Show success message
-            if (this.collaborativeManager) {
-                this.collaborativeManager.showStatus('Canvas deleted successfully', 'success');
+            if (this.networkLayer) {
+                this.networkLayer.showStatus('Canvas deleted successfully', 'success');
             }
         } catch (error) {
             console.error('Failed to delete canvas:', error);
@@ -858,8 +830,8 @@ class CanvasNavigator {
             this.loadCanvases();
             
             // Show success message
-            if (this.collaborativeManager) {
-                this.collaborativeManager.showStatus(`Duplicated canvas: ${name}`, 'success');
+            if (this.networkLayer) {
+                this.networkLayer.showStatus(`Duplicated canvas: ${name}`, 'success');
             }
         } catch (error) {
             console.error('Failed to duplicate canvas:', error);
@@ -875,7 +847,7 @@ class CanvasNavigator {
             const leaveHandler = (data) => {
                 if (data && parseInt(data.projectId) === parseInt(projectId)) {
                     console.log('✅ Project leave confirmed:', projectId);
-                    this.collaborativeManager.socket.off('project_left', leaveHandler);
+                    this.networkLayer.socket.off('project_left', leaveHandler);
                     resolve();
                 }
             };
@@ -883,20 +855,20 @@ class CanvasNavigator {
             // Set up timeout in case server doesn't respond
             const timeout = setTimeout(() => {
                 console.log('⚠️ Project leave timeout - proceeding anyway');
-                this.collaborativeManager.socket.off('project_left', leaveHandler);
+                this.networkLayer.socket.off('project_left', leaveHandler);
                 resolve();
             }, 2000); // 2 second timeout
             
             // Listen for confirmation
-            this.collaborativeManager.socket.on('project_left', leaveHandler);
+            this.networkLayer.socket.on('project_left', leaveHandler);
             
             // Emit leave request
-            this.collaborativeManager.socket.emit('leave_project', { 
+            this.networkLayer.socket.emit('leave_project', { 
                 projectId: projectId 
             });
             
             // Clear timeout on confirmation
-            this.collaborativeManager.socket.once('project_left', () => {
+            this.networkLayer.socket.once('project_left', () => {
                 clearTimeout(timeout);
             });
         });
@@ -998,8 +970,8 @@ class CanvasNavigator {
             this.renderCanvasList();
             
             // Show success
-            if (this.collaborativeManager) {
-                this.collaborativeManager.showStatus(`Renamed to "${newName}"`, 'success');
+            if (this.networkLayer) {
+                this.networkLayer.showStatus(`Renamed to "${newName}"`, 'success');
             }
         } catch (error) {
             console.error('Failed to rename canvas:', error);
@@ -1014,7 +986,7 @@ class CanvasNavigator {
         }
         
         // Check collaborative manager for unsaved changes
-        if (this.collaborativeManager && this.collaborativeManager.hasUnsavedChanges) {
+        if (this.networkLayer && this.networkLayer.hasUnsavedChanges) {
             return true;
         }
         
@@ -1057,14 +1029,7 @@ class CanvasNavigator {
                 this.app.networkLayer.joinProject(newCanvas.id);
             }
             
-            // Also join using old CollaborativeManager for backward compatibility
-            if (this.collaborativeManager) {
-                this.collaborativeManager.joinProject(newCanvas.id).then(joined => {
-                    if (!joined) {
-                        console.log('⚠️ Failed to join new project');
-                    }
-                });
-            }
+            // Project joining is now handled by NetworkLayer
             
             // Refresh the list
             await this.loadCanvases();
@@ -1195,21 +1160,14 @@ class CanvasNavigator {
                 this.app.networkLayer.joinProject(newCanvas.id);
             }
             
-            // Also join using old CollaborativeManager for backward compatibility
-            if (this.collaborativeManager) {
-                this.collaborativeManager.joinProject(newCanvas.id).then(joined => {
-                    if (!joined) {
-                        console.log('⚠️ Failed to join new project');
-                    }
-                });
-            }
+            // Project joining is now handled by NetworkLayer
             
             // Refresh the list
             await this.loadCanvases();
             
             // Show welcome message
-            if (this.collaborativeManager) {
-                this.collaborativeManager.showStatus('Welcome! Your first canvas has been created.', 'success');
+            if (this.networkLayer) {
+                this.networkLayer.showStatus('Welcome! Your first canvas has been created.', 'success');
             }
             
             return newCanvas;
@@ -1289,8 +1247,8 @@ class CanvasNavigator {
     // Manual save method
     async saveCanvas() {
         const saved = await this.saveCanvasToServer();
-        if (saved && this.collaborativeManager) {
-            this.collaborativeManager.showStatus('Canvas saved', 'success');
+        if (saved && this.networkLayer) {
+            this.networkLayer.showStatus('Canvas saved', 'success');
         }
         return saved;
     }

@@ -18,40 +18,23 @@ class PersistenceHandler {
      * Initialize auto-save functionality
      */
     initialize() {
-        // Listen for operations to save immediately
-        if (this.app.operationPipeline) {
-            // Hook into operation execution
-            const originalExecute = this.app.operationPipeline.execute.bind(this.app.operationPipeline);
-            this.app.operationPipeline.execute = async (...args) => {
-                const result = await originalExecute(...args);
-                
-                // Save immediately after successful operation
-                if (result && result.success !== false) {
-                    // Only save for local operations (not remote ones)
-                    const command = args[0];
-                    if (command && (command.origin === 'local' || command === 'local')) {
-                        console.log(`💾 Auto-saving after operation: ${command.type || args[0]}`);
-                        this.hasUnsavedChanges = true;
-                        this.save(); // Save immediately
-                    }
-                }
-                
-                return result;
-            };
-        }
+        // With state-based sync, the server handles all persistence
+        // The server maintains the authoritative state and saves it
+        console.log('💾 PersistenceHandler: Server-authoritative mode');
         
-        // No need for periodic auto-save since we save on every action
-        // Just keep as backup in case something was missed
-        this.startAutoSave();
-        
-        // Save before unload
-        window.addEventListener('beforeunload', () => {
-            if (this.hasUnsavedChanges) {
-                this.saveImmediate();
+        // We can still listen for manual save requests
+        window.addEventListener('keydown', (e) => {
+            // Ctrl/Cmd + S
+            if ((e.ctrlKey || e.metaKey) && e.key === 's') {
+                e.preventDefault();
+                console.log('💾 Manual save requested - server already has latest state');
+                // Could show a notification that changes are automatically saved
             }
         });
         
-        console.log('✅ Persistence handler initialized (saves on every action)');
+        // The server automatically persists state changes
+        // No need for client-side auto-save
+        console.log('✅ Persistence handled by server state sync');
     }
     
     /**

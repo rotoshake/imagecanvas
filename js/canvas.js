@@ -299,11 +299,11 @@ class LGraphCanvas {
                 const nodeIds = selectedNodes.map(n => n.id);
                 const values = selectedNodes.map(() => 0);
                 
-                if (this.actionManager) {
-                    this.actionManager.executeAction('node_reset', {
+                if (window.app?.operationPipeline) {
+                    window.app.operationPipeline.execute('node_reset', {
                         nodeIds: nodeIds,
-                        resetType: 'rotation',
-                        values: values
+                        resetRotation: true,
+                        resetAspectRatio: false
                     });
                 } else {
                     // Fallback
@@ -323,6 +323,7 @@ class LGraphCanvas {
         
         const resizeHandle = this.handleDetector.getResizeHandle(...this.mouseState.canvas);
         if (resizeHandle) {
+            console.log(`Double-click on resize handle: type=${resizeHandle.type}, selection size=${this.selection.size()}`);
             // If multiple nodes are selected, reset all their aspect ratios
             if (this.selection.size() > 1) {
                 const selectedNodes = this.selection.getSelectedNodes();
@@ -333,13 +334,18 @@ class LGraphCanvas {
                     if (node.originalAspect) {
                         nodeIds.push(node.id);
                         originalAspects.push(node.originalAspect);
+                    } else {
+                        console.warn(`Node ${node.id} (${node.type}) missing originalAspect property`);
                     }
                 }
                 
-                if (this.actionManager && nodeIds.length > 0) {
-                    this.actionManager.executeAction('node_reset', {
+                console.log(`Multi-node aspect ratio reset: ${nodeIds.length} nodes with originalAspect`, nodeIds, originalAspects);
+                
+                if (window.app?.operationPipeline && nodeIds.length > 0) {
+                    window.app.operationPipeline.execute('node_reset', {
                         nodeIds: nodeIds,
-                        resetType: 'aspect_ratio',
+                        resetAspectRatio: true,
+                        resetRotation: false,
                         values: originalAspects
                     });
                 } else {
@@ -633,24 +639,24 @@ class LGraphCanvas {
         }
     }
     
-    startNodeDuplication(node, e) {
+    async startNodeDuplication(node, e) {
         // Check if multiple nodes are selected
         const isMultiSelection = this.selection.size() > 1 && this.selection.isSelected(node);
         
         let duplicates = [];
         let draggedDuplicate = null;
         
+        // For collaborative systems, create nodes locally first, then sync properly after drag
         if (isMultiSelection) {
-            // Multi-selection: duplicate all selected nodes
+            // Multi-selection: duplicate all selected nodes locally
             const selectedNodes = this.selection.getSelectedNodes();
-            const offset = 20;
             
             for (const selectedNode of selectedNodes) {
                 const duplicate = this.duplicateNode(selectedNode);
                 if (duplicate) {
-                    // Position duplicate with offset
-                    duplicate.pos[0] = selectedNode.pos[0] + offset;
-                    duplicate.pos[1] = selectedNode.pos[1] + offset;
+                    // Position duplicate at same location initially
+                    duplicate.pos[0] = selectedNode.pos[0];
+                    duplicate.pos[1] = selectedNode.pos[1];
                     
                     this.graph.add(duplicate);
                     duplicates.push(duplicate);
@@ -659,27 +665,31 @@ class LGraphCanvas {
                     if (selectedNode.id === node.id) {
                         draggedDuplicate = duplicate;
                     }
-                    
-                    // Broadcast node creation for collaboration
-                    if (this.collaborativeManager) {
-                        this.broadcastNodeCreate(duplicate);
-                    }
                 }
             }
         } else {
-            // Single node: duplicate just this node
+            // Single node: duplicate just this node locally
             const duplicate = this.duplicateNode(node);
             if (duplicate) {
-                duplicate.pos[0] = node.pos[0] + 20;
-                duplicate.pos[1] = node.pos[1] + 20;
+                duplicate.pos[0] = node.pos[0];
+                duplicate.pos[1] = node.pos[1];
                 this.graph.add(duplicate);
                 duplicates.push(duplicate);
                 draggedDuplicate = duplicate;
-                
-                // Broadcast node creation for collaboration
-                if (this.collaborativeManager) {
-                    this.broadcastNodeCreate(duplicate);
-                }
+            }
+        }
+        
+        // Mark these nodes as needing collaborative sync after drag completes
+        // But only if the collaborative system is properly authenticated
+        if (window.app?.operationPipeline && duplicates.length > 0) {
+            // Check if we're likely to have auth issues by checking connection status
+            const isConnected = window.app.operationPipeline.stateSyncManager?.network?.connected;
+            if (isConnected !== false) {  // Try collaborative sync unless explicitly disconnected
+                duplicates.forEach(dup => {
+                    dup._needsCollaborativeSync = true;
+                });
+            } else {
+                console.log('Collaborative system unavailable - keeping Alt+drag as local-only');
             }
         }
         
@@ -1126,13 +1136,17 @@ class LGraphCanvas {
             const wasDuplication = this.interactionState.dragging.isDuplication;
             
             // Broadcast move operation for collaboration
-            if (this.actionManager && wasInteracting) {
+            // Always skip move operations for nodes that need collaborative sync (local duplicates)
+            if (window.app?.operationPipeline && wasInteracting) {
                 const selectedNodes = this.selection.getSelectedNodes();
-                if (selectedNodes.length === 1) {
-                    const node = selectedNodes[0];
+                // Filter out nodes marked for collaborative sync - important for both regular and duplication drags
+                const collaborativeNodes = selectedNodes.filter(n => !n._needsCollaborativeSync);
+                
+                if (collaborativeNodes.length === 1) {
+                    const node = collaborativeNodes[0];
                     const moveData = {
                         nodeId: node.id,
-                        pos: [...node.pos]
+                        position: [...node.pos]
                     };
                     
                     // For media nodes, include properties to ensure they don't lose their content
@@ -1145,15 +1159,15 @@ class LGraphCanvas {
                         };
                     }
                     
-                    this.actionManager.executeAction('node_move', moveData);
-                } else if (selectedNodes.length > 1) {
+                    window.app.operationPipeline.execute('node_move', moveData);
+                } else if (collaborativeNodes.length > 1) {
                     const moveData = {
-                        nodeIds: selectedNodes.map(n => n.id),
-                        positions: selectedNodes.map(n => [...n.pos])
+                        nodeIds: collaborativeNodes.map(n => n.id),
+                        positions: collaborativeNodes.map(n => [...n.pos])
                     };
                     
                     // Check if any nodes are media nodes that need properties preserved
-                    const mediaNodes = selectedNodes.filter(n => n.type === 'media/image' || n.type === 'media/video');
+                    const mediaNodes = collaborativeNodes.filter(n => n.type === 'media/image' || n.type === 'media/video');
                     if (mediaNodes.length > 0) {
                         moveData.nodeProperties = {};
                         mediaNodes.forEach(node => {
@@ -1166,15 +1180,19 @@ class LGraphCanvas {
                         });
                     }
                     
-                    this.actionManager.executeAction('node_move', moveData);
-                } else if (selectedNodes.length === 0) {
-                    // No nodes selected - skip the operation
-                    console.warn('Attempted to execute node_move with no selected nodes');
+                    window.app.operationPipeline.execute('node_move', moveData);
                 }
+                // No warning for empty collaborative nodes - this is expected for duplication
             }
             
             this.interactionState.dragging.node = null;
             this.interactionState.dragging.offsets.clear();
+            
+            // Sync locally duplicated nodes with collaborative system after drag completes
+            if (wasDuplication && window.app?.operationPipeline) {
+                this.syncLocalDuplicatesWithServer();
+            }
+            
             this.interactionState.dragging.isDuplication = false;
             
             // For duplication: always create undo state (even without movement)
@@ -1187,20 +1205,30 @@ class LGraphCanvas {
         // Resize
         if (this.interactionState.resizing.active) {
             // Broadcast resize operation for collaboration
-            if (this.actionManager && wasInteracting) {
+            if (window.app?.operationPipeline && wasInteracting) {
                 const selectedNodes = this.selection.getSelectedNodes();
                 if (selectedNodes.length === 1) {
                     const node = selectedNodes[0];
-                    this.actionManager.executeAction('node_resize', {
-                        nodeId: node.id,
-                        width: node.size[0],
-                        height: node.size[1]
-                    });
+                    // For rotated nodes, include position to maintain center
+                    const params = {
+                        nodeIds: [node.id],
+                        sizes: [[node.size[0], node.size[1]]]
+                    };
+                    if (node.rotation && Math.abs(node.rotation) > 0.001) {
+                        params.positions = [[node.pos[0], node.pos[1]]];
+                    }
+                    window.app.operationPipeline.execute('node_resize', params);
                 } else if (selectedNodes.length > 1) {
-                    this.actionManager.executeAction('node_resize', {
+                    const params = {
                         nodeIds: selectedNodes.map(n => n.id),
                         sizes: selectedNodes.map(n => [...n.size])
-                    });
+                    };
+                    // Check if any nodes are rotated
+                    const hasRotatedNodes = selectedNodes.some(n => n.rotation && Math.abs(n.rotation) > 0.001);
+                    if (hasRotatedNodes) {
+                        params.positions = selectedNodes.map(n => [...n.pos]);
+                    }
+                    window.app.operationPipeline.execute('node_resize', params);
                 }
             }
             
@@ -1214,28 +1242,24 @@ class LGraphCanvas {
         
         // Rotation
         if (this.interactionState.rotating.active) {
-            // Broadcast rotation operation for collaboration
-            if (this.collaborativeManager?.operationHandler && wasInteracting) {
+            // Send rotation update through OperationPipeline
+            if (window.app?.operationPipeline && wasInteracting) {
                 const selectedNodes = this.selection.getSelectedNodes();
                 if (selectedNodes.length === 1) {
                     const node = selectedNodes[0];
-                    this.collaborativeManager.operationHandler.execute({
-                        type: 'node_rotate',
-                        data: {
-                            nodeId: node.id,
-                            rotation: node.rotation || 0,
-                            pos: [...node.pos]
-                        }
+                    window.app.operationPipeline.execute('node_rotate', {
+                        nodeId: node.id,
+                        angle: node.rotation || 0
                     });
                 } else if (selectedNodes.length > 1) {
-                    this.collaborativeManager.operationHandler.execute({
-                        type: 'node_rotate',
-                        data: {
-                            nodeIds: selectedNodes.map(n => n.id),
-                            rotations: selectedNodes.map(n => n.rotation || 0),
-                            positions: selectedNodes.map(n => [...n.pos])
-                        }
-                    });
+                    // Execute multiple rotations as individual operations
+                    // This ensures proper dependency tracking
+                    for (const node of selectedNodes) {
+                        window.app.operationPipeline.execute('node_rotate', {
+                            nodeId: node.id,
+                            angle: node.rotation || 0
+                        });
+                    }
                 }
             }
             
@@ -1401,7 +1425,34 @@ class LGraphCanvas {
         this.deleteSelected();
     }
     
-    paste() {
+    async paste() {
+        if (!this.clipboard || this.clipboard.length === 0) return;
+        
+        // Use OperationPipeline for collaborative paste
+        if (window.app?.operationPipeline) {
+            try {
+                const mouseGraphPos = this.mouseState?.graph || [0, 0];
+                const result = await window.app.operationPipeline.execute('node_paste', {
+                    nodeData: this.clipboard,
+                    targetPosition: mouseGraphPos
+                });
+                
+                if (result && result.result && result.result.nodes) {
+                    // Select the pasted nodes
+                    this.selection.clear();
+                    result.result.nodes.forEach(node => this.selection.selectNode(node, true));
+                    this.dirty_canvas = true;
+                }
+            } catch (error) {
+                console.error('Failed to paste nodes:', error);
+            }
+        } else {
+            // Fallback to local operation
+            this.pasteLocal();
+        }
+    }
+    
+    pasteLocal() {
         if (!this.clipboard || this.clipboard.length === 0) return;
         
         // Get current mouse position in graph coordinates
@@ -1433,11 +1484,6 @@ class LGraphCanvas {
                 
                 this.graph.add(node);
                 newNodes.push(node);
-                
-                // Broadcast node creation for collaboration
-                if (this.collaborativeManager) {
-                    this.broadcastNodeCreate(node);
-                }
             }
         }
         
@@ -1449,7 +1495,35 @@ class LGraphCanvas {
         }
     }
     
-    duplicateSelected() {
+    async duplicateSelected() {
+        const selected = this.selection.getSelectedNodes();
+        if (selected.length === 0) return;
+        
+        // Use OperationPipeline for collaborative duplicate
+        if (window.app?.operationPipeline) {
+            try {
+                const nodeIds = selected.map(node => node.id);
+                const result = await window.app.operationPipeline.execute('node_duplicate', {
+                    nodeIds: nodeIds,
+                    offset: [20, 20]
+                });
+                
+                if (result && result.result && result.result.nodes) {
+                    // Select the duplicated nodes
+                    this.selection.clear();
+                    result.result.nodes.forEach(node => this.selection.selectNode(node, true));
+                    this.dirty_canvas = true;
+                }
+            } catch (error) {
+                console.error('Failed to duplicate nodes:', error);
+            }
+        } else {
+            // Fallback to local operation
+            this.duplicateSelectedLocal();
+        }
+    }
+    
+    duplicateSelectedLocal() {
         const selected = this.selection.getSelectedNodes();
         if (selected.length === 0) return;
         
@@ -1463,11 +1537,6 @@ class LGraphCanvas {
                 duplicate.pos[1] += offset;
                 this.graph.add(duplicate);
                 duplicates.push(duplicate);
-                
-                // Broadcast node creation for collaboration
-                if (this.collaborativeManager) {
-                    this.broadcastNodeCreate(duplicate);
-                }
             }
         }
         
@@ -1479,15 +1548,183 @@ class LGraphCanvas {
         }
     }
     
-    deleteSelected() {
+    async syncLocalDuplicatesWithServer() {
+        // Find all nodes marked for collaborative sync
+        const nodesToSync = this.graph.nodes.filter(node => node._needsCollaborativeSync);
+        
+        if (nodesToSync.length === 0) return;
+        
+        console.log(`Converting ${nodesToSync.length} local duplicates to collaborative nodes`);
+        console.log('Before conversion - total nodes:', this.graph.nodes.length);
+        console.log('Nodes to sync:', nodesToSync.map(n => `${n.id}:${n.type}`));
+        
+        try {
+            // Disable optimistic updates during this conversion to prevent conflicts
+            let originalOptimistic = true;
+            if (window.app.operationPipeline?.stateSyncManager) {
+                originalOptimistic = window.app.operationPipeline.stateSyncManager.optimisticEnabled;
+                window.app.operationPipeline.stateSyncManager.optimisticEnabled = false;
+            }
+            
+            // Convert local nodes to collaborative by removing them locally 
+            // and creating them through the collaborative system at final position
+            const nodeDataArray = nodesToSync.map(node => ({
+                originalId: node.id,
+                type: node.type,
+                pos: [...node.pos], // Final position after drag
+                size: [...node.size],
+                properties: { ...node.properties },
+                flags: { ...node.flags },
+                title: node.title,
+                rotation: node.rotation || 0,
+                aspectRatio: node.aspectRatio
+            }));
+            
+            // Remove local duplicates first and clear them from selection
+            console.log('Nodes before removal:', this.graph.nodes.map(n => `${n.id}:${n.type}`));
+            nodesToSync.forEach(node => {
+                console.log(`🗑️ Removing local node: ${node.id}:${node.type}`);
+                this.selection.deselectNode(node);
+                this.graph.remove(node);
+                delete node._needsCollaborativeSync;
+            });
+            console.log('Nodes after removal:', this.graph.nodes.map(n => `${n.id}:${n.type}`));
+            
+            console.log('After removal - total nodes:', this.graph.nodes.length);
+            
+            // Create them through collaborative system at final positions
+            const createdNodes = [];
+            for (const nodeData of nodeDataArray) {
+                console.log(`Creating collaborative node: ${nodeData.type} at [${nodeData.pos[0]}, ${nodeData.pos[1]}]`);
+                
+                const result = await window.app.operationPipeline.execute('node_create', {
+                    type: nodeData.type,
+                    pos: nodeData.pos,
+                    size: nodeData.size,
+                    properties: nodeData.properties,
+                    flags: nodeData.flags,
+                    title: nodeData.title,
+                    rotation: nodeData.rotation,
+                    aspectRatio: nodeData.aspectRatio
+                });
+                
+                console.log('Full result structure:', JSON.stringify(result, null, 2));
+                console.log('result.result contents:', result.result);
+                console.log('result.result.node contents:', result.result?.node);
+                
+                if (result && result.success) {
+                    // The response structure is nested: result.result.result.node
+                    let createdNode = null;
+                    if (result.result && result.result.result && result.result.result.node) {
+                        createdNode = result.result.result.node;
+                        console.log('✅ Found node in result.result.result.node');
+                    } else if (result.result && result.result.node) {
+                        createdNode = result.result.node;
+                        console.log('✅ Found node in result.result.node');
+                    } else if (result.result && result.result.id) {
+                        // Maybe the node IS the result.result
+                        createdNode = result.result;
+                        console.log('✅ Found node in result.result directly');
+                    } else {
+                        console.log('❌ Node structure not found in expected locations');
+                        console.log('Available keys in result.result:', Object.keys(result.result || {}));
+                    }
+                    
+                    if (createdNode && createdNode.id) {
+                        console.log(`✅ Created collaborative node: ${createdNode.id}:${createdNode.type}`);
+                        createdNodes.push(createdNode);
+                    } else {
+                        console.warn('❌ Result structure unexpected, trying fallback search');
+                        // Try to find the created node by type and position in the graph
+                        const matchingNodes = this.graph.nodes.filter(n => 
+                            n.type === nodeData.type && 
+                            Math.abs(n.pos[0] - nodeData.pos[0]) < 5 && 
+                            Math.abs(n.pos[1] - nodeData.pos[1]) < 5 &&
+                            !createdNodes.includes(n) &&
+                            !n._needsCollaborativeSync  // Don't find the local duplicate
+                        );
+                        console.log('Matching nodes found by position:', matchingNodes.length);
+                        if (matchingNodes.length > 0) {
+                            const matchingNode = matchingNodes[0];
+                            console.log(`✅ Found matching node by position: ${matchingNode.id}:${matchingNode.type}`);
+                            createdNodes.push(matchingNode);
+                        }
+                    }
+                } else {
+                    console.error('❌ Failed to create collaborative node:', result);
+                }
+            }
+            
+            console.log('After creation - total nodes:', this.graph.nodes.length);
+            console.log('Created nodes:', createdNodes.map(n => `${n.id}:${n.type}`));
+            
+            // Clear and reselect the new collaborative nodes
+            this.selection.clear();
+            createdNodes.forEach(node => this.selection.selectNode(node, true));
+            
+            // Restore optimistic updates
+            if (window.app.operationPipeline?.stateSyncManager) {
+                window.app.operationPipeline.stateSyncManager.optimisticEnabled = originalOptimistic;
+            }
+            
+        } catch (error) {
+            console.error('Failed to convert local duplicates to collaborative:', error);
+            
+            // If collaborative conversion failed (e.g., authentication error), 
+            // we need to handle the local duplicates properly
+            if (error.message && error.message.includes('Not authenticated')) {
+                console.log('Authentication error - keeping local duplicates but removing sync flags');
+                // Remove sync flags from local nodes so they don't cause issues
+                const stillPendingNodes = this.graph.nodes.filter(node => node._needsCollaborativeSync);
+                stillPendingNodes.forEach(node => {
+                    delete node._needsCollaborativeSync;
+                    console.log(`Kept local node (no server sync): ${node.id}:${node.type}`);
+                });
+            } else {
+                console.error('Unexpected error during conversion, cleaning up local duplicates');
+                // For other errors, remove the local duplicates to prevent phantom nodes
+                const stillPendingNodes = this.graph.nodes.filter(node => node._needsCollaborativeSync);
+                stillPendingNodes.forEach(node => {
+                    console.log(`Cleaning up failed duplicate: ${node.id}:${node.type}`);
+                    this.selection.deselectNode(node);
+                    this.graph.remove(node);
+                });
+                this.selection.clear();
+            }
+            
+            // Restore optimistic updates even on error
+            if (window.app.operationPipeline?.stateSyncManager) {
+                window.app.operationPipeline.stateSyncManager.optimisticEnabled = originalOptimistic;
+            }
+        }
+    }
+    
+    async deleteSelected() {
         const selected = this.selection.getSelectedNodes();
         if (selected.length === 0) return;
         
-        // Broadcast deletion for collaboration
-        if (this.collaborativeManager) {
-            const nodeIds = selected.map(node => node.id);
-            this.broadcastNodeDelete(nodeIds);
+        // Use OperationPipeline for collaborative deletion
+        if (window.app?.operationPipeline) {
+            try {
+                const nodeIds = selected.map(node => node.id);
+                await window.app.operationPipeline.execute('node_delete', {
+                    nodeIds: nodeIds
+                });
+                // The operation pipeline handles the actual deletion and selection clearing
+                // No need to manually remove nodes or clear selection
+                this.dirty_canvas = true;
+            } catch (error) {
+                console.error('Failed to delete nodes:', error);
+            }
+        } else {
+            // Fallback to local deletion if no operation pipeline
+            this.deleteSelectedLocal();
         }
+    }
+    
+    deleteSelectedLocal() {
+        const selected = this.selection.getSelectedNodes();
+        if (selected.length === 0) return;
         
         this.pushUndoState();
         
@@ -1600,7 +1837,21 @@ class LGraphCanvas {
         
         this.pushUndoState();
         if (this.alignmentAnimator) {
+            // Perform alignment
             this.alignmentAnimator.alignNodes(selected, axis);
+            
+            // Send the resulting positions through OperationPipeline
+            if (window.app?.operationPipeline) {
+                // Collect the new positions after alignment
+                const nodeIds = selected.map(n => n.id);
+                const positions = selected.map(n => [...n.pos]);
+                
+                // Send as a single batch move operation
+                window.app.operationPipeline.execute('node_move', {
+                    nodeIds: nodeIds,
+                    positions: positions
+                });
+            }
         }
     }
     
@@ -1812,7 +2063,7 @@ class LGraphCanvas {
             
             // Broadcast text node creation for collaboration
             if (this.collaborativeManager) {
-                this.broadcastNodeCreate(node);
+                // Node creation is already synced when added to graph
             }
             
             this.pushUndoState();
@@ -2135,11 +2386,12 @@ class LGraphCanvas {
         if (resizeHandle.type === 'single-resize') {
             const node = resizeHandle.node;
             if (node.originalAspect) {
-                if (this.actionManager) {
-                    this.actionManager.executeAction('node_reset', {
-                        nodeId: node.id,
-                        resetType: 'aspect_ratio',
-                        value: node.originalAspect
+                if (window.app?.operationPipeline) {
+                    window.app.operationPipeline.execute('node_reset', {
+                        nodeIds: [node.id],
+                        resetAspectRatio: true,
+                        resetRotation: false,
+                        values: [node.originalAspect]
                     });
                 } else {
                     // Fallback
@@ -2164,10 +2416,11 @@ class LGraphCanvas {
             }
             
             if (nodeIds.length > 0) {
-                if (this.actionManager) {
-                    this.actionManager.executeAction('node_reset', {
+                if (window.app?.operationPipeline) {
+                    window.app.operationPipeline.execute('node_reset', {
                         nodeIds: nodeIds,
-                        resetType: 'aspect_ratio',
+                        resetAspectRatio: true,
+                        resetRotation: false,
                         values: originalAspects
                     });
                 } else {
@@ -2189,11 +2442,11 @@ class LGraphCanvas {
     
     resetRotation(rotationHandle) {
         if (rotationHandle.type === 'single-rotation') {
-            if (this.actionManager) {
-                this.actionManager.executeAction('node_reset', {
-                    nodeId: rotationHandle.node.id,
-                    resetType: 'rotation',
-                    value: 0
+            if (window.app?.operationPipeline) {
+                window.app.operationPipeline.execute('node_reset', {
+                    nodeIds: [rotationHandle.node.id],
+                    resetRotation: true,
+                    resetAspectRatio: false
                 });
             } else {
                 // Fallback
@@ -2204,10 +2457,11 @@ class LGraphCanvas {
             const nodeIds = rotationHandle.nodes.map(n => n.id);
             const values = nodeIds.map(() => 0);
             
-            if (this.actionManager) {
-                this.actionManager.executeAction('node_reset', {
+            if (window.app?.operationPipeline) {
+                window.app.operationPipeline.execute('node_reset', {
                     nodeIds: nodeIds,
-                    resetType: 'rotation',
+                    resetRotation: true,
+                    resetAspectRatio: false,
                     values: values
                 });
             } else {
@@ -2229,14 +2483,7 @@ class LGraphCanvas {
         this.stateManager = stateManager;
     }
     
-    setActionManager(collaborativeManager) {
-        this.actionManager = new CanvasActionManager(this, this.graph, collaborativeManager);
-        
-        // Set action manager on collaborative manager for remote operations
-        if (collaborativeManager) {
-            collaborativeManager.setActionManager(this.actionManager);
-        }
-    }
+    // Action management is now handled by OperationPipeline
     
     pushUndoState() {
         if (this.stateManager && typeof this.stateManager.pushUndoState === 'function') {
@@ -2897,178 +3144,44 @@ class LGraphCanvas {
     // ===================================
     
     broadcastNodeMove() {
-        if (!this.collaborativeManager || this.collaborativeManager._isApplyingRemoteOp) return;
-        
-        const selectedNodes = this.selection.getSelectedNodes();
-        if (selectedNodes.length === 0) return;
-        
-        if (selectedNodes.length === 1) {
-            // Single node move
-            const node = selectedNodes[0];
-            this.collaborativeManager.sendOperation('node_move', {
-                nodeId: node.id,
-                pos: [...node.pos]
-            });
-        } else {
-            // Multi-node move
-            const nodeIds = selectedNodes.map(node => node.id);
-            const positions = selectedNodes.map(node => [...node.pos]);
-            this.collaborativeManager.sendOperation('node_move', {
-                nodeIds: nodeIds,
-                positions: positions
-            });
-        }
+        // Now handled by OperationPipeline - this method is kept for compatibility
+        // Operations are sent through the pipeline when nodes are moved
     }
     
     broadcastNodeResize() {
-        if (!this.collaborativeManager || this.collaborativeManager._isApplyingRemoteOp) return;
-        
-        const selectedNodes = this.selection.getSelectedNodes();
-        if (selectedNodes.length === 0) return;
-        
-        if (selectedNodes.length === 1) {
-            // Single node resize
-            const node = selectedNodes[0];
-            this.collaborativeManager.sendOperation('node_resize', {
-                nodeId: node.id,
-                size: [...node.size],
-                pos: [...node.pos]
-            });
-        } else {
-            // Multi-node resize
-            const nodeIds = selectedNodes.map(node => node.id);
-            const sizes = selectedNodes.map(node => [...node.size]);
-            const positions = selectedNodes.map(node => [...node.pos]);
-            this.collaborativeManager.sendOperation('node_resize', {
-                nodeIds: nodeIds,
-                sizes: sizes,
-                positions: positions
-            });
-        }
+        // Now handled by OperationPipeline - this method is kept for compatibility
+        // Operations are sent through the pipeline when nodes are resized
     }
     
-    
     broadcastNodeDelete(nodeIds) {
-        if (!this.collaborativeManager || this.collaborativeManager._isApplyingRemoteOp) return;
-        
-        if (nodeIds.length === 1) {
-            this.collaborativeManager.sendOperation('node_delete', {
-                nodeId: nodeIds[0]
-            });
-        } else {
-            this.collaborativeManager.sendOperation('node_delete', {
-                nodeIds: nodeIds
-            });
-        }
+        // Now handled by OperationPipeline - this method is kept for compatibility
+        // Operations are sent through the pipeline when nodes are deleted
     }
     
     broadcastNodeCreate(node) {
-        if (!this.collaborativeManager || this.collaborativeManager._isApplyingRemoteOp) return;
-        
-        const nodeData = {
-            id: node.id,
-            type: node.type,
-            pos: [...node.pos],
-            size: [...node.size],
-            title: node.title,
-            properties: { ...node.properties },
-            flags: { ...node.flags },
-            aspectRatio: node.aspectRatio || 1,
-            rotation: node.rotation || 0
-        };
-        
-        // Ensure all media properties are included
-        if (node.type === 'media/image' || node.type === 'media/video') {
-            // Make sure we have all the required properties
-            if (!nodeData.properties.src && node.properties.src) {
-                nodeData.properties.src = node.properties.src;
-            }
-            if (!nodeData.properties.hash && node.properties.hash) {
-                nodeData.properties.hash = node.properties.hash;
-            }
-            if (!nodeData.properties.filename && node.properties.filename) {
-                nodeData.properties.filename = node.properties.filename;
-            }
-            
-            // Ensure serverFilename is preserved for collaborative media loading
-            if (node.properties.hash && !nodeData.properties.serverFilename && nodeData.properties.filename) {
-                nodeData.properties.serverFilename = nodeData.properties.filename;
-            }
-            
-            console.log('Broadcasting media node with properties:', nodeData.properties);
-        }
-        
-        // Note: We're sending the operation directly since the node is already created
-        // We don't want to execute the action again locally
-        if (this.collaborativeManager?.isConnected) {
-            this.collaborativeManager.sendOperation('node_create', { nodeData });
-        }
+        // Now handled by OperationPipeline - this method is kept for compatibility
+        // The pipeline handles node creation when nodes are added to the graph
     }
     
     broadcastNodeReset(nodeIds, resetType, values) {
-        if (!this.collaborativeManager || this.collaborativeManager._isApplyingRemoteOp) return;
-        
-        if (nodeIds.length === 1) {
-            this.collaborativeManager.sendOperation('node_reset', {
-                nodeId: nodeIds[0],
-                resetRotation: resetType === 'rotation',
-                resetAspectRatio: resetType === 'aspectRatio'
-            });
-        } else {
-            // Handle multiple nodes
-            nodeIds.forEach((nodeId, index) => {
-                this.collaborativeManager.sendOperation('node_reset', {
-                    nodeId: nodeId,
-                    resetRotation: resetType === 'rotation',
-                    resetAspectRatio: resetType === 'aspectRatio'
-                });
-            });
-        }
+        // Now handled by OperationPipeline - this method is kept for compatibility
+        // Reset operations are sent through the pipeline
     }
     
     broadcastVideoToggle(nodeId, playing) {
-        if (!this.collaborativeManager || this.collaborativeManager._isApplyingRemoteOp) return;
-        
-        this.collaborativeManager.sendOperation('video_toggle', {
-            nodeId: nodeId,
-            playing: playing
-        });
+        // Now handled by OperationPipeline - this method is kept for compatibility
+        // Video toggle operations are sent through the pipeline
     }
     
     // Removed broadcastAlignment - alignment now uses node_move operations
     
     broadcastNodePropertyUpdate(nodeIds, propertyName, values) {
-        if (!this.collaborativeManager || this.collaborativeManager._isApplyingRemoteOp) return;
-        
-        if (Array.isArray(nodeIds) && Array.isArray(values)) {
-            // Multi-node property update - send individual updates for consistency
-            nodeIds.forEach((nodeId, index) => {
-                this.collaborativeManager.sendOperation('node_property_update', {
-                    nodeId: nodeId,
-                    property: propertyName,
-                    value: values[index]
-                });
-            });
-        } else {
-            // Single node property update
-            this.collaborativeManager.sendOperation('node_property_update', {
-                nodeId: Array.isArray(nodeIds) ? nodeIds[0] : nodeIds,
-                property: propertyName,
-                value: Array.isArray(values) ? values[0] : values
-            });
-        }
+        // Now handled by OperationPipeline - this method is kept for compatibility
+        // Property updates are sent through the pipeline
     }
     
     broadcastLayerOrderChange(nodes, direction) {
-        if (!this.collaborativeManager || this.collaborativeManager._isApplyingRemoteOp) return;
-        
-        const nodeIds = nodes.map(node => node.id);
-        const layerOrder = this.graph.nodes.map(node => node.id);
-        
-        this.collaborativeManager.sendOperation('layer_order_change', {
-            nodeIds: nodeIds,
-            direction: direction,
-            newLayerOrder: layerOrder
-        });
+        // Now handled by OperationPipeline - this method is kept for compatibility
+        // Layer order changes are sent through the pipeline
     }
 }

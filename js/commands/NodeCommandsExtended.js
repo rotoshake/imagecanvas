@@ -8,7 +8,7 @@ class ResizeNodeCommand extends Command {
     }
     
     validate() {
-        const { nodeIds, sizes } = this.params;
+        const { nodeIds, sizes, positions } = this.params;
         
         if (!nodeIds || !Array.isArray(nodeIds) || nodeIds.length === 0) {
             return { valid: false, error: 'Missing or invalid nodeIds' };
@@ -16,6 +16,10 @@ class ResizeNodeCommand extends Command {
         
         if (!sizes || !Array.isArray(sizes) || sizes.length !== nodeIds.length) {
             return { valid: false, error: 'Invalid sizes array' };
+        }
+        
+        if (positions && (!Array.isArray(positions) || positions.length !== nodeIds.length)) {
+            return { valid: false, error: 'Invalid positions array' };
         }
         
         return { valid: true };
@@ -30,18 +34,42 @@ class ResizeNodeCommand extends Command {
             const node = graph.getNodeById(nodeId);
             if (!node) return;
             
+            const newSize = [...this.params.sizes[index]];
+            
             this.undoData.nodes.push({
                 id: node.id,
-                oldSize: [...node.size]
+                oldSize: [...node.size],
+                oldPos: [...node.pos]
             });
             
-            node.size[0] = this.params.sizes[index][0];
-            node.size[1] = this.params.sizes[index][1];
+            // Update size
+            node.size[0] = newSize[0];
+            node.size[1] = newSize[1];
             
-            // Call node's resize handler if it exists
-            if (node.onResize) {
-                node.onResize();
+            // If positions are provided (from server/remote), use them directly
+            if (this.params.positions && this.params.positions[index]) {
+                node.pos[0] = this.params.positions[index][0];
+                node.pos[1] = this.params.positions[index][1];
             }
+            // Otherwise, for local operations on rotated nodes, adjust position to maintain center
+            else if (this.origin === 'local' && node.rotation && Math.abs(node.rotation) > 0.001) {
+                // This should only happen for local operations
+                // Remote operations should include positions when needed
+                const oldCenterX = this.undoData.nodes[this.undoData.nodes.length - 1].oldPos[0] + 
+                                   this.undoData.nodes[this.undoData.nodes.length - 1].oldSize[0] / 2;
+                const oldCenterY = this.undoData.nodes[this.undoData.nodes.length - 1].oldPos[1] + 
+                                   this.undoData.nodes[this.undoData.nodes.length - 1].oldSize[1] / 2;
+                
+                node.pos[0] = oldCenterX - newSize[0] / 2;
+                node.pos[1] = oldCenterY - newSize[1] / 2;
+            }
+            
+            // Update aspect ratio to match the new size
+            // This preserves non-uniform scaling from remote clients
+            node.aspectRatio = node.size[0] / node.size[1];
+            
+            // Don't call onResize() for collaborative operations to preserve exact sizing
+            // onResize() can interfere with non-uniform scaling by enforcing aspect ratios
         });
         
         this.executed = true;
@@ -55,11 +83,16 @@ class ResizeNodeCommand extends Command {
             throw new Error('No undo data available');
         }
         
-        this.undoData.nodes.forEach(({ id, oldSize }) => {
+        this.undoData.nodes.forEach(({ id, oldSize, oldPos }) => {
             const node = graph.getNodeById(id);
             if (node) {
                 node.size[0] = oldSize[0];
                 node.size[1] = oldSize[1];
+                
+                if (oldPos) {
+                    node.pos[0] = oldPos[0];
+                    node.pos[1] = oldPos[1];
+                }
                 
                 if (node.onResize) {
                     node.onResize();
@@ -77,14 +110,15 @@ class ResetNodeCommand extends Command {
     }
     
     validate() {
-        const { nodeIds, resetType } = this.params;
+        const { nodeIds, resetType, resetRotation, resetAspectRatio } = this.params;
         
         if (!nodeIds || !Array.isArray(nodeIds) || nodeIds.length === 0) {
             return { valid: false, error: 'Missing or invalid nodeIds' };
         }
         
-        if (!resetType) {
-            return { valid: false, error: 'Missing reset type' };
+        // Support both old resetType format and new boolean format
+        if (!resetType && !resetRotation && !resetAspectRatio) {
+            return { valid: false, error: 'Missing reset parameters' };
         }
         
         return { valid: true };
@@ -101,28 +135,62 @@ class ResetNodeCommand extends Command {
             
             const undoInfo = {
                 id: node.id,
-                resetType: this.params.resetType
+                operations: []
             };
             
-            switch (this.params.resetType) {
-                case 'rotation':
-                    undoInfo.oldRotation = node.rotation || 0;
-                    node.rotation = this.params.values ? this.params.values[index] : 0;
-                    break;
-                    
-                case 'scale':
-                    if (node.properties.scale !== undefined) {
-                        undoInfo.oldScale = node.properties.scale;
-                        node.properties.scale = this.params.values ? this.params.values[index] : 1;
-                    }
-                    break;
-                    
-                case 'aspectRatio':
-                    if (node.resetAspectRatio) {
-                        undoInfo.oldSize = [...node.size];
-                        node.resetAspectRatio();
-                    }
-                    break;
+            // Handle new boolean format
+            if (this.params.resetRotation) {
+                undoInfo.operations.push({
+                    type: 'rotation',
+                    oldValue: node.rotation || 0
+                });
+                node.rotation = this.params.values ? this.params.values[index] : 0;
+            }
+            
+            if (this.params.resetAspectRatio) {
+                if (node.originalAspect) {
+                    undoInfo.operations.push({
+                        type: 'aspectRatio',
+                        oldSize: [...node.size]
+                    });
+                    const value = this.params.values ? this.params.values[index] : node.originalAspect;
+                    node.size[1] = node.size[0] / value;
+                    if (node.onResize) node.onResize();
+                }
+            }
+            
+            // Handle old resetType format for backwards compatibility
+            if (this.params.resetType) {
+                switch (this.params.resetType) {
+                    case 'rotation':
+                        undoInfo.operations.push({
+                            type: 'rotation',
+                            oldValue: node.rotation || 0
+                        });
+                        node.rotation = this.params.values ? this.params.values[index] : 0;
+                        break;
+                        
+                    case 'scale':
+                        if (node.properties.scale !== undefined) {
+                            undoInfo.operations.push({
+                                type: 'scale',
+                                oldValue: node.properties.scale
+                            });
+                            node.properties.scale = this.params.values ? this.params.values[index] : 1;
+                        }
+                        break;
+                        
+                    case 'aspectRatio':
+                        if (node.originalAspect) {
+                            undoInfo.operations.push({
+                                type: 'aspectRatio',
+                                oldSize: [...node.size]
+                            });
+                            node.size[1] = node.size[0] / node.originalAspect;
+                            if (node.onResize) node.onResize();
+                        }
+                        break;
+                }
             }
             
             this.undoData.nodes.push(undoInfo);
@@ -143,23 +211,52 @@ class ResetNodeCommand extends Command {
             const node = graph.getNodeById(undoInfo.id);
             if (!node) return;
             
-            switch (undoInfo.resetType) {
-                case 'rotation':
-                    node.rotation = undoInfo.oldRotation;
-                    break;
-                    
-                case 'scale':
-                    if (undoInfo.oldScale !== undefined) {
-                        node.properties.scale = undoInfo.oldScale;
+            // Handle new operations format
+            if (undoInfo.operations) {
+                undoInfo.operations.forEach(op => {
+                    switch (op.type) {
+                        case 'rotation':
+                            node.rotation = op.oldValue;
+                            break;
+                            
+                        case 'scale':
+                            if (op.oldValue !== undefined) {
+                                node.properties.scale = op.oldValue;
+                            }
+                            break;
+                            
+                        case 'aspectRatio':
+                            if (op.oldSize) {
+                                node.size[0] = op.oldSize[0];
+                                node.size[1] = op.oldSize[1];
+                                if (node.onResize) node.onResize();
+                            }
+                            break;
                     }
-                    break;
-                    
-                case 'aspectRatio':
-                    if (undoInfo.oldSize) {
-                        node.size[0] = undoInfo.oldSize[0];
-                        node.size[1] = undoInfo.oldSize[1];
-                    }
-                    break;
+                });
+            }
+            
+            // Handle old resetType format for backwards compatibility
+            if (undoInfo.resetType) {
+                switch (undoInfo.resetType) {
+                    case 'rotation':
+                        node.rotation = undoInfo.oldRotation;
+                        break;
+                        
+                    case 'scale':
+                        if (undoInfo.oldScale !== undefined) {
+                            node.properties.scale = undoInfo.oldScale;
+                        }
+                        break;
+                        
+                    case 'aspectRatio':
+                        if (undoInfo.oldSize) {
+                            node.size[0] = undoInfo.oldSize[0];
+                            node.size[1] = undoInfo.oldSize[1];
+                            if (node.onResize) node.onResize();
+                        }
+                        break;
+                }
             }
         });
         
@@ -359,6 +456,228 @@ class BatchPropertyUpdateCommand extends Command {
     }
 }
 
+class DuplicateNodesCommand extends Command {
+    constructor(params, origin = 'local') {
+        super('node_duplicate', params, origin);
+    }
+    
+    validate() {
+        const { nodeIds, offset } = this.params;
+        
+        if (!nodeIds || !Array.isArray(nodeIds) || nodeIds.length === 0) {
+            return { valid: false, error: 'Missing or invalid nodeIds' };
+        }
+        
+        return { valid: true };
+    }
+    
+    async execute(context) {
+        const { graph } = context;
+        
+        this.undoData = { createdNodes: [] };
+        const createdNodes = [];
+        const offset = this.params.offset || [20, 20];
+        
+        for (const nodeId of this.params.nodeIds) {
+            const originalNode = graph.getNodeById(nodeId);
+            if (!originalNode) continue;
+            
+            // Serialize and deserialize to create a copy
+            const nodeData = this.serializeNode(originalNode);
+            const duplicate = await this.createNodeFromData(nodeData, context);
+            if (duplicate) {
+                // Apply offset
+                duplicate.pos[0] += offset[0];
+                duplicate.pos[1] += offset[1];
+                
+                // Generate new ID
+                duplicate.id = Date.now() + Math.floor(Math.random() * 1000);
+                
+                graph.add(duplicate);
+                createdNodes.push(duplicate);
+                this.undoData.createdNodes.push(duplicate.id);
+            }
+        }
+        
+        this.executed = true;
+        return { success: true, nodes: createdNodes };
+    }
+    
+    async undo(context) {
+        const { graph } = context;
+        
+        if (!this.undoData) {
+            throw new Error('No undo data available');
+        }
+        
+        // Remove created nodes
+        for (const nodeId of this.undoData.createdNodes) {
+            const node = graph.getNodeById(nodeId);
+            if (node) {
+                graph.remove(node);
+            }
+        }
+        
+        return { success: true };
+    }
+    
+    serializeNode(node) {
+        return {
+            type: node.type,
+            pos: [...node.pos],
+            size: [...node.size],
+            title: node.title,
+            properties: { ...node.properties },
+            flags: { ...node.flags },
+            aspectRatio: node.aspectRatio,
+            rotation: node.rotation
+        };
+    }
+    
+    async createNodeFromData(nodeData, context) {
+        const node = NodeFactory.createNode(nodeData.type);
+        if (!node) return null;
+        
+        // Apply all properties
+        node.pos = [...nodeData.pos];
+        node.size = [...nodeData.size];
+        node.properties = { ...nodeData.properties };
+        node.rotation = nodeData.rotation || 0;
+        node.flags = { ...nodeData.flags };
+        node.title = nodeData.title;
+        node.aspectRatio = nodeData.aspectRatio;
+        
+        // Handle media nodes
+        if (node.type === 'media/image' && nodeData.properties.src) {
+            await node.setImage(
+                nodeData.properties.src,
+                nodeData.properties.filename,
+                nodeData.properties.hash
+            );
+        } else if (node.type === 'media/video' && nodeData.properties.src) {
+            await node.setVideo(
+                nodeData.properties.src,
+                nodeData.properties.filename,
+                nodeData.properties.hash
+            );
+        }
+        
+        return node;
+    }
+}
+
+class PasteNodesCommand extends Command {
+    constructor(params, origin = 'local') {
+        super('node_paste', params, origin);
+    }
+    
+    validate() {
+        const { nodeData, targetPosition } = this.params;
+        
+        if (!nodeData || !Array.isArray(nodeData) || nodeData.length === 0) {
+            return { valid: false, error: 'Missing or invalid node data' };
+        }
+        
+        if (!targetPosition || !Array.isArray(targetPosition) || targetPosition.length !== 2) {
+            return { valid: false, error: 'Invalid target position' };
+        }
+        
+        return { valid: true };
+    }
+    
+    async execute(context) {
+        const { graph } = context;
+        
+        this.undoData = { createdNodes: [] };
+        const createdNodes = [];
+        const { nodeData, targetPosition } = this.params;
+        
+        // Calculate center of clipboard content
+        let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+        for (const data of nodeData) {
+            minX = Math.min(minX, data.pos[0]);
+            minY = Math.min(minY, data.pos[1]);
+            maxX = Math.max(maxX, data.pos[0] + data.size[0]);
+            maxY = Math.max(maxY, data.pos[1] + data.size[1]);
+        }
+        
+        const clipboardCenter = [(minX + maxX) / 2, (minY + maxY) / 2];
+        
+        for (const data of nodeData) {
+            const node = await this.createNodeFromData(data, context);
+            if (node) {
+                // Position relative to target position
+                const offsetFromCenter = [
+                    data.pos[0] - clipboardCenter[0],
+                    data.pos[1] - clipboardCenter[1]
+                ];
+                
+                node.pos[0] = targetPosition[0] + offsetFromCenter[0];
+                node.pos[1] = targetPosition[1] + offsetFromCenter[1];
+                
+                // Generate new ID
+                node.id = Date.now() + Math.floor(Math.random() * 1000);
+                
+                graph.add(node);
+                createdNodes.push(node);
+                this.undoData.createdNodes.push(node.id);
+            }
+        }
+        
+        this.executed = true;
+        return { success: true, nodes: createdNodes };
+    }
+    
+    async undo(context) {
+        const { graph } = context;
+        
+        if (!this.undoData) {
+            throw new Error('No undo data available');
+        }
+        
+        // Remove created nodes
+        for (const nodeId of this.undoData.createdNodes) {
+            const node = graph.getNodeById(nodeId);
+            if (node) {
+                graph.remove(node);
+            }
+        }
+        
+        return { success: true };
+    }
+    
+    async createNodeFromData(nodeData, context) {
+        const node = NodeFactory.createNode(nodeData.type);
+        if (!node) return null;
+        
+        // Apply all properties
+        node.pos = [...nodeData.pos];
+        node.size = [...nodeData.size];
+        node.properties = { ...nodeData.properties };
+        node.rotation = nodeData.rotation || 0;
+        node.flags = { ...nodeData.flags };
+        node.title = nodeData.title;
+        node.aspectRatio = nodeData.aspectRatio;
+        
+        // Handle media nodes
+        if (node.type === 'media/image' && nodeData.properties.src) {
+            await node.setImage(
+                nodeData.properties.src,
+                nodeData.properties.filename,
+                nodeData.properties.hash
+            );
+        } else if (node.type === 'media/video' && nodeData.properties.src) {
+            await node.setVideo(
+                nodeData.properties.src,
+                nodeData.properties.filename,
+                nodeData.properties.hash
+            );
+        }
+        
+        return node;
+    }
+}
+
 // Register extended commands
 if (typeof window !== 'undefined') {
     window.NodeCommandsExtended = {
@@ -366,6 +685,8 @@ if (typeof window !== 'undefined') {
         ResetNodeCommand,
         RotateNodeCommand,
         VideoToggleCommand,
-        BatchPropertyUpdateCommand
+        BatchPropertyUpdateCommand,
+        DuplicateNodesCommand,
+        PasteNodesCommand
     };
 }

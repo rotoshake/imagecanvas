@@ -1,0 +1,38 @@
+{
+  "passed": 8,
+  "failed": 0,
+  "tests": [
+    {
+      "name": "GUI: Page loads with title",
+      "status": "passed"
+    },
+    {
+      "name": "GUI: Canvas element exists",
+      "status": "passed"
+    },
+    {
+      "name": "GUI: Application scripts loaded",
+      "status": "passed"
+    },
+    {
+      "name": "GUI: Canvas accepts click events",
+      "status": "passed"
+    },
+    {
+      "name": "GUI: WebSocket connection established",
+      "status": "passed"
+    },
+    {
+      "name": "GUI: Collaboration features visible",
+      "status": "passed"
+    },
+    {
+      "name": "GUI: Media handling features present",
+      "status": "passed"
+    },
+    {
+      "name": "GUI: Application remains responsive under error conditions",
+      "status": "passed"
+    }
+  ]
+}

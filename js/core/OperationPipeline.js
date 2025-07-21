@@ -19,6 +19,10 @@ class OperationPipeline {
         this.mergeWindow = 100;
         this.pendingMerge = null;
         
+        // Operation dependency tracking
+        this.dependencyTracker = typeof OperationDependencyTracker !== 'undefined' ? 
+            new OperationDependencyTracker() : null;
+        
         // Register built-in commands
         this.registerBuiltinCommands();
         
@@ -29,6 +33,7 @@ class OperationPipeline {
      * Register built-in commands
      */
     registerBuiltinCommands() {
+        // Basic node commands
         if (typeof MoveNodeCommand !== 'undefined') {
             this.registerCommand('node_move', MoveNodeCommand);
         }
@@ -40,6 +45,29 @@ class OperationPipeline {
         }
         if (typeof UpdateNodePropertyCommand !== 'undefined') {
             this.registerCommand('node_property_update', UpdateNodePropertyCommand);
+        }
+        
+        // Extended node commands
+        if (typeof ResizeNodeCommand !== 'undefined') {
+            this.registerCommand('node_resize', ResizeNodeCommand);
+        }
+        if (typeof ResetNodeCommand !== 'undefined') {
+            this.registerCommand('node_reset', ResetNodeCommand);
+        }
+        if (typeof RotateNodeCommand !== 'undefined') {
+            this.registerCommand('node_rotate', RotateNodeCommand);
+        }
+        if (typeof VideoToggleCommand !== 'undefined') {
+            this.registerCommand('video_toggle', VideoToggleCommand);
+        }
+        if (typeof BatchPropertyUpdateCommand !== 'undefined') {
+            this.registerCommand('node_batch_property_update', BatchPropertyUpdateCommand);
+        }
+        if (typeof DuplicateNodesCommand !== 'undefined') {
+            this.registerCommand('node_duplicate', DuplicateNodesCommand);
+        }
+        if (typeof PasteNodesCommand !== 'undefined') {
+            this.registerCommand('node_paste', PasteNodesCommand);
         }
     }
     
@@ -88,6 +116,14 @@ class OperationPipeline {
             throw new Error(`Validation failed: ${validation.error}`);
         }
         
+        // Extract affected node IDs and register with dependency tracker
+        if (this.dependencyTracker) {
+            const nodeIds = this.extractNodeIds(command);
+            if (nodeIds.length > 0) {
+                this.dependencyTracker.registerOperation(command.id, nodeIds, command);
+            }
+        }
+        
         // Check if we can merge with pending command
         if (command.origin === 'local' && this.pendingMerge && this.pendingMerge.command.canMergeWith(command)) {
             // Merge commands
@@ -131,6 +167,17 @@ class OperationPipeline {
     }
     
     /**
+     * Check if we should use state sync for this operation
+     */
+    shouldUseStateSync(command) {
+        // Always use state sync for local operations when connected
+        // This is now the primary sync method
+        return this.app.stateSyncManager && 
+               command.origin === 'local' &&
+               this.app.networkLayer?.isConnected;
+    }
+    
+    /**
      * Process the execution queue
      */
     async processQueue() {
@@ -142,44 +189,64 @@ class OperationPipeline {
         try {
             console.log(`⚡ Executing ${command.origin} command: ${command.type}`, command.params);
             
-            // Execute command
-            const context = {
-                app: this.app,
-                graph: this.app.graph,
-                canvas: this.app.graphCanvas
-            };
-            
-            const result = await command.execute(context);
-            
-            // Track executed remote operations
-            if (command.origin === 'remote') {
-                this.executedOperations.add(command.id);
+            // Check if we should use state sync
+            if (this.shouldUseStateSync(command) && !options.skipBroadcast) {
+                // Route through StateSyncManager for server-authoritative execution
+                console.log('🔄 Using server-authoritative state sync');
                 
-                // Clean up old entries (keep last 1000)
-                if (this.executedOperations.size > 1000) {
-                    const entries = Array.from(this.executedOperations);
-                    entries.slice(0, entries.length - 1000).forEach(id => {
-                        this.executedOperations.delete(id);
-                    });
+                try {
+                    const result = await this.app.stateSyncManager.executeOperation(command);
+                    
+                    // Add to history
+                    if (!options.skipHistory) {
+                        this.addToHistory(command);
+                    }
+                    
+                    resolve({ success: true, result });
+                } catch (error) {
+                    // If state sync fails, we don't fall back to local execution
+                    // This ensures consistency
+                    console.error('State sync failed:', error);
+                    reject(error);
                 }
+                
+            } else {
+                // Execute locally (for remote operations or when offline)
+                const context = {
+                    app: this.app,
+                    graph: this.app.graph,
+                    canvas: this.app.graphCanvas
+                };
+                
+                const result = await command.execute(context);
+                
+                // Track executed remote operations
+                if (command.origin === 'remote') {
+                    this.executedOperations.add(command.id);
+                    
+                    // Clean up old entries (keep last 1000)
+                    if (this.executedOperations.size > 1000) {
+                        const entries = Array.from(this.executedOperations);
+                        entries.slice(0, entries.length - 1000).forEach(id => {
+                            this.executedOperations.delete(id);
+                        });
+                    }
+                }
+                
+                // Add to history (local commands only)
+                if (command.origin === 'local' && !options.skipHistory) {
+                    this.addToHistory(command);
+                }
+                
+                // No longer using legacy broadcast - state sync handles all network communication
+                
+                // Mark canvas dirty
+                if (this.app.graphCanvas) {
+                    this.app.graphCanvas.dirty_canvas = true;
+                }
+                
+                resolve({ success: true, result });
             }
-            
-            // Add to history (local commands only)
-            if (command.origin === 'local' && !options.skipHistory) {
-                this.addToHistory(command);
-            }
-            
-            // Broadcast (local commands only)
-            if (command.origin === 'local' && this.app.networkLayer?.isConnected && !options.skipBroadcast) {
-                this.app.networkLayer.broadcast(command);
-            }
-            
-            // Mark canvas dirty
-            if (this.app.graphCanvas) {
-                this.app.graphCanvas.dirty_canvas = true;
-            }
-            
-            resolve({ success: true, result });
             
         } catch (error) {
             console.error(`❌ Command execution failed:`, error);
@@ -189,8 +256,12 @@ class OperationPipeline {
             
             // Process next command
             if (this.executionQueue.length > 0) {
-                // Small delay to prevent blocking UI
-                setTimeout(() => this.processQueue(), 0);
+                // Use requestIdleCallback for better performance, fallback to setTimeout
+                if (typeof requestIdleCallback !== 'undefined') {
+                    requestIdleCallback(() => this.processQueue(), { timeout: 50 });
+                } else {
+                    setTimeout(() => this.processQueue(), 0);
+                }
             }
         }
     }
@@ -312,6 +383,69 @@ class OperationPipeline {
         this.historyIndex = -1;
         this.executedOperations.clear();
         console.log('🗑️ History cleared');
+    }
+    
+    /**
+     * Extract node IDs affected by a command
+     */
+    extractNodeIds(command) {
+        const nodeIds = [];
+        
+        switch (command.type) {
+            case 'node_move':
+                if (command.params.nodeId) {
+                    nodeIds.push(command.params.nodeId);
+                } else if (command.params.nodeIds) {
+                    nodeIds.push(...command.params.nodeIds);
+                }
+                break;
+                
+            case 'node_create':
+                // New nodes don't have dependencies
+                break;
+                
+            case 'node_delete':
+                if (command.params.nodeIds) {
+                    nodeIds.push(...command.params.nodeIds);
+                }
+                break;
+                
+            case 'node_resize':
+                if (command.params.nodeIds) {
+                    nodeIds.push(...command.params.nodeIds);
+                }
+                break;
+                
+            case 'node_property_update':
+                if (command.params.nodeId) {
+                    nodeIds.push(command.params.nodeId);
+                }
+                break;
+                
+            case 'node_rotate':
+                if (command.params.nodeId) {
+                    nodeIds.push(command.params.nodeId);
+                }
+                break;
+                
+            case 'video_toggle':
+                if (command.params.nodeId) {
+                    nodeIds.push(command.params.nodeId);
+                }
+                break;
+                
+            case 'node_batch_property_update':
+                if (command.params.updates) {
+                    for (const update of command.params.updates) {
+                        if (update.nodeId) {
+                            nodeIds.push(update.nodeId);
+                        }
+                    }
+                }
+                break;
+        }
+        
+        return nodeIds;
     }
     
     /**
