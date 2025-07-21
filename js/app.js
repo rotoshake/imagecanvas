@@ -261,6 +261,10 @@ async function initApp() {
         app.propertiesInspector = new FloatingPropertiesInspector(app.graphCanvas);
         window.propertiesInspector = app.propertiesInspector;
         
+        // Initialize Navigation State Manager
+        app.navigationStateManager = new NavigationStateManager(app);
+        window.navigationStateManager = app.navigationStateManager;
+        
         // Load last canvas or create default
         // Wait for network connection and architecture initialization
         setTimeout(() => {
@@ -275,6 +279,10 @@ async function initApp() {
                         isConnected: app.networkLayer?.isConnected,
                         hasStateSyncManager: !!app.stateSyncManager
                     });
+                    
+                    // Initialize NavigationStateManager
+                    app.navigationStateManager.initialize();
+                    
                     app.canvasNavigator.loadStartupCanvas();
                 } else {
                     console.log('⏳ Waiting for collaborative architecture...');

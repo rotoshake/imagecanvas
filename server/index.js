@@ -297,9 +297,12 @@ class ImageCanvasServer {
                     return res.status(404).json({ error: 'Project not found' });
                 }
                 
+                const canvasData = project.canvas_data ? JSON.parse(project.canvas_data) : null;
+                
                 res.json({ 
                     success: true,
-                    canvas_data: project.canvas_data ? JSON.parse(project.canvas_data) : null
+                    canvas_data: canvasData,
+                    navigation_state: canvasData?.navigation_state || null
                 });
             } catch (error) {
                 console.error('Failed to load canvas:', error);
@@ -332,6 +335,54 @@ class ImageCanvasServer {
             } catch (error) {
                 console.error('Failed to save canvas:', error);
                 res.status(500).json({ error: 'Failed to save canvas' });
+            }
+        });
+        
+        // PATCH endpoint for navigation state updates
+        this.app.patch('/projects/:id/canvas', async (req, res) => {
+            try {
+                const projectId = parseInt(req.params.id);
+                const { navigation_state } = req.body;
+                
+                if (!navigation_state) {
+                    return res.status(400).json({ error: 'Navigation state required' });
+                }
+                
+                // Validate navigation state structure
+                if (!this.isValidNavigationState(navigation_state)) {
+                    return res.status(400).json({ error: 'Invalid navigation state format' });
+                }
+                
+                // Get current canvas data
+                const project = await this.db.get(
+                    'SELECT canvas_data FROM projects WHERE id = ?',
+                    [projectId]
+                );
+                
+                if (!project) {
+                    return res.status(404).json({ error: 'Project not found' });
+                }
+                
+                // Parse existing canvas data or create new structure
+                let canvasData = project.canvas_data ? JSON.parse(project.canvas_data) : {};
+                
+                // Update navigation state
+                canvasData.navigation_state = navigation_state;
+                
+                // Save back to database
+                await this.db.run(
+                    'UPDATE projects SET canvas_data = ?, last_modified = CURRENT_TIMESTAMP WHERE id = ?',
+                    [JSON.stringify(canvasData), projectId]
+                );
+                
+                res.json({ 
+                    success: true,
+                    message: 'Navigation state updated'
+                });
+                
+            } catch (error) {
+                console.error('Failed to update navigation state:', error);
+                res.status(500).json({ error: 'Failed to update navigation state' });
             }
         });
         
@@ -418,10 +469,13 @@ class ImageCanvasServer {
             try {
                 const projectId = parseInt(req.params.id);
                 
-                // Delete the project and related data
-                await this.db.run('DELETE FROM project_collaborators WHERE project_id = ?', [projectId]);
-                await this.db.run('DELETE FROM project_versions WHERE project_id = ?', [projectId]);
+                // Delete all related data in the correct order to avoid foreign key violations
+                await this.db.run('DELETE FROM active_sessions WHERE project_id = ?', [projectId]);
+                await this.db.run('DELETE FROM canvases WHERE project_id = ?', [projectId]);
+                await this.db.run('DELETE FROM files WHERE project_id = ?', [projectId]);
                 await this.db.run('DELETE FROM operations WHERE project_id = ?', [projectId]);
+                await this.db.run('DELETE FROM project_versions WHERE project_id = ?', [projectId]);
+                await this.db.run('DELETE FROM project_collaborators WHERE project_id = ?', [projectId]);
                 await this.db.run('DELETE FROM projects WHERE id = ?', [projectId]);
                 
                 // Notify connected users
@@ -582,6 +636,24 @@ class ImageCanvasServer {
         }
         this.server.close();
         console.log('🛑 Server stopped');
+    }
+
+    /**
+     * Validate navigation state structure
+     */
+    isValidNavigationState(state) {
+        return (
+            state &&
+            typeof state.scale === 'number' &&
+            Array.isArray(state.offset) &&
+            state.offset.length === 2 &&
+            typeof state.offset[0] === 'number' &&
+            typeof state.offset[1] === 'number' &&
+            state.scale > 0 &&
+            state.scale <= 10 && // Reasonable bounds
+            typeof state.timestamp === 'number' &&
+            state.timestamp > 0
+        );
     }
 }
 
