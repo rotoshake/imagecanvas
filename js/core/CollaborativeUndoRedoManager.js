@@ -33,6 +33,7 @@ class CollaborativeUndoRedoManager {
         // Operation bundling
         this.bundleWindow = 100;
         this.pendingBundle = null;
+        this.bundleTimeout = null;
         
         // Track what operations to exclude
         this.excludeFromHistory = new Set([
@@ -42,11 +43,23 @@ class CollaborativeUndoRedoManager {
             'cursor_move'
         ]);
         
-        // Delay interceptor setup to ensure dependencies are ready
-        setTimeout(() => {
+        // Setup interceptors immediately if possible, or wait
+        if (this.app.stateSyncManager) {
             this.setupInterceptors();
-            console.log('🎯 Interceptors set up');
-        }, 0);
+            console.log('🎯 Interceptors set up immediately');
+        } else {
+            // Delay interceptor setup to ensure dependencies are ready
+            const checkInterval = setInterval(() => {
+                if (this.app.stateSyncManager) {
+                    clearInterval(checkInterval);
+                    this.setupInterceptors();
+                    console.log('🎯 Interceptors set up after waiting');
+                }
+            }, 50);
+            
+            // Timeout after 5 seconds
+            setTimeout(() => clearInterval(checkInterval), 5000);
+        }
         
         this.setupNetworkHandlers();
         console.log('🤝 CollaborativeUndoRedoManager initialized');
@@ -96,6 +109,47 @@ class CollaborativeUndoRedoManager {
         if (this.app.stateSyncManager && originalExecuteOperation) {
             console.log('  ✅ Intercepting StateSyncManager.executeOperation');
             
+            // Also intercept applyOptimistic to capture immediately after local execution
+            const originalApplyOptimistic = this.app.stateSyncManager.applyOptimistic?.bind(this.app.stateSyncManager);
+            
+            if (originalApplyOptimistic) {
+                const undoManager = this; // Capture reference
+                
+                this.app.stateSyncManager.applyOptimistic = async function(command) {
+                    console.log('🎯 applyOptimistic interceptor - before execution:', {
+                        type: command.type,
+                        executed: command.executed,
+                        hasUndoData: !!command.undoData
+                    });
+                    
+                    // Execute locally
+                    const result = await originalApplyOptimistic.call(this, command);
+                    
+                    console.log('🎯 applyOptimistic interceptor - after execution:', {
+                        type: command.type,
+                        executed: command.executed,
+                        hasUndoData: !!command.undoData,
+                        origin: command.origin,
+                        shouldTrack: undoManager.shouldTrackOperation(command)
+                    });
+                    
+                    // Capture immediately after local execution if successful
+                    if (command.executed && command.undoData && command.origin === 'local' && undoManager.shouldTrackOperation(command)) {
+                        console.log('✅ Capturing command immediately after local execution');
+                        undoManager.captureExecutedCommand(command);
+                    } else {
+                        console.log('⏭️ Not capturing:', {
+                            executed: command.executed,
+                            hasUndoData: !!command.undoData,
+                            origin: command.origin,
+                            shouldTrack: undoManager.shouldTrackOperation(command)
+                        });
+                    }
+                    
+                    return result;
+                };
+            }
+            
             const undoManager = this; // Capture reference
             this.app.stateSyncManager.executeOperation = async function(command) {
                 console.log('🎯 StateSyncManager interceptor triggered for:', command.type);
@@ -103,25 +157,10 @@ class CollaborativeUndoRedoManager {
                 // Execute the operation
                 const result = await originalExecuteOperation.call(this, command);
                 
-                console.log('📥 Post-execution state:', {
-                    success: result.success,
-                    executed: command.executed,
-                    hasUndoData: !!command.undoData,
-                    origin: command.origin
-                });
-                
-                // If successful and local, capture for undo with the executed command
-                if (result.success && command.origin === 'local' && command.executed && command.undoData && undoManager.shouldTrackOperation(command)) {
-                    console.log('✅ Capturing command for undo history');
+                // For non-optimistic mode, capture here
+                if (!this.optimisticEnabled && result.success && command.origin === 'local' && command.executed && command.undoData && undoManager.shouldTrackOperation(command)) {
+                    console.log('✅ Capturing command for undo history (non-optimistic mode)');
                     undoManager.captureExecutedCommand(command);
-                } else {
-                    console.log('⏭️ Skipping capture:', {
-                        success: result.success,
-                        origin: command.origin,
-                        executed: command.executed,
-                        hasUndoData: !!command.undoData,
-                        shouldTrack: undoManager.shouldTrackOperation(command)
-                    });
                 }
                 
                 return result;
@@ -246,8 +285,11 @@ class CollaborativeUndoRedoManager {
      * Add operation to current user's history
      */
     addToCurrentUserHistory(operation) {
-        // Handle bundling
-        if (this.shouldBundle(operation)) {
+        // Check if this operation should start or continue bundling
+        const shouldStartBundle = this.shouldStartBundle(operation);
+        const shouldContinueBundle = this.shouldBundle(operation);
+        
+        if (shouldStartBundle || shouldContinueBundle) {
             this.addToBundle(operation);
             return;
         }
@@ -277,7 +319,16 @@ class CollaborativeUndoRedoManager {
     }
     
     /**
-     * Check if operation should be bundled
+     * Check if operation should start a new bundle
+     */
+    shouldStartBundle(operation) {
+        // Operations that should start bundling
+        const bundlingSources = ['group_rotation', 'alignment', 'multi_select', 'grid_align', 'multi_scale', 'multi_select_rotation', 'multi_select_reset'];
+        return !this.pendingBundle && operation.source && bundlingSources.includes(operation.source);
+    }
+    
+    /**
+     * Check if operation should be bundled with existing bundle
      */
     shouldBundle(operation) {
         if (!this.pendingBundle) return false;
@@ -291,10 +342,10 @@ class CollaborativeUndoRedoManager {
         return (
             // Alt+drag: create followed by move
             (lastOp.type === 'node_create' && operation.type === 'node_move') ||
-            // Multi-select operations
-            (operation.type === lastOp.type && operation.source === 'multi_select') ||
-            // Alignment operations
-            (operation.source === 'alignment' && lastOp.source === 'alignment')
+            // Multi-select operations with same source
+            (operation.source && operation.source === lastOp.source) ||
+            // Legacy patterns
+            (operation.type === lastOp.type && operation.source === 'multi_select')
         );
     }
     
@@ -461,15 +512,82 @@ class CollaborativeUndoRedoManager {
     }
     
     /**
-     * Bundle operations stub (simplified for now)
+     * Add operation to bundle
      */
     addToBundle(operation) {
-        // TODO: Implement bundling
-        this.addToCurrentUserHistory(operation);
+        if (!this.pendingBundle) {
+            // Start new bundle
+            this.pendingBundle = {
+                operations: [operation],
+                timestamp: operation.timestamp,
+                type: 'bundle'
+            };
+        } else {
+            // Add to existing bundle
+            this.pendingBundle.operations.push(operation);
+        }
+        
+        // Set timeout to finalize bundle
+        if (this.bundleTimeout) {
+            clearTimeout(this.bundleTimeout);
+        }
+        this.bundleTimeout = setTimeout(() => {
+            this.finalizePendingBundle();
+        }, this.bundleWindow);
     }
     
     finalizePendingBundle() {
-        // TODO: Implement bundling
+        if (!this.pendingBundle) return;
+        
+        if (this.bundleTimeout) {
+            clearTimeout(this.bundleTimeout);
+            this.bundleTimeout = null;
+        }
+        
+        // Create bundled command
+        const bundle = this.pendingBundle;
+        this.pendingBundle = null;
+        
+        if (bundle.operations.length === 1) {
+            // Single operation, no bundling needed
+            this.addToCurrentUserHistory(bundle.operations[0]);
+        } else {
+            // Create composite command
+            const bundledCommand = {
+                type: 'bundled_operations',
+                operations: bundle.operations,
+                timestamp: bundle.timestamp,
+                userId: this.userId,
+                operationId: `bundle_${this.userId}_${bundle.timestamp}`,
+                executed: true,
+                undoData: { operations: bundle.operations },
+                
+                // Composite undo function
+                undo: async (context) => {
+                    // Undo in reverse order
+                    for (let i = bundle.operations.length - 1; i >= 0; i--) {
+                        const op = bundle.operations[i];
+                        if (op.undo) {
+                            await op.undo(context);
+                        }
+                    }
+                    return { success: true };
+                },
+                
+                // Composite redo function
+                execute: async (context) => {
+                    // Execute in order
+                    for (const op of bundle.operations) {
+                        if (op.execute) {
+                            await op.execute(context);
+                        }
+                    }
+                    return { success: true };
+                }
+            };
+            
+            this.addToCurrentUserHistory(bundledCommand);
+        }
     }
     
     /**

@@ -303,7 +303,8 @@ class LGraphCanvas {
                     window.app.operationPipeline.execute('node_reset', {
                         nodeIds: nodeIds,
                         resetRotation: true,
-                        resetAspectRatio: false
+                        resetAspectRatio: false,
+                        source: 'multi_select_reset'
                     });
                 } else {
                     // Fallback
@@ -1149,15 +1150,8 @@ class LGraphCanvas {
                         position: [...node.pos]
                     };
                     
-                    // For media nodes, include properties to ensure they don't lose their content
-                    if (node.type === 'media/image' || node.type === 'media/video') {
-                        moveData.properties = {
-                            src: node.properties.src,
-                            hash: node.properties.hash,
-                            filename: node.properties.filename,
-                            serverFilename: node.properties.serverFilename
-                        };
-                    }
+                    // For move operations, we don't need to send media properties
+                    // The server already has this data and positions are the only thing changing
                     
                     window.app.operationPipeline.execute('node_move', moveData);
                 } else if (collaborativeNodes.length > 1) {
@@ -1166,19 +1160,8 @@ class LGraphCanvas {
                         positions: collaborativeNodes.map(n => [...n.pos])
                     };
                     
-                    // Check if any nodes are media nodes that need properties preserved
-                    const mediaNodes = collaborativeNodes.filter(n => n.type === 'media/image' || n.type === 'media/video');
-                    if (mediaNodes.length > 0) {
-                        moveData.nodeProperties = {};
-                        mediaNodes.forEach(node => {
-                            moveData.nodeProperties[node.id] = {
-                                src: node.properties.src,
-                                hash: node.properties.hash,
-                                filename: node.properties.filename,
-                                serverFilename: node.properties.serverFilename
-                            };
-                        });
-                    }
+                    // For move operations, we don't need to send media properties
+                    // The server already has this data and positions are the only thing changing
                     
                     window.app.operationPipeline.execute('node_move', moveData);
                 }
@@ -1207,6 +1190,8 @@ class LGraphCanvas {
             // Broadcast resize operation for collaboration
             if (window.app?.operationPipeline && wasInteracting) {
                 const selectedNodes = this.selection.getSelectedNodes();
+                console.log(`🎯 Finishing resize operation for ${selectedNodes.length} nodes`);
+                
                 if (selectedNodes.length === 1) {
                     const node = selectedNodes[0];
                     // For rotated nodes, include position to maintain center
@@ -1217,17 +1202,18 @@ class LGraphCanvas {
                     if (node.rotation && Math.abs(node.rotation) > 0.001) {
                         params.positions = [[node.pos[0], node.pos[1]]];
                     }
+                    console.log('📐 Executing node_resize:', params);
                     window.app.operationPipeline.execute('node_resize', params);
                 } else if (selectedNodes.length > 1) {
                     const params = {
                         nodeIds: selectedNodes.map(n => n.id),
-                        sizes: selectedNodes.map(n => [...n.size])
+                        sizes: selectedNodes.map(n => [...n.size]),
+                        source: 'multi_scale'
                     };
-                    // Check if any nodes are rotated
-                    const hasRotatedNodes = selectedNodes.some(n => n.rotation && Math.abs(n.rotation) > 0.001);
-                    if (hasRotatedNodes) {
-                        params.positions = selectedNodes.map(n => [...n.pos]);
-                    }
+                    // Multi-node resize ALWAYS needs positions because nodes scale relative to bounding box
+                    // This is true for both uniform and non-uniform scaling
+                    params.positions = selectedNodes.map(n => [...n.pos]);
+                    console.log('📐 Executing multi-node node_resize:', params);
                     window.app.operationPipeline.execute('node_resize', params);
                 }
             }
@@ -1252,12 +1238,28 @@ class LGraphCanvas {
                         angle: node.rotation || 0
                     });
                 } else if (selectedNodes.length > 1) {
-                    // Execute multiple rotations as individual operations
-                    // This ensures proper dependency tracking
-                    for (const node of selectedNodes) {
+                    // For multi-selection rotation, we need to update both rotation AND position
+                    // since we're rotating around the group center, not individual centers
+                    
+                    // Check if this was a multi-rotation (around group center)
+                    const isMultiRotation = this.interactionState.rotating.type === 'multi-rotation';
+                    
+                    if (isMultiRotation) {
+                        // For multi-rotation around group center, send a single batch operation
+                        // This includes both rotations and positions in one message
                         window.app.operationPipeline.execute('node_rotate', {
-                            nodeId: node.id,
-                            angle: node.rotation || 0
+                            nodeIds: selectedNodes.map(n => n.id),
+                            angles: selectedNodes.map(n => n.rotation || 0),
+                            positions: selectedNodes.map(n => [...n.pos]),
+                            source: 'group_rotation'
+                        });
+                    } else {
+                        // Single rotation handle in multi-selection context
+                        // Only rotations change, not positions - use batch operation
+                        window.app.operationPipeline.execute('node_rotate', {
+                            nodeIds: selectedNodes.map(n => n.id),
+                            angles: selectedNodes.map(n => n.rotation || 0),
+                            source: 'multi_select_rotation'
                         });
                     }
                 }
@@ -1389,6 +1391,14 @@ class LGraphCanvas {
         // Create new text node
         if (key === 't' && !shift) {
             this.createTextNodeAt(this.mouseState.graph);
+            return true;
+        }
+        
+        // Toggle properties panel
+        if (key === 'p' && !ctrl && !shift && !alt) {
+            if (window.propertiesInspector) {
+                window.propertiesInspector.toggle();
+            }
             return true;
         }
         

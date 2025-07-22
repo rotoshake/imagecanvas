@@ -50,7 +50,13 @@ class ImageCanvasServer {
             pingTimeout: 60000,
             pingInterval: 25000,
             // Allow WebSocket and polling transports
-            transports: ['websocket', 'polling']
+            transports: ['websocket', 'polling'],
+            // Increase maximum HTTP buffer size for large operations (10MB)
+            maxHttpBufferSize: 1e7,
+            // Enable compression for large payloads
+            perMessageDeflate: {
+                threshold: 1024 // Compress messages larger than 1KB
+            }
         });
         
         this.port = process.env.PORT || 3000;

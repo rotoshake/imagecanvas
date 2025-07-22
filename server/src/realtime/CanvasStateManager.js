@@ -313,13 +313,39 @@ class CanvasStateManager {
      * Apply node rotation
      */
     applyNodeRotate(params, state, changes) {
-        const node = state.nodes.find(n => n.id === params.nodeId);
-        if (!node) return null;
+        // Single node rotation
+        if (params.nodeId) {
+            const node = state.nodes.find(n => n.id === params.nodeId);
+            if (!node) return null;
+            
+            node.rotation = params.angle;
+            changes.updated.push(node);
+            
+            return changes;
+        }
         
-        node.rotation = params.angle;
-        changes.updated.push(node);
+        // Multi-node rotation (batch)
+        if (params.nodeIds) {
+            params.nodeIds.forEach((nodeId, index) => {
+                const node = state.nodes.find(n => n.id === nodeId);
+                if (node) {
+                    // Update rotation
+                    node.rotation = params.angles[index];
+                    
+                    // Update position if provided (for group center rotation)
+                    if (params.positions && params.positions[index]) {
+                        node.pos[0] = params.positions[index][0];
+                        node.pos[1] = params.positions[index][1];
+                    }
+                    
+                    changes.updated.push(node);
+                }
+            });
+            
+            return changes.updated.length > 0 ? changes : null;
+        }
         
-        return changes;
+        return null;
     }
     
     /**
@@ -558,14 +584,40 @@ class CanvasStateManager {
         });
         
         validators.set('node_rotate', (op, state) => {
-            if (!op.params.nodeId || typeof op.params.angle !== 'number') {
-                return { valid: false, error: 'Missing required parameters' };
+            // Single node rotation
+            if (op.params.nodeId) {
+                if (typeof op.params.angle !== 'number') {
+                    return { valid: false, error: 'Missing required parameters' };
+                }
+                const node = state.nodes.find(n => n.id === op.params.nodeId);
+                if (!node) {
+                    return { valid: false, error: 'Node not found' };
+                }
+                return { valid: true };
             }
-            const node = state.nodes.find(n => n.id === op.params.nodeId);
-            if (!node) {
-                return { valid: false, error: 'Node not found' };
+            
+            // Multi-node rotation
+            if (op.params.nodeIds) {
+                if (!Array.isArray(op.params.nodeIds) || !Array.isArray(op.params.angles)) {
+                    return { valid: false, error: 'Missing required parameters for batch rotation' };
+                }
+                if (op.params.nodeIds.length !== op.params.angles.length) {
+                    return { valid: false, error: 'Mismatched nodeIds and angles arrays' };
+                }
+                if (op.params.positions && op.params.positions.length !== op.params.nodeIds.length) {
+                    return { valid: false, error: 'Mismatched positions array length' };
+                }
+                // Check all nodes exist
+                for (const nodeId of op.params.nodeIds) {
+                    const node = state.nodes.find(n => n.id === nodeId);
+                    if (!node) {
+                        return { valid: false, error: `Node not found: ${nodeId}` };
+                    }
+                }
+                return { valid: true };
             }
-            return { valid: true };
+            
+            return { valid: false, error: 'Missing nodeId or nodeIds parameter' };
         });
         
         validators.set('node_reset', (op, state) => {

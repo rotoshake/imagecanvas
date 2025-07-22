@@ -64,7 +64,9 @@ class StateSyncManager {
             let localResult = null;
             if (this.optimisticEnabled && command.origin === 'local') {
                 const optimisticResult = await this.applyOptimistic(command);
-                this.pendingOperations.get(operationId).rollbackData = optimisticResult.rollbackData;
+                const pending = this.pendingOperations.get(operationId);
+                pending.rollbackData = optimisticResult.rollbackData;
+                pending.localResult = optimisticResult.localResult;
                 localResult = optimisticResult.localResult;
             }
             
@@ -258,10 +260,36 @@ class StateSyncManager {
             for (const nodeData of updated) {
                 const node = this.app.graph.getNodeById(nodeData.id);
                 if (node) {
-                    this.updateNodeFromData(node, nodeData);
+                    // Check if this node was modified by a pending optimistic operation
+                    const hasPendingOptimisticUpdate = this.isNodePendingOptimisticUpdate(nodeData.id);
+                    if (!hasPendingOptimisticUpdate) {
+                        // Only update if we don't have a pending optimistic update for this node
+                        this.updateNodeFromData(node, nodeData);
+                    }
                 }
             }
         }
+    }
+    
+    /**
+     * Check if a node has pending optimistic updates
+     */
+    isNodePendingOptimisticUpdate(nodeId) {
+        // Check all pending operations to see if any affect this node
+        for (const [opId, pending] of this.pendingOperations) {
+            const command = pending.command;
+            if (!command) continue;
+            
+            // Check if this operation affects the given node
+            if (command.params.nodeId === nodeId) return true;
+            if (command.params.nodeIds && command.params.nodeIds.includes(nodeId)) return true;
+            
+            // For operations that create nodes, check the result
+            if (pending.localResult?.node?.id === nodeId) return true;
+            if (pending.localResult?.nodes?.some(n => n.id === nodeId)) return true;
+        }
+        
+        return false;
     }
     
     /**

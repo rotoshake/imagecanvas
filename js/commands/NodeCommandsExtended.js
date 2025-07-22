@@ -28,6 +28,12 @@ class ResizeNodeCommand extends Command {
     async execute(context) {
         const { graph } = context;
         
+        console.log('🎯 ResizeNodeCommand.execute:', {
+            origin: this.origin,
+            nodeIds: this.params.nodeIds,
+            sizes: this.params.sizes
+        });
+        
         this.undoData = { nodes: [] };
         
         this.params.nodeIds.forEach((nodeId, index) => {
@@ -73,6 +79,7 @@ class ResizeNodeCommand extends Command {
         });
         
         this.executed = true;
+        console.log('✅ ResizeNodeCommand.executed = true, undoData created');
         return { success: true };
     }
     
@@ -125,10 +132,14 @@ class ResetNodeCommand extends Command {
     }
     
     async execute(context) {
-        const { graph } = context;
+        const { graph, canvas } = context;
+        
+        console.log(`🚀 ResetNodeCommand: Resetting ${this.params.nodeIds.length} nodes`);
+        const startTime = performance.now();
         
         this.undoData = { nodes: [] };
         
+        // First pass: Apply all changes locally immediately for instant feedback
         this.params.nodeIds.forEach((nodeId, index) => {
             const node = graph.getNodeById(nodeId);
             if (!node) return;
@@ -195,6 +206,18 @@ class ResetNodeCommand extends Command {
             
             this.undoData.nodes.push(undoInfo);
         });
+        
+        // Immediate canvas update for instant visual feedback
+        if (canvas) {
+            canvas.dirty_canvas = true;
+            // Force immediate redraw
+            if (canvas.draw) {
+                requestAnimationFrame(() => canvas.draw());
+            }
+        }
+        
+        const elapsed = performance.now() - startTime;
+        console.log(`✅ Reset completed in ${elapsed.toFixed(1)}ms for ${this.params.nodeIds.length} nodes`);
         
         this.executed = true;
         return { success: true };
@@ -270,47 +293,107 @@ class RotateNodeCommand extends Command {
     }
     
     validate() {
-        const { nodeId, angle } = this.params;
+        const { nodeId, nodeIds, angle, angles, positions } = this.params;
         
-        if (!nodeId) {
-            return { valid: false, error: 'Missing nodeId' };
+        // Single node rotation
+        if (nodeId) {
+            if (typeof angle !== 'number') {
+                return { valid: false, error: 'Invalid angle' };
+            }
+            return { valid: true };
         }
         
-        if (typeof angle !== 'number') {
-            return { valid: false, error: 'Invalid angle' };
+        // Multi-node rotation
+        if (nodeIds && Array.isArray(nodeIds)) {
+            if (!angles || !Array.isArray(angles) || angles.length !== nodeIds.length) {
+                return { valid: false, error: 'Invalid angles array for multi-node rotation' };
+            }
+            if (positions && (!Array.isArray(positions) || positions.length !== nodeIds.length)) {
+                return { valid: false, error: 'Invalid positions array for multi-node rotation' };
+            }
+            return { valid: true };
         }
         
-        return { valid: true };
+        return { valid: false, error: 'Missing nodeId or nodeIds' };
     }
     
     async execute(context) {
         const { graph } = context;
-        const node = graph.getNodeById(this.params.nodeId);
         
-        if (!node) {
-            throw new Error('Node not found');
+        // Single node rotation
+        if (this.params.nodeId) {
+            const node = graph.getNodeById(this.params.nodeId);
+            
+            if (!node) {
+                throw new Error('Node not found');
+            }
+            
+            this.undoData = {
+                nodeId: node.id,
+                oldRotation: node.rotation || 0
+            };
+            
+            node.rotation = this.params.angle;
+            
+            this.executed = true;
+            return { node };
         }
         
-        this.undoData = {
-            nodeId: node.id,
-            oldRotation: node.rotation || 0
-        };
-        
-        node.rotation = this.params.angle;
-        
-        this.executed = true;
-        return { node };
+        // Multi-node rotation
+        if (this.params.nodeIds) {
+            this.undoData = { nodes: [] };
+            
+            this.params.nodeIds.forEach((nodeId, index) => {
+                const node = graph.getNodeById(nodeId);
+                if (!node) return;
+                
+                this.undoData.nodes.push({
+                    id: node.id,
+                    oldRotation: node.rotation || 0,
+                    oldPos: [...node.pos]
+                });
+                
+                // Update rotation
+                node.rotation = this.params.angles[index];
+                
+                // Update position if provided (for group center rotation)
+                if (this.params.positions && this.params.positions[index]) {
+                    node.pos[0] = this.params.positions[index][0];
+                    node.pos[1] = this.params.positions[index][1];
+                }
+            });
+            
+            this.executed = true;
+            return { success: true };
+        }
     }
     
     async undo(context) {
         const { graph } = context;
-        const node = graph.getNodeById(this.undoData.nodeId);
         
-        if (node) {
-            node.rotation = this.undoData.oldRotation;
+        // Single node undo
+        if (this.undoData.nodeId) {
+            const node = graph.getNodeById(this.undoData.nodeId);
+            if (node) {
+                node.rotation = this.undoData.oldRotation;
+            }
+            return { success: true };
         }
         
-        return { success: true };
+        // Multi-node undo
+        if (this.undoData.nodes) {
+            this.undoData.nodes.forEach(({ id, oldRotation, oldPos }) => {
+                const node = graph.getNodeById(id);
+                if (node) {
+                    node.rotation = oldRotation;
+                    if (oldPos) {
+                        node.pos[0] = oldPos[0];
+                        node.pos[1] = oldPos[1];
+                    }
+                }
+            });
+            return { success: true };
+        }
     }
 }
 
@@ -474,6 +557,8 @@ class DuplicateNodesCommand extends Command {
     async execute(context) {
         const { graph } = context;
         
+        console.log(`📋 DuplicateNodesCommand: Duplicating ${this.params.nodeIds.length} nodes`);
+        
         this.undoData = { createdNodes: [] };
         const createdNodes = [];
         const offset = this.params.offset || [20, 20];
@@ -497,6 +582,12 @@ class DuplicateNodesCommand extends Command {
                 createdNodes.push(duplicate);
                 this.undoData.createdNodes.push(duplicate.id);
             }
+        }
+        
+        // Log cache statistics if available
+        if (window.app?.imageResourceCache) {
+            const stats = window.app.imageResourceCache.getStats();
+            console.log(`📊 Image cache stats: ${stats.hitRate} hit rate, ${stats.estimatedBytesSaved} saved`);
         }
         
         this.executed = true;
@@ -547,13 +638,48 @@ class DuplicateNodesCommand extends Command {
         node.title = nodeData.title;
         node.aspectRatio = nodeData.aspectRatio;
         
-        // Handle media nodes
+        // Handle media nodes with deduplication
         if (node.type === 'media/image' && nodeData.properties.src) {
-            await node.setImage(
-                nodeData.properties.src,
-                nodeData.properties.filename,
-                nodeData.properties.hash
-            );
+            // Check if we can use cached resource
+            if (nodeData.properties.hash && window.app?.imageResourceCache) {
+                const cachedResource = window.app.imageResourceCache.get(nodeData.properties.hash);
+                
+                if (cachedResource) {
+                    console.log(`♻️ Using cached image for duplicate: ${nodeData.properties.hash.substring(0, 8)}...`);
+                    
+                    // Use cached data
+                    await node.setImage(
+                        cachedResource.url,
+                        cachedResource.originalFilename || nodeData.properties.filename,
+                        nodeData.properties.hash
+                    );
+                    
+                    // Update node properties to use server URLs
+                    node.properties.serverUrl = cachedResource.url;
+                    node.properties.serverFilename = cachedResource.serverFilename;
+                    
+                    // Increment reference count
+                    window.app.imageResourceCache.addReference(nodeData.properties.hash);
+                    
+                    // Track bytes saved
+                    const estimatedSize = 500 * 1024; // 500KB average
+                    window.app.imageResourceCache.trackBytesSaved(estimatedSize);
+                } else {
+                    // Not cached, use original data
+                    await node.setImage(
+                        nodeData.properties.src,
+                        nodeData.properties.filename,
+                        nodeData.properties.hash
+                    );
+                }
+            } else {
+                // No cache available, use original data
+                await node.setImage(
+                    nodeData.properties.src,
+                    nodeData.properties.filename,
+                    nodeData.properties.hash
+                );
+            }
         } else if (node.type === 'media/video' && nodeData.properties.src) {
             await node.setVideo(
                 nodeData.properties.src,
@@ -659,13 +785,48 @@ class PasteNodesCommand extends Command {
         node.title = nodeData.title;
         node.aspectRatio = nodeData.aspectRatio;
         
-        // Handle media nodes
+        // Handle media nodes with deduplication
         if (node.type === 'media/image' && nodeData.properties.src) {
-            await node.setImage(
-                nodeData.properties.src,
-                nodeData.properties.filename,
-                nodeData.properties.hash
-            );
+            // Check if we can use cached resource
+            if (nodeData.properties.hash && window.app?.imageResourceCache) {
+                const cachedResource = window.app.imageResourceCache.get(nodeData.properties.hash);
+                
+                if (cachedResource) {
+                    console.log(`♻️ Using cached image for duplicate: ${nodeData.properties.hash.substring(0, 8)}...`);
+                    
+                    // Use cached data
+                    await node.setImage(
+                        cachedResource.url,
+                        cachedResource.originalFilename || nodeData.properties.filename,
+                        nodeData.properties.hash
+                    );
+                    
+                    // Update node properties to use server URLs
+                    node.properties.serverUrl = cachedResource.url;
+                    node.properties.serverFilename = cachedResource.serverFilename;
+                    
+                    // Increment reference count
+                    window.app.imageResourceCache.addReference(nodeData.properties.hash);
+                    
+                    // Track bytes saved
+                    const estimatedSize = 500 * 1024; // 500KB average
+                    window.app.imageResourceCache.trackBytesSaved(estimatedSize);
+                } else {
+                    // Not cached, use original data
+                    await node.setImage(
+                        nodeData.properties.src,
+                        nodeData.properties.filename,
+                        nodeData.properties.hash
+                    );
+                }
+            } else {
+                // No cache available, use original data
+                await node.setImage(
+                    nodeData.properties.src,
+                    nodeData.properties.filename,
+                    nodeData.properties.hash
+                );
+            }
         } else if (node.type === 'media/video' && nodeData.properties.src) {
             await node.setVideo(
                 nodeData.properties.src,

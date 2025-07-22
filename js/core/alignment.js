@@ -510,7 +510,8 @@ class AutoAlignmentManager {
                     // Send batch move operation through unified pipeline
                     window.app.operationPipeline.execute('node_move', {
                         nodeIds: nodeIds,
-                        positions: finalPositions
+                        positions: finalPositions,
+                        source: 'alignment'
                     });
                 }
                 
@@ -594,7 +595,8 @@ class AutoAlignmentManager {
                     // Send batch move operation through unified pipeline
                     window.app.operationPipeline.execute('node_move', {
                         nodeIds: nodeIds,
-                        positions: finalPositions
+                        positions: finalPositions,
+                        source: 'grid_align'
                     });
                 }
                 

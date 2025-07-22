@@ -11,8 +11,8 @@ class FloatingPropertiesInspector {
         this.createUI();
         this.setupEventListeners();
         this.updatePosition();
-        this.show(); // Always show the inspector
-        this.updateProperties(); // Show initial canvas properties
+        // Start hidden - user can toggle with 'p' key
+        this.updateProperties(); // Initialize properties even when hidden
         
         // Delay selection integration to ensure canvas is ready
         setTimeout(() => {
@@ -37,6 +37,9 @@ class FloatingPropertiesInspector {
         
         this.addStyles();
         document.body.appendChild(this.panel);
+        
+        // Make sure panel doesn't block canvas interactions when starting a drag
+        this.setupCanvasInteractionHandling();
     }
 
     addStyles() {
@@ -62,11 +65,13 @@ class FloatingPropertiesInspector {
                 opacity: 0;
                 transform: scale(0.95);
                 transition: opacity 0.2s ease, transform 0.2s ease;
+                pointer-events: none;
             }
 
             .floating-properties-inspector.visible {
                 opacity: 1;
                 transform: scale(1);
+                pointer-events: auto;
             }
 
             .inspector-header {
@@ -357,6 +362,49 @@ class FloatingPropertiesInspector {
                     return;
                 }
             }
+        });
+    }
+    
+    setupCanvasInteractionHandling() {
+        // Monitor canvas drag operations
+        let isDraggingOnCanvas = false;
+        let originalPointerEvents = null;
+        
+        // Function to temporarily disable panel interaction during canvas drags
+        const disablePanelDuringDrag = () => {
+            if (this.isVisible && !isDraggingOnCanvas) {
+                isDraggingOnCanvas = true;
+                originalPointerEvents = this.panel.style.pointerEvents;
+                this.panel.style.pointerEvents = 'none';
+            }
+        };
+        
+        const enablePanelAfterDrag = () => {
+            if (isDraggingOnCanvas) {
+                isDraggingOnCanvas = false;
+                if (this.isVisible) {
+                    this.panel.style.pointerEvents = originalPointerEvents || 'auto';
+                }
+            }
+        };
+        
+        // Listen for canvas mousedown events to detect drag start
+        document.addEventListener('mousedown', (e) => {
+            const canvas = this.canvas.canvas;
+            if (canvas && canvas.contains(e.target) && !this.panel.contains(e.target)) {
+                // Started dragging on canvas
+                disablePanelDuringDrag();
+            }
+        }, true);
+        
+        // Re-enable on mouseup
+        document.addEventListener('mouseup', () => {
+            enablePanelAfterDrag();
+        }, true);
+        
+        // Also handle when mouse leaves the window
+        document.addEventListener('mouseleave', () => {
+            enablePanelAfterDrag();
         });
     }
 
@@ -1065,11 +1113,16 @@ class FloatingPropertiesInspector {
         if (this.isVisible) {
             this.isVisible = false;
             this.panel.classList.remove('visible');
-            setTimeout(() => {
-                if (!this.isVisible) {
-                    this.panel.style.display = 'none';
-                }
-            }, 200);
+            // Don't hide the display, just make it non-interactive
+            // This prevents layout jumps and keeps transitions smooth
+        }
+    }
+
+    toggle() {
+        if (this.isVisible) {
+            this.hide();
+        } else {
+            this.show();
         }
     }
 
