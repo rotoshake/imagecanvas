@@ -1,0 +1,315 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ImageCanvas Phantom Node Test</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 20px;
+            background-color: #f5f5f5;
+        }
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            background: white;
+            padding: 20px;
+            border-radius: 10px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        h1 {
+            color: #333;
+            text-align: center;
+            margin-bottom: 30px;
+        }
+        .instructions {
+            background: #e8f4fd;
+            padding: 20px;
+            border-radius: 8px;
+            margin-bottom: 30px;
+            border-left: 4px solid #2196F3;
+        }
+        .test-section {
+            background: #f9f9f9;
+            padding: 20px;
+            margin: 20px 0;
+            border-radius: 8px;
+            border-left: 4px solid #4CAF50;
+        }
+        .warning {
+            background: #fff3cd;
+            color: #856404;
+            padding: 15px;
+            border-radius: 8px;
+            margin: 20px 0;
+            border-left: 4px solid #ffc107;
+        }
+        .console-section {
+            background: #000;
+            color: #00ff00;
+            padding: 20px;
+            border-radius: 8px;
+            font-family: 'Courier New', monospace;
+            font-size: 14px;
+            margin: 20px 0;
+            max-height: 300px;
+            overflow-y: auto;
+        }
+        .button {
+            background: #2196F3;
+            color: white;
+            padding: 12px 24px;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            margin: 10px;
+            font-size: 16px;
+        }
+        .button:hover {
+            background: #1976D2;
+        }
+        .button.danger {
+            background: #f44336;
+        }
+        .button.danger:hover {
+            background: #d32f2f;
+        }
+        .iframe-container {
+            border: 2px solid #ddd;
+            border-radius: 8px;
+            overflow: hidden;
+            margin: 20px 0;
+        }
+        iframe {
+            width: 100%;
+            height: 600px;
+            border: none;
+        }
+        .stats {
+            display: flex;
+            justify-content: space-between;
+            background: #f0f0f0;
+            padding: 15px;
+            border-radius: 6px;
+            margin: 15px 0;
+        }
+        .stat {
+            text-align: center;
+        }
+        .stat-value {
+            font-size: 24px;
+            font-weight: bold;
+            color: #2196F3;
+        }
+        .stat-label {
+            font-size: 12px;
+            color: #666;
+            text-transform: uppercase;
+        }
+        .log-entry {
+            margin: 5px 0;
+            padding: 5px;
+            border-radius: 4px;
+        }
+        .log-error {
+            background: rgba(244, 67, 54, 0.1);
+            color: #ff6b6b;
+        }
+        .log-warn {
+            background: rgba(255, 193, 7, 0.1);
+            color: #ffc107;
+        }
+        .log-info {
+            color: #4CAF50;
+        }
+        .log-debug {
+            color: #2196F3;
+        }
+        .highlight {
+            background: rgba(255, 255, 0, 0.3);
+            font-weight: bold;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🧪 ImageCanvas Phantom Node Duplication Test</h1>
+        
+        <div class="instructions">
+            <h3>📋 Testing Instructions:</h3>
+            <ol>
+                <li><strong>Open Developer Console</strong> (F12) to monitor diagnostic logs</li>
+                <li><strong>Load the ImageCanvas application</strong> in the frame below</li>
+                <li><strong>Drag & Drop an image</strong> onto the canvas to create a test node</li>
+                <li><strong>Test each duplication method</strong> while watching the console and node counts</li>
+                <li><strong>Look for diagnostic messages</strong> starting with 🔥, 🔧, or ⚠️</li>
+            </ol>
+        </div>
+
+        <div class="warning">
+            <strong>⚠️ Important:</strong> Keep the browser's Developer Console open during testing to see all diagnostic logs. The console will show detailed information about each duplication operation.
+        </div>
+
+        <div class="iframe-container">
+            <iframe src="http://localhost:8000" title="ImageCanvas Application"></iframe>
+        </div>
+
+        <div class="stats" id="stats">
+            <div class="stat">
+                <div class="stat-value" id="nodeCount">-</div>
+                <div class="stat-label">Current Node Count</div>
+            </div>
+            <div class="stat">
+                <div class="stat-value" id="testCount">0</div>
+                <div class="stat-label">Tests Performed</div>
+            </div>
+            <div class="stat">
+                <div class="stat-value" id="phantomCount">0</div>
+                <div class="stat-label">Phantom Nodes Detected</div>
+            </div>
+        </div>
+
+        <div class="test-section">
+            <h3>🔄 Test 1: Alt+Drag Duplication</h3>
+            <p><strong>Steps:</strong></p>
+            <ol>
+                <li>Select an image node on the canvas</li>
+                <li>Hold <kbd>Alt</kbd> key and drag the node to a new position</li>
+                <li>Release mouse button and Alt key</li>
+                <li>Check console for diagnostic logs and verify node count</li>
+            </ol>
+            <p><strong>Expected Console Logs:</strong></p>
+            <ul>
+                <li><code>🔧 DuplicateNodesCommand debug: {...willAddToGraph: false...}</code></li>
+                <li><code>⏭️ ALT+DRAG: Skipping graph add (not remote origin)</code></li>
+                <li><code>🔄 Converting X local duplicates to collaborative nodes</code></li>
+            </ul>
+            <p><strong>Expected Result:</strong> Node count increases by 1 only</p>
+            <button class="button" onclick="startTest('Alt+Drag')">Start Alt+Drag Test</button>
+        </div>
+
+        <div class="test-section">
+            <h3>🔄 Test 2: Ctrl+D Duplication</h3>
+            <p><strong>Steps:</strong></p>
+            <ol>
+                <li>Select an image node on the canvas</li>
+                <li>Press <kbd>Ctrl+D</kbd></li>
+                <li>Check console for diagnostic logs and verify node count</li>
+            </ol>
+            <p><strong>Expected Console Logs:</strong></p>
+            <ul>
+                <li><code>🔥 EXECUTEOP START: {...willCallOptimistic: false...}</code></li>
+                <li><code>📋 DuplicateNodesCommand: Duplicating X nodes (Ctrl+D)</code></li>
+                <li>No <code>applyOptimistic</code> calls should occur</li>
+            </ul>
+            <p><strong>Expected Result:</strong> Node count increases by 1 only</p>
+            <button class="button" onclick="startTest('Ctrl+D')">Start Ctrl+D Test</button>
+        </div>
+
+        <div class="test-section">
+            <h3>🔄 Test 3: Ctrl+C → Ctrl+V Paste</h3>
+            <p><strong>Steps:</strong></p>
+            <ol>
+                <li>Select an image node on the canvas</li>
+                <li>Press <kbd>Ctrl+C</kbd> to copy</li>
+                <li>Press <kbd>Ctrl+V</kbd> to paste</li>
+                <li>Check console for diagnostic logs and verify node count</li>
+            </ol>
+            <p><strong>Expected Console Logs:</strong></p>
+            <ul>
+                <li><code>🔥 EXECUTEOP START: {...willCallOptimistic: false...}</code></li>
+                <li>Similar to Ctrl+D but with paste-related messages</li>
+                <li>No <code>applyOptimistic</code> calls should occur</li>
+            </ul>
+            <p><strong>Expected Result:</strong> Node count increases by 1 only</p>
+            <button class="button" onclick="startTest('Ctrl+V')">Start Paste Test</button>
+        </div>
+
+        <div class="test-section">
+            <h3>🧹 Reset Test Environment</h3>
+            <p>Clear all nodes and reset counters to start fresh testing.</p>
+            <button class="button danger" onclick="resetTest()">Clear All & Reset</button>
+        </div>
+
+        <div class="console-section" id="consoleOutput">
+            <div class="log-info">Waiting for test data... Open browser console (F12) for full diagnostic information.</div>
+        </div>
+    </div>
+
+    <script>
+        let testCount = 0;
+        let phantomCount = 0;
+        let lastNodeCount = 0;
+
+        function updateStats() {
+            document.getElementById('testCount').textContent = testCount;
+            document.getElementById('phantomCount').textContent = phantomCount;
+        }
+
+        function addLogEntry(message, type = 'info') {
+            const consoleOutput = document.getElementById('consoleOutput');
+            const entry = document.createElement('div');
+            entry.className = `log-entry log-${type}`;
+            entry.textContent = `[${new Date().toLocaleTimeString()}] ${message}`;
+            
+            // Highlight important diagnostic messages
+            if (message.includes('🔥 EXECUTEOP START') || 
+                message.includes('🔧 DuplicateNodesCommand') ||
+                message.includes('phantom') ||
+                message.includes('willCallOptimistic') ||
+                message.includes('ALT+DRAG:') ||
+                message.includes('graph now has')) {
+                entry.classList.add('highlight');
+            }
+            
+            consoleOutput.appendChild(entry);
+            consoleOutput.scrollTop = consoleOutput.scrollHeight;
+        }
+
+        function startTest(testType) {
+            testCount++;
+            updateStats();
+            addLogEntry(`🧪 Starting ${testType} test #${testCount}`, 'info');
+            addLogEntry('👀 Watch the browser console for diagnostic logs!', 'info');
+            addLogEntry('📊 Monitor node count changes in the iframe', 'info');
+            
+            // Try to get node count from iframe if possible
+            try {
+                const iframe = document.querySelector('iframe');
+                if (iframe && iframe.contentWindow && iframe.contentWindow.app) {
+                    const currentCount = iframe.contentWindow.app.graph.nodes.length;
+                    document.getElementById('nodeCount').textContent = currentCount;
+                    addLogEntry(`📊 Current node count: ${currentCount}`, 'debug');
+                }
+            } catch (e) {
+                addLogEntry('ℹ️ Cannot access iframe content. Check console manually.', 'warn');
+            }
+        }
+
+        function resetTest() {
+            testCount = 0;
+            phantomCount = 0;
+            lastNodeCount = 0;
+            updateStats();
+            document.getElementById('consoleOutput').innerHTML = 
+                '<div class="log-info">Test environment reset. Ready for new tests.</div>';
+            addLogEntry('🧹 Test environment reset', 'info');
+        }
+
+        // Try to listen for console messages from the iframe (limited by CORS)
+        window.addEventListener('message', function(event) {
+            if (event.origin === 'http://localhost:8000') {
+                if (event.data && event.data.type === 'console') {
+                    addLogEntry(event.data.message, event.data.level);
+                }
+            }
+        });
+
+        // Initialize
+        updateStats();
+        addLogEntry('🚀 Phantom Node Test Interface Initialized', 'info');
+        addLogEntry('📖 Load ImageCanvas in the frame above and start testing', 'info');
+    </script>
+</body>
+</html>

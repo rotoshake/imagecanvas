@@ -149,12 +149,23 @@ class CanvasIntegration {
         if (positions.length === 0) return;
         
         try {
+            // Filter out temporary nodes (from Alt+drag)
+            const validPositions = positions.filter(([nodeId, position]) => {
+                const node = this.canvas.graph.getNodeById(nodeId);
+                return node && !node._isTemporary;
+            });
+            
+            if (validPositions.length === 0) {
+                console.log('🚫 All nodes were temporary, skipping drag commit');
+                return;
+            }
+            
             // Single node move
-            if (positions.length === 1) {
-                const [nodeId, position] = positions[0];
+            if (validPositions.length === 1) {
+                const [nodeId, position] = validPositions[0];
                 const node = this.canvas.graph.getNodeById(nodeId);
                 
-                if (node) {
+                if (node && !node._isTemporary) {
                     // Include media properties for media nodes
                     const moveData = {
                         nodeId,
@@ -179,9 +190,9 @@ class CanvasIntegration {
                 const finalPositions = [];
                 const nodeProperties = {};
                 
-                for (const [nodeId, position] of positions) {
+                for (const [nodeId, position] of validPositions) {
                     const node = this.canvas.graph.getNodeById(nodeId);
-                    if (node) {
+                    if (node && !node._isTemporary) {
                         nodeIds.push(nodeId);
                         finalPositions.push(position);
                         

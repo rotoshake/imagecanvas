@@ -46,6 +46,13 @@ class CollaborativeArchitecture {
             this.stateSyncManager = new StateSyncManager(this.app, this.networkLayer);
             this.app.stateSyncManager = this.stateSyncManager;
             
+            // 5a. Create Background Sync Manager
+            if (typeof BackgroundSyncManager !== 'undefined') {
+                this.app.backgroundSyncManager = new BackgroundSyncManager(this.networkLayer, this.stateSyncManager);
+                this.app.bulkOperationManager.backgroundSync = this.app.backgroundSyncManager;
+                console.log('✅ Background sync manager initialized');
+            }
+            
             // 6. Connect components
             await this.connectComponents();
             
@@ -63,10 +70,16 @@ class CollaborativeArchitecture {
                 // Continue in offline mode
             }
             
-            // 7. Initialize collaborative undo/redo manager
+            // 7. Initialize collaborative undo/redo manager (AFTER stateSyncManager is available)
             if (typeof CollaborativeUndoRedoManager !== 'undefined') {
                 this.app.undoRedoManager = new CollaborativeUndoRedoManager(this.app);
-                console.log('✅ Collaborative undo/redo manager initialized');
+                // Force immediate interceptor setup now that all dependencies are available
+                if (this.app.undoRedoManager.setupInterceptors) {
+                    this.app.undoRedoManager.setupInterceptors();
+                    console.log('✅ Collaborative undo/redo manager initialized with interceptors');
+                } else {
+                    console.log('✅ Collaborative undo/redo manager initialized');
+                }
             } else if (typeof HybridUndoRedoManager !== 'undefined') {
                 // Fallback to hybrid version if collaborative not available
                 this.app.undoRedoManager = new HybridUndoRedoManager(this.app);

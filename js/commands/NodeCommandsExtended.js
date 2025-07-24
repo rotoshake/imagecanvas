@@ -28,11 +28,11 @@ class ResizeNodeCommand extends Command {
     async execute(context) {
         const { graph } = context;
         
-        console.log('🎯 ResizeNodeCommand.execute:', {
-            origin: this.origin,
-            nodeIds: this.params.nodeIds,
-            sizes: this.params.sizes
-        });
+        // console.log('🎯 ResizeNodeCommand.execute:', {
+        //     origin: this.origin,
+        //     nodeIds: this.params.nodeIds,
+        //     sizes: this.params.sizes
+        // });
         
         this.undoData = { nodes: [] };
         
@@ -79,7 +79,7 @@ class ResizeNodeCommand extends Command {
         });
         
         this.executed = true;
-        console.log('✅ ResizeNodeCommand.executed = true, undoData created');
+        // // console.log('✅ ResizeNodeCommand.executed = true, undoData created');
         return { success: true };
     }
     
@@ -134,7 +134,7 @@ class ResetNodeCommand extends Command {
     async execute(context) {
         const { graph, canvas } = context;
         
-        console.log(`🚀 ResetNodeCommand: Resetting ${this.params.nodeIds.length} nodes`);
+        // // console.log(`🚀 ResetNodeCommand: Resetting ${this.params.nodeIds.length} nodes`);
         const startTime = performance.now();
         
         this.undoData = { nodes: [] };
@@ -217,7 +217,7 @@ class ResetNodeCommand extends Command {
         }
         
         const elapsed = performance.now() - startTime;
-        console.log(`✅ Reset completed in ${elapsed.toFixed(1)}ms for ${this.params.nodeIds.length} nodes`);
+        // // console.log(`✅ Reset completed in ${elapsed.toFixed(1)}ms for ${this.params.nodeIds.length} nodes`);
         
         this.executed = true;
         return { success: true };
@@ -545,10 +545,15 @@ class DuplicateNodesCommand extends Command {
     }
     
     validate() {
-        const { nodeIds, offset } = this.params;
+        const { nodeIds, nodeData, offset } = this.params;
+        
+        // Either nodeIds for standard duplication or nodeData for explicit duplication (Alt+drag)
+        if (nodeData && Array.isArray(nodeData) && nodeData.length > 0) {
+            return { valid: true }; // Explicit node data provided
+        }
         
         if (!nodeIds || !Array.isArray(nodeIds) || nodeIds.length === 0) {
-            return { valid: false, error: 'Missing or invalid nodeIds' };
+            return { valid: false, error: 'Missing or invalid nodeIds or nodeData' };
         }
         
         return { valid: true };
@@ -557,37 +562,94 @@ class DuplicateNodesCommand extends Command {
     async execute(context) {
         const { graph } = context;
         
-        console.log(`📋 DuplicateNodesCommand: Duplicating ${this.params.nodeIds.length} nodes`);
+        // Check if optimistic updates are disabled - if so, skip local graph modification
+        const optimisticEnabled = window.app?.operationPipeline?.stateSyncManager?.optimisticEnabled === true;
+        const isRemoteOrigin = this.origin === 'remote' || this.origin === 'server';
         
+        // Declare createdNodes at function level to avoid scoping issues
+        let createdNodes = [];
         this.undoData = { createdNodes: [] };
-        const createdNodes = [];
-        const offset = this.params.offset || [20, 20];
         
-        for (const nodeId of this.params.nodeIds) {
-            const originalNode = graph.getNodeById(nodeId);
-            if (!originalNode) continue;
+        // Handle explicit node data (Alt+drag) or standard duplication
+        if (this.params.nodeData && Array.isArray(this.params.nodeData)) {
+            const offset = this.params.offset || [0, 0];
             
-            // Serialize and deserialize to create a copy
-            const nodeData = this.serializeNode(originalNode);
-            const duplicate = await this.createNodeFromData(nodeData, context);
-            if (duplicate) {
-                // Apply offset
-                duplicate.pos[0] += offset[0];
-                duplicate.pos[1] += offset[1];
+            for (const nodeData of this.params.nodeData) {
+                const duplicate = this.createNodeFromData(nodeData, context);
+                if (duplicate) {
+                    // Apply offset (usually [0,0] for Alt+drag since positions are pre-calculated)
+                    duplicate.pos[0] += offset[0];
+                    duplicate.pos[1] += offset[1];
+                    
+                    // Generate new ID
+                    duplicate.id = Date.now() + Math.floor(Math.random() * 1000);
+                    
+                    // Add stable operation reference for sync tracking
+                    // Use the operation ID from params if provided (Alt+drag)
+                    if (this.params.operationId) {
+                        duplicate._operationId = this.params.operationId;
+                    } else {
+                        duplicate._operationId = `${this.id}-${nodeData.id || duplicate.id}`;
+                    }
+                    duplicate._syncPending = true;
+                    
+                    // For Alt+drag with explicit nodeData, nodes are ALREADY in the graph from drag operation
+                    // Don't add them again - this would create phantom duplicates
+                    // Only add to graph if this is a server/remote operation (server applying the change)
+                    if (isRemoteOrigin) {
+                        console.log(`➕ Server adding duplicate node: ${duplicate.id}`);
+                        graph.add(duplicate);
+                    } else {
+                        console.log(`⏭️ Skipping local add for Alt+drag node: ${duplicate.id} (already in graph)`);
+                    }
+                    
+                    createdNodes.push(duplicate);
+                    this.undoData.createdNodes.push(duplicate.id);
+                }
+            }
+        } else {
+            const offset = this.params.offset || [20, 20];
+            
+            for (const nodeId of this.params.nodeIds) {
+                const originalNode = graph.getNodeById(nodeId);
+                if (!originalNode) continue;
                 
-                // Generate new ID
-                duplicate.id = Date.now() + Math.floor(Math.random() * 1000);
                 
-                graph.add(duplicate);
-                createdNodes.push(duplicate);
-                this.undoData.createdNodes.push(duplicate.id);
+                // Serialize and deserialize to create a copy
+                const nodeData = this.serializeNode(originalNode);
+                const duplicate = this.createNodeFromData(nodeData, context);
+                if (duplicate) {
+                    // Apply offset
+                    duplicate.pos[0] += offset[0];
+                    duplicate.pos[1] += offset[1];
+                    
+                    // Generate new ID
+                    duplicate.id = Date.now() + Math.floor(Math.random() * 1000);
+                    
+                    // Add stable operation reference for sync tracking
+                    // Use the operation ID from params if provided
+                    if (this.params.operationId) {
+                        duplicate._operationId = this.params.operationId;
+                    } else {
+                        duplicate._operationId = `${this.id}-${originalNode.id}`;
+                    }
+                    duplicate._syncPending = true;
+                    
+                    // For Ctrl+D: Only add to graph if optimistic updates enabled OR server/remote operation
+                    if (optimisticEnabled || isRemoteOrigin) {
+                        graph.add(duplicate);
+                    }
+                    
+                    createdNodes.push(duplicate);
+                    this.undoData.createdNodes.push(duplicate.id);
+                }
             }
         }
         
-        // Log cache statistics if available
-        if (window.app?.imageResourceCache) {
-            const stats = window.app.imageResourceCache.getStats();
-            console.log(`📊 Image cache stats: ${stats.hitRate} hit rate, ${stats.estimatedBytesSaved} saved`);
+        // Force immediate canvas redraw to show loading states
+        if (context.graph?.canvas && createdNodes.length > 0) {
+            context.graph.canvas.dirty_canvas = true;
+            requestAnimationFrame(() => context.graph.canvas.draw());
         }
         
         this.executed = true;
@@ -625,7 +687,7 @@ class DuplicateNodesCommand extends Command {
         };
     }
     
-    async createNodeFromData(nodeData, context) {
+    createNodeFromData(nodeData, context) {
         const node = NodeFactory.createNode(nodeData.type);
         if (!node) return null;
         
@@ -638,17 +700,24 @@ class DuplicateNodesCommand extends Command {
         node.title = nodeData.title;
         node.aspectRatio = nodeData.aspectRatio;
         
+        // Set loading state immediately for image nodes
+        if (node.type === 'media/image') {
+            node.loadingState = 'loading';
+            node.loadingProgress = 0;
+        }
+        
         // Handle media nodes with deduplication
         if (node.type === 'media/image' && nodeData.properties.src) {
+            
             // Check if we can use cached resource
             if (nodeData.properties.hash && window.app?.imageResourceCache) {
                 const cachedResource = window.app.imageResourceCache.get(nodeData.properties.hash);
                 
                 if (cachedResource) {
-                    console.log(`♻️ Using cached image for duplicate: ${nodeData.properties.hash.substring(0, 8)}...`);
+                    // console.log(`♻️ Using cached image for duplicate: ${nodeData.properties.hash.substring(0, 8)}...`, cachedResource);
                     
-                    // Use cached data
-                    await node.setImage(
+                    // Use cached data - don't await so loading state is visible
+                    node.setImage(
                         cachedResource.url,
                         cachedResource.originalFilename || nodeData.properties.filename,
                         nodeData.properties.hash
@@ -665,23 +734,57 @@ class DuplicateNodesCommand extends Command {
                     const estimatedSize = 500 * 1024; // 500KB average
                     window.app.imageResourceCache.trackBytesSaved(estimatedSize);
                 } else {
-                    // Not cached, use original data
-                    await node.setImage(
-                        nodeData.properties.src,
-                        nodeData.properties.filename,
-                        nodeData.properties.hash
-                    );
+                    // console.log(`❌ Cache miss for hash: ${nodeData.properties.hash?.substring(0, 8)}...`);
+                    
+                    // Check if we have a server URL already (from synced node)
+                    if (nodeData.properties.serverUrl) {
+                        // console.log('📥 Using existing server URL from node data');
+                        node.setImage(
+                            nodeData.properties.serverUrl,
+                            nodeData.properties.filename,
+                            nodeData.properties.hash
+                        );
+                        // Also add to cache for future use
+                        if (window.app?.imageResourceCache && nodeData.properties.hash) {
+                            window.app.imageResourceCache.set(nodeData.properties.hash, {
+                                url: nodeData.properties.serverUrl,
+                                serverFilename: nodeData.properties.serverFilename,
+                                originalFilename: nodeData.properties.filename
+                            });
+                            // console.log('💾 Added to cache from duplicate data');
+                        }
+                    } else {
+                        // Not cached and no server URL - check if original node has data URL we can reuse
+                        // console.log('📤 No server URL - using original image data (may trigger upload)');
+                        node.setImage(
+                            nodeData.properties.src,
+                            nodeData.properties.filename,
+                            nodeData.properties.hash
+                        );
+                        
+                        // Add to cache immediately with local data so subsequent duplicates can reuse
+                        if (window.app?.imageResourceCache && nodeData.properties.hash && nodeData.properties.src) {
+                            window.app.imageResourceCache.set(nodeData.properties.hash, {
+                                url: nodeData.properties.src, // Use the data URL temporarily
+                                serverFilename: null,
+                                originalFilename: nodeData.properties.filename,
+                                isLocal: true // Mark as local so we know it needs server upgrade later
+                            });
+                            // console.log('💾 Pre-cached with local data for future duplicates');
+                        }
+                    }
                 }
             } else {
                 // No cache available, use original data
-                await node.setImage(
+                // console.log('⚠️ No cache available');
+                node.setImage(
                     nodeData.properties.src,
                     nodeData.properties.filename,
                     nodeData.properties.hash
                 );
             }
         } else if (node.type === 'media/video' && nodeData.properties.src) {
-            await node.setVideo(
+            node.setVideo(
                 nodeData.properties.src,
                 nodeData.properties.filename,
                 nodeData.properties.hash
@@ -714,6 +817,10 @@ class PasteNodesCommand extends Command {
     async execute(context) {
         const { graph } = context;
         
+        // Check if optimistic updates are disabled - if so, skip local graph modification
+        const optimisticEnabled = window.app?.operationPipeline?.stateSyncManager?.optimisticEnabled === true;
+        const isRemoteOrigin = this.origin === 'remote' || this.origin === 'server';
+        
         this.undoData = { createdNodes: [] };
         const createdNodes = [];
         const { nodeData, targetPosition } = this.params;
@@ -730,7 +837,7 @@ class PasteNodesCommand extends Command {
         const clipboardCenter = [(minX + maxX) / 2, (minY + maxY) / 2];
         
         for (const data of nodeData) {
-            const node = await this.createNodeFromData(data, context);
+            const node = this.createNodeFromData(data, context);
             if (node) {
                 // Position relative to target position
                 const offsetFromCenter = [
@@ -744,10 +851,19 @@ class PasteNodesCommand extends Command {
                 // Generate new ID
                 node.id = Date.now() + Math.floor(Math.random() * 1000);
                 
-                graph.add(node);
+                // Only add to graph if optimistic updates are enabled OR this is a server/remote operation
+                if (optimisticEnabled || isRemoteOrigin) {
+                    graph.add(node);
+                }
                 createdNodes.push(node);
                 this.undoData.createdNodes.push(node.id);
             }
+        }
+        
+        // Force immediate canvas redraw to show loading states
+        if (context.graph?.canvas && createdNodes.length > 0) {
+            context.graph.canvas.dirty_canvas = true;
+            requestAnimationFrame(() => context.graph.canvas.draw());
         }
         
         this.executed = true;
@@ -772,7 +888,7 @@ class PasteNodesCommand extends Command {
         return { success: true };
     }
     
-    async createNodeFromData(nodeData, context) {
+    createNodeFromData(nodeData, context) {
         const node = NodeFactory.createNode(nodeData.type);
         if (!node) return null;
         
@@ -785,17 +901,24 @@ class PasteNodesCommand extends Command {
         node.title = nodeData.title;
         node.aspectRatio = nodeData.aspectRatio;
         
+        // Set loading state immediately for image nodes
+        if (node.type === 'media/image') {
+            node.loadingState = 'loading';
+            node.loadingProgress = 0;
+        }
+        
         // Handle media nodes with deduplication
         if (node.type === 'media/image' && nodeData.properties.src) {
+            
             // Check if we can use cached resource
             if (nodeData.properties.hash && window.app?.imageResourceCache) {
                 const cachedResource = window.app.imageResourceCache.get(nodeData.properties.hash);
                 
                 if (cachedResource) {
-                    console.log(`♻️ Using cached image for duplicate: ${nodeData.properties.hash.substring(0, 8)}...`);
+                    // console.log(`♻️ Using cached image for duplicate: ${nodeData.properties.hash.substring(0, 8)}...`, cachedResource);
                     
-                    // Use cached data
-                    await node.setImage(
+                    // Use cached data - don't await so loading state is visible
+                    node.setImage(
                         cachedResource.url,
                         cachedResource.originalFilename || nodeData.properties.filename,
                         nodeData.properties.hash
@@ -812,23 +935,57 @@ class PasteNodesCommand extends Command {
                     const estimatedSize = 500 * 1024; // 500KB average
                     window.app.imageResourceCache.trackBytesSaved(estimatedSize);
                 } else {
-                    // Not cached, use original data
-                    await node.setImage(
-                        nodeData.properties.src,
-                        nodeData.properties.filename,
-                        nodeData.properties.hash
-                    );
+                    // console.log(`❌ Cache miss for hash: ${nodeData.properties.hash?.substring(0, 8)}...`);
+                    
+                    // Check if we have a server URL already (from synced node)
+                    if (nodeData.properties.serverUrl) {
+                        // console.log('📥 Using existing server URL from node data');
+                        node.setImage(
+                            nodeData.properties.serverUrl,
+                            nodeData.properties.filename,
+                            nodeData.properties.hash
+                        );
+                        // Also add to cache for future use
+                        if (window.app?.imageResourceCache && nodeData.properties.hash) {
+                            window.app.imageResourceCache.set(nodeData.properties.hash, {
+                                url: nodeData.properties.serverUrl,
+                                serverFilename: nodeData.properties.serverFilename,
+                                originalFilename: nodeData.properties.filename
+                            });
+                            // console.log('💾 Added to cache from duplicate data');
+                        }
+                    } else {
+                        // Not cached and no server URL - check if original node has data URL we can reuse
+                        // console.log('📤 No server URL - using original image data (may trigger upload)');
+                        node.setImage(
+                            nodeData.properties.src,
+                            nodeData.properties.filename,
+                            nodeData.properties.hash
+                        );
+                        
+                        // Add to cache immediately with local data so subsequent duplicates can reuse
+                        if (window.app?.imageResourceCache && nodeData.properties.hash && nodeData.properties.src) {
+                            window.app.imageResourceCache.set(nodeData.properties.hash, {
+                                url: nodeData.properties.src, // Use the data URL temporarily
+                                serverFilename: null,
+                                originalFilename: nodeData.properties.filename,
+                                isLocal: true // Mark as local so we know it needs server upgrade later
+                            });
+                            // console.log('💾 Pre-cached with local data for future duplicates');
+                        }
+                    }
                 }
             } else {
                 // No cache available, use original data
-                await node.setImage(
+                // console.log('⚠️ No cache available');
+                node.setImage(
                     nodeData.properties.src,
                     nodeData.properties.filename,
                     nodeData.properties.hash
                 );
             }
         } else if (node.type === 'media/video' && nodeData.properties.src) {
-            await node.setVideo(
+            node.setVideo(
                 nodeData.properties.src,
                 nodeData.properties.filename,
                 nodeData.properties.hash
@@ -837,7 +994,37 @@ class PasteNodesCommand extends Command {
         
         return node;
     }
+    
+    // Connection health monitoring (same as DuplicateNodesCommand)
+    checkConnectionHealth() {
+        const socket = window.app?.networkLayer?.socket;
+        const stateSyncManager = window.app?.operationPipeline?.stateSyncManager;
+        
+        return {
+            connected: socket?.connected || false,
+            socketReady: socket?.readyState === 1, // WebSocket.OPEN
+            hasSocket: !!socket,
+            pendingOperations: stateSyncManager?.pendingOperations?.size || 0,
+            lastPingTime: socket?.lastPing || 0,
+            reconnecting: socket?.reconnecting || false,
+            bufferedAmount: socket?.bufferedAmount || 0
+        };
+    }
+    
+    // Memory usage monitoring (same as DuplicateNodesCommand)
+    getMemoryUsage() {
+        if (performance.memory) {
+            return {
+                used: `${Math.round(performance.memory.usedJSHeapSize / 1024 / 1024)}MB`,
+                total: `${Math.round(performance.memory.totalJSHeapSize / 1024 / 1024)}MB`,
+                limit: `${Math.round(performance.memory.jsHeapSizeLimit / 1024 / 1024)}MB`,
+                usagePercent: `${Math.round((performance.memory.usedJSHeapSize / performance.memory.jsHeapSizeLimit) * 100)}%`
+            };
+        }
+        return { available: false };
+    }
 }
+
 
 // Register extended commands
 if (typeof window !== 'undefined') {

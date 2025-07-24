@@ -99,6 +99,9 @@ class OperationPipeline {
         
         // Handle both command objects and type+params
         if (typeof commandOrType === 'string') {
+            // REMOVED: Pre-validation was causing more problems than it solved
+            // Operations should succeed locally and handle server errors gracefully
+            
             command = this.createCommand(commandOrType, params, options.origin || 'local');
         } else {
             command = commandOrType;
@@ -261,6 +264,44 @@ class OperationPipeline {
                     setTimeout(() => this.processQueue(), 0);
                 }
             }
+        }
+    }
+    
+    /**
+     * Execute a command directly (for BulkCommand)
+     */
+    async executeCommand(command) {
+        // Validate command
+        const validation = command.validate();
+        if (!validation.valid) {
+            throw new Error(validation.error || 'Command validation failed');
+        }
+        
+        // Execute through state sync if available and it's a local command
+        if (this.app.stateSyncManager && command.origin === 'local') {
+            try {
+                const result = await this.app.stateSyncManager.executeOperation(command);
+                return { success: true, result: result.result };
+            } catch (error) {
+                console.error('State sync failed:', error);
+                throw error;
+            }
+        } else {
+            // Execute locally
+            const context = {
+                app: this.app,
+                graph: this.app.graph,
+                canvas: this.app.graphCanvas
+            };
+            
+            const result = await command.execute(context);
+            
+            // Mark canvas dirty
+            if (this.app.graphCanvas) {
+                this.app.graphCanvas.dirty_canvas = true;
+            }
+            
+            return { success: true, result };
         }
     }
     

@@ -9,6 +9,8 @@ class ImageCanvasApp {
         this.graphCanvas = new LGraphCanvas(this.canvas, this.graph);
         this.dragDropManager = new DragDropManager(this.canvas, this.graph);
         this.stateManager = new StateManager();
+        this.bulkOperationManager = new BulkOperationManager();
+        this.backgroundSyncManager = null; // Will be initialized after network layer
         
         this.init();
     }
@@ -20,6 +22,10 @@ class ImageCanvasApp {
             // Initialize caching systems
             await window.imageCache.init();
             window.thumbnailCache = new ThumbnailCache();
+            
+            // Initialize image resource cache for deduplication
+            this.imageResourceCache = new ImageResourceCache();
+            
             await this.stateManager.init();
             
             // Connect state manager to canvas

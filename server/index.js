@@ -46,13 +46,13 @@ class ImageCanvasServer {
             },
             // Allow multiple connections from same origin
             allowEIO3: true,
-            // Increase ping timeout to prevent premature disconnections
-            pingTimeout: 60000,
+            // Increase ping timeout to prevent premature disconnections during bulk operations
+            pingTimeout: 120000, // 2 minutes (doubled from 60s)
             pingInterval: 25000,
             // Allow WebSocket and polling transports
             transports: ['websocket', 'polling'],
-            // Increase maximum HTTP buffer size for large operations (10MB)
-            maxHttpBufferSize: 1e7,
+            // Increase maximum HTTP buffer size for large operations (20MB - doubled from 10MB)
+            maxHttpBufferSize: 2e7,
             // Enable compression for large payloads
             perMessageDeflate: {
                 threshold: 1024 // Compress messages larger than 1KB

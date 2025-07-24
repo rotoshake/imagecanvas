@@ -662,6 +662,10 @@ class LGraphCanvas {
                     this.graph.add(duplicate);
                     duplicates.push(duplicate);
                     
+                    // Mark as temporary - will be replaced by server version later
+                    duplicate._isTemporary = true;
+                    duplicate._temporaryCreatedAt = Date.now();
+                    
                     // Remember which duplicate corresponds to the dragged node
                     if (selectedNode.id === node.id) {
                         draggedDuplicate = duplicate;
@@ -676,23 +680,19 @@ class LGraphCanvas {
                 duplicate.pos[1] = node.pos[1];
                 this.graph.add(duplicate);
                 duplicates.push(duplicate);
+                
+                // Mark as temporary - will be replaced by server version later
+                duplicate._isTemporary = true;
+                duplicate._temporaryCreatedAt = Date.now();
+                
                 draggedDuplicate = duplicate;
             }
         }
         
         // Mark these nodes as needing collaborative sync after drag completes
         // But only if the collaborative system is properly authenticated
-        if (window.app?.operationPipeline && duplicates.length > 0) {
-            // Check if we're likely to have auth issues by checking connection status
-            const isConnected = window.app.operationPipeline.stateSyncManager?.network?.connected;
-            if (isConnected !== false) {  // Try collaborative sync unless explicitly disconnected
-                duplicates.forEach(dup => {
-                    dup._needsCollaborativeSync = true;
-                });
-            } else {
-                console.log('Collaborative system unavailable - keeping Alt+drag as local-only');
-            }
-        }
+        // Alt+drag now uses the collaborative system directly via node_duplicate command
+        // No need to mark for sync since it's already handled properly
         
         if (duplicates.length === 0) return;
         
@@ -703,6 +703,10 @@ class LGraphCanvas {
         // Start dragging all duplicates, using the dragged duplicate as reference
         this.interactionState.dragging.node = draggedDuplicate;
         this.interactionState.dragging.isDuplication = true;  // Mark as duplication drag
+        
+        // Force immediate redraw to show any loading states
+        this.dirty_canvas = true;
+        requestAnimationFrame(() => this.draw());
         
         // Calculate offsets for all duplicates
         for (const duplicate of duplicates) {
@@ -893,17 +897,34 @@ class LGraphCanvas {
             scaleY = scaleX;
         }
         
-        // Apply scaling to all selected nodes relative to bounding box
+        // Scale nodes as if bounding box top-left is pinned to canvas
+        // Everything deforms from that fixed anchor point
         for (const node of this.selection.selectedNodes.values()) {
             const initial = this.interactionState.resizing.initial.get(node.id);
             if (!initial) continue;
             
-            // Scale size
-            node.size[0] = Math.max(50, initial.size[0] * scaleX);
-            node.size[1] = Math.max(50, initial.size[1] * scaleY);
+            if (node.rotation && node.rotation !== 0) {
+                // For rotated nodes: apply scaling in their local coordinate system
+                // to approximate the visual deformation effect
+                const angle = node.rotation * Math.PI / 180;
+                const cos = Math.cos(angle);
+                const sin = Math.sin(angle);
+                
+                // Transform global scale factors into local coordinate system
+                const localScaleX = Math.abs(scaleX * cos) + Math.abs(scaleY * sin);
+                const localScaleY = Math.abs(scaleX * sin) + Math.abs(scaleY * cos);
+                
+                node.size[0] = Math.max(50, initial.size[0] * localScaleX);
+                node.size[1] = Math.max(50, initial.size[1] * localScaleY);
+            } else {
+                // Non-rotated nodes: direct scaling
+                node.size[0] = Math.max(50, initial.size[0] * scaleX);
+                node.size[1] = Math.max(50, initial.size[1] * scaleY);
+            }
+            
             node.aspectRatio = node.size[0] / node.size[1];
             
-            // Scale position relative to bounding box origin
+            // All nodes: scale position from bounding box top-left anchor
             node.pos[0] = bx + (initial.pos[0] - bx) * scaleX;
             node.pos[1] = by + (initial.pos[1] - by) * scaleY;
             
@@ -1137,11 +1158,25 @@ class LGraphCanvas {
             const wasDuplication = this.interactionState.dragging.isDuplication;
             
             // Broadcast move operation for collaboration
-            // Always skip move operations for nodes that need collaborative sync (local duplicates)
-            if (window.app?.operationPipeline && wasInteracting) {
+            // Skip move operations for duplicated or temporary nodes
+            if (window.app?.operationPipeline && wasInteracting && !wasDuplication) {
                 const selectedNodes = this.selection.getSelectedNodes();
-                // Filter out nodes marked for collaborative sync - important for both regular and duplication drags
-                const collaborativeNodes = selectedNodes.filter(n => !n._needsCollaborativeSync);
+                // Filter out temporary nodes that don't exist on server yet
+                const collaborativeNodes = selectedNodes.filter(n => {
+                    // Exclude temporary nodes
+                    if (n._isTemporary || n._localId || n._pendingSync) {
+                        return false;
+                    }
+                    // Exclude nodes with invalid IDs
+                    if (!n.id || typeof n.id !== 'number') {
+                        return false;
+                    }
+                    // Exclude nodes that previously failed sync
+                    if (n._syncFailed) {
+                        return false;
+                    }
+                    return true;
+                });
                 
                 if (collaborativeNodes.length === 1) {
                     const node = collaborativeNodes[0];
@@ -1155,15 +1190,52 @@ class LGraphCanvas {
                     
                     window.app.operationPipeline.execute('node_move', moveData);
                 } else if (collaborativeNodes.length > 1) {
-                    const moveData = {
-                        nodeIds: collaborativeNodes.map(n => n.id),
-                        positions: collaborativeNodes.map(n => [...n.pos])
-                    };
-                    
-                    // For move operations, we don't need to send media properties
-                    // The server already has this data and positions are the only thing changing
-                    
-                    window.app.operationPipeline.execute('node_move', moveData);
+                    // For very large selections, chunk the move operations
+                    if (collaborativeNodes.length > 50) {
+                        console.log(`📦 Chunking move operation for ${collaborativeNodes.length} nodes`);
+                        
+                        const chunkSize = 20;
+                        const chunks = [];
+                        
+                        for (let i = 0; i < collaborativeNodes.length; i += chunkSize) {
+                            chunks.push(collaborativeNodes.slice(i, i + chunkSize));
+                        }
+                        
+                        // Execute chunks asynchronously to avoid blocking
+                        (async () => {
+                            for (let i = 0; i < chunks.length; i++) {
+                                const chunk = chunks[i];
+                                let moveData = {
+                                    nodeIds: chunk.map(n => n.id),
+                                    positions: chunk.map(n => [...n.pos])
+                                };
+                                
+                                // REMOVED: Validation - let server handle missing nodes gracefully
+                                
+                                try {
+                                    await window.app.operationPipeline.execute('node_move', moveData);
+                                    
+                                    // Small delay between chunks to avoid overwhelming server
+                                    if (i < chunks.length - 1) {
+                                        await new Promise(resolve => setTimeout(resolve, 50));
+                                    }
+                                } catch (error) {
+                                    console.error(`Move chunk ${i + 1}/${chunks.length} failed:`, error);
+                                    // Continue with other chunks
+                                }
+                            }
+                        })();
+                    } else {
+                        // Small batch can go directly
+                        let moveData = {
+                            nodeIds: collaborativeNodes.map(n => n.id),
+                            positions: collaborativeNodes.map(n => [...n.pos])
+                        };
+                        
+                        // REMOVED: Validation - let server handle missing nodes gracefully
+                        
+                        window.app.operationPipeline.execute('node_move', moveData);
+                    }
                 }
                 // No warning for empty collaborative nodes - this is expected for duplication
             }
@@ -1171,9 +1243,170 @@ class LGraphCanvas {
             this.interactionState.dragging.node = null;
             this.interactionState.dragging.offsets.clear();
             
-            // Sync locally duplicated nodes with collaborative system after drag completes
+            // For Alt+drag duplication, sync the nodes through collaborative system
+            // but keep the local nodes visible for seamless transition
             if (wasDuplication && window.app?.operationPipeline) {
-                this.syncLocalDuplicatesWithServer();
+                const duplicatedNodes = this.selection.getSelectedNodes();
+                if (duplicatedNodes.length > 0) {
+                    // Generate operation ID for tracking
+                    const operationId = `alt-drag-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+                    
+                    // Collect temporary nodes for tracking
+                    const tempNodeMap = new Map();
+                    const tempNodeIds = [];
+                    duplicatedNodes.forEach(node => {
+                        if (node._isTemporary) {
+                            tempNodeMap.set(node.id, node);
+                            tempNodeIds.push(node.id);
+                            // Add operation ID to node for correlation
+                            node._operationId = operationId;
+                            console.log(`🏷️ Tracking temporary node: ${node.id} at [${node.pos[0]}, ${node.pos[1]}] with operation ${operationId}`);
+                        }
+                    });
+                    
+                    // Create node data for all duplicates at their final positions
+                    const nodeDataArray = duplicatedNodes.map(node => {
+                        // Use BulkOperationManager's optimization if available
+                        if (window.app?.bulkOperationManager) {
+                            return window.app.bulkOperationManager.optimizeNodeData(node);
+                        }
+                        
+                        // Fallback to inline optimization
+                        const nodeData = {
+                            type: node.type,
+                            pos: [...node.pos], // Final position after drag
+                            size: [...node.size],
+                            properties: { ...node.properties },
+                            flags: { ...node.flags },
+                            title: node.title,
+                            rotation: node.rotation || 0,
+                            aspectRatio: node.aspectRatio
+                        };
+                        
+                        // For cached images, only send hash and server URL, not the full data
+                        if (node.type === 'media/image' && node.properties.hash) {
+                            console.log(`📤 Preparing Alt+drag node data - hash:${node.properties.hash.substring(0,8)} serverUrl:${!!node.properties.serverUrl}`);
+                            
+                            // If we have a serverUrl, use minimal data
+                            if (node.properties.serverUrl) {
+                                nodeData.properties = {
+                                    hash: node.properties.hash,
+                                    filename: node.properties.filename,
+                                    serverUrl: node.properties.serverUrl,
+                                    serverFilename: node.properties.serverFilename
+                                };
+                                // Don't include the large src data URL
+                                delete nodeData.properties.src;
+                            }
+                            // Otherwise, we need to send the src for the server to upload
+                            else {
+                                console.log(`⚠️ No serverUrl for cached image, keeping src data`);
+                            }
+                        }
+                        
+                        return nodeData;
+                    });
+                    
+                    // Create through collaborative system WITHOUT removing local nodes
+                    let operationPromise;
+                    
+                    // For Alt+drag with many nodes, chunk the operation manually
+                    if (nodeDataArray.length > 20) {
+                        // Split into smaller chunks and execute sequentially
+                        const chunkSize = 10;
+                        const chunks = [];
+                        for (let i = 0; i < nodeDataArray.length; i += chunkSize) {
+                            chunks.push(nodeDataArray.slice(i, i + chunkSize));
+                        }
+                        
+                        console.log(`📦 Alt+drag: Splitting ${nodeDataArray.length} nodes into ${chunks.length} chunks`);
+                        
+                        // Execute chunks sequentially
+                        operationPromise = (async () => {
+                            const results = [];
+                            for (let i = 0; i < chunks.length; i++) {
+                                const chunk = chunks[i];
+                                console.log(`📤 Sending chunk ${i + 1}/${chunks.length} with ${chunk.length} nodes`);
+                                
+                                try {
+                                    const result = await window.app.operationPipeline.execute('node_duplicate', {
+                                        nodeIds: [],
+                                        nodeData: chunk,
+                                        offset: [0, 0]
+                                    });
+                                    
+                                    if (result && result.result && result.result.nodes) {
+                                        results.push(...result.result.nodes);
+                                    }
+                                    
+                                    // Small delay between chunks
+                                    if (i < chunks.length - 1) {
+                                        await new Promise(resolve => setTimeout(resolve, 100));
+                                    }
+                                } catch (error) {
+                                    console.error(`❌ Chunk ${i + 1} failed:`, error);
+                                    // Continue with other chunks
+                                }
+                            }
+                            
+                            return { result: { nodes: results } };
+                        })();
+                    } else {
+                        // Track operation in StateSyncManager's OperationTracker
+                        if (window.app?.operationPipeline?.stateSyncManager?.operationTracker) {
+                            window.app.operationPipeline.stateSyncManager.operationTracker.trackOperation(operationId, {
+                                type: 'node_duplicate',
+                                tempNodeIds: tempNodeIds,
+                                nodeData: nodeDataArray
+                            });
+                        }
+                        
+                        // Small operations can go directly
+                        operationPromise = window.app.operationPipeline.execute('node_duplicate', {
+                            nodeIds: [], // Empty since we're providing explicit node data
+                            nodeData: nodeDataArray, // Explicit node data with final positions
+                            offset: [0, 0], // No offset, already positioned
+                            operationId: operationId // Include operation ID for correlation
+                        });
+                    }
+                    
+                    operationPromise.then(result => {
+                        console.log('🔄 Alt+drag duplicate server response received');
+                        
+                        // Clear selection
+                        this.selection.clear();
+                        
+                        // For optimistic updates, select the nodes immediately
+                        if (window.app?.operationPipeline?.stateSyncManager?.optimisticEnabled) {
+                            if (result && result.result && result.result.nodes) {
+                                result.result.nodes.forEach(nodeData => {
+                                    // Find the actual node in the graph by ID
+                                    const node = this.graph.getNodeById(nodeData.id);
+                                    if (node) {
+                                        this.selection.selectNode(node, true);
+                                    }
+                                });
+                            }
+                        } else {
+                            // For non-optimistic, store node IDs to select when they arrive from server
+                            if (result && result.result && result.result.nodes) {
+                                this._pendingSelectionNodeIds = result.result.nodes.map(n => n.id);
+                            }
+                        }
+                        
+                        // Force a redraw to ensure any loading states are visible
+                        this.dirty_canvas = true;
+                        requestAnimationFrame(() => this.draw());
+                        
+                    }).catch(error => {
+                        console.error('❌ Alt+drag duplicate failed:', error);
+                        // On error, just remove the temporary flag
+                        tempNodeMap.forEach(node => {
+                            delete node._isTemporary;
+                            delete node._temporaryCreatedAt;
+                        });
+                    });
+                }
             }
             
             this.interactionState.dragging.isDuplication = false;
@@ -1429,8 +1662,34 @@ class LGraphCanvas {
         const selected = this.selection.getSelectedNodes();
         if (selected.length === 0) return;
         
-        this.clipboard = selected.map(node => this.serializeNode(node));
-        console.log(`Copied ${selected.length} nodes`);
+        // Serialize nodes and optimize if BulkOperationManager is available
+        if (window.app?.bulkOperationManager) {
+            this.clipboard = selected.map(node => {
+                const serialized = this.serializeNode(node);
+                // Optimize large media data
+                return window.app.bulkOperationManager.optimizeNodeData(serialized);
+            });
+        } else {
+            this.clipboard = selected.map(node => this.serializeNode(node));
+        }
+        
+        console.log(`📋 Copied ${selected.length} nodes to clipboard`);
+        
+        // Log node types for debugging
+        const nodeTypes = {};
+        this.clipboard.forEach(node => {
+            nodeTypes[node.type] = (nodeTypes[node.type] || 0) + 1;
+        });
+        console.log('Clipboard contents:', nodeTypes);
+        
+        // Show notification for large copies
+        if (selected.length > 50) {
+            window.app?.notifications?.show({
+                type: 'success',
+                message: `Copied ${selected.length} nodes to clipboard`,
+                timeout: 2000
+            });
+        }
     }
     
     cutSelected() {
@@ -1441,23 +1700,85 @@ class LGraphCanvas {
     async paste() {
         if (!this.clipboard || this.clipboard.length === 0) return;
         
+        console.log(`📋 Starting paste operation with ${this.clipboard.length} nodes`);
+        
         // Use OperationPipeline for collaborative paste
         if (window.app?.operationPipeline) {
             try {
                 const mouseGraphPos = this.mouseState?.graph || [0, 0];
-                const result = await window.app.operationPipeline.execute('node_paste', {
-                    nodeData: this.clipboard,
-                    targetPosition: mouseGraphPos
-                });
+                let result;
+                
+                // Use BulkOperationManager for medium to large paste operations
+                if (this.clipboard.length > 10 && window.app?.bulkOperationManager) {
+                    // Optimize node data before sending
+                    result = await window.app.bulkOperationManager.executeBulkOperation(
+                        'node_paste',
+                        this.clipboard,
+                        { targetPosition: mouseGraphPos },
+                        (nodeData) => window.app.bulkOperationManager.optimizeNodeData(nodeData)
+                    );
+                } else {
+                    // Show progress feedback for medium operations
+                    let progressNotification = null;
+                    if (this.clipboard.length > 10) {
+                        progressNotification = window.app?.notifications?.show({
+                            type: 'info', 
+                            message: `Pasting ${this.clipboard.length} nodes...`,
+                            timeout: 0 // Don't auto-dismiss
+                        });
+                    }
+                    
+                    result = await window.app.operationPipeline.execute('node_paste', {
+                        nodeData: this.clipboard,
+                        targetPosition: mouseGraphPos
+                    });
+                    
+                    // Clear progress notification
+                    if (progressNotification) {
+                        window.app?.notifications?.dismiss(progressNotification);
+                    }
+                }
+                
                 
                 if (result && result.result && result.result.nodes) {
-                    // Select the pasted nodes
+                    console.log(`📋 Paste operation completed: ${result.result.nodes.length} nodes created`);
+                    
+                    // Clear selection first
                     this.selection.clear();
-                    result.result.nodes.forEach(node => this.selection.selectNode(node, true));
+                    
+                    // For optimistic updates, select the nodes immediately
+                    if (window.app?.operationPipeline?.stateSyncManager?.optimisticEnabled) {
+                        result.result.nodes.forEach(nodeData => {
+                            // Find the actual node in the graph by ID
+                            const node = this.graph.getNodeById(nodeData.id);
+                            if (node) {
+                                this.selection.selectNode(node, true);
+                            }
+                        });
+                    } else {
+                        // For non-optimistic, store node IDs to select when they arrive from server
+                        this._pendingSelectionNodeIds = result.result.nodes.map(n => n.id);
+                    }
+                    
                     this.dirty_canvas = true;
+                } else {
+                    console.warn('⚠️ Paste operation returned no nodes');
                 }
             } catch (error) {
                 console.error('Failed to paste nodes:', error);
+                
+                // Clear progress notification
+                if (progressNotification) {
+                    window.app?.notifications?.dismiss(progressNotification);
+                }
+                
+                // Show error to user
+                window.app?.notifications?.show({
+                    type: 'error',
+                    message: `Failed to paste ${this.clipboard.length} nodes: ${error.message || 'Server error'}`,
+                    timeout: 5000
+                });
+                
             }
         } else {
             // Fallback to local operation
@@ -1516,19 +1837,77 @@ class LGraphCanvas {
         if (window.app?.operationPipeline) {
             try {
                 const nodeIds = selected.map(node => node.id);
-                const result = await window.app.operationPipeline.execute('node_duplicate', {
-                    nodeIds: nodeIds,
-                    offset: [20, 20]
-                });
+                let result;
+                
+                // Use BulkOperationManager for medium to large selections
+                if (nodeIds.length > 10 && window.app?.bulkOperationManager) {
+                    result = await window.app.bulkOperationManager.executeBulkOperation(
+                        'node_duplicate',
+                        nodeIds,
+                        { offset: [20, 20] },
+                        null // No item preparation needed for nodeIds
+                    );
+                } else {
+                    // Show progress feedback for medium operations
+                    let progressNotification = null;
+                    if (nodeIds.length > 10) {
+                        progressNotification = window.app?.notifications?.show({
+                            type: 'info',
+                            message: `Duplicating ${nodeIds.length} nodes...`,
+                            timeout: 0 // Don't auto-dismiss
+                        });
+                    }
+                    
+                    result = await window.app.operationPipeline.execute('node_duplicate', {
+                        nodeIds: nodeIds,
+                        offset: [20, 20]
+                    });
+                    
+                    // Clear progress notification
+                    if (progressNotification) {
+                        window.app?.notifications?.dismiss(progressNotification);
+                    }
+                }
+                
                 
                 if (result && result.result && result.result.nodes) {
-                    // Select the duplicated nodes
+                    // Clear selection first
                     this.selection.clear();
-                    result.result.nodes.forEach(node => this.selection.selectNode(node, true));
+                    
+                    // For optimistic updates, select the nodes immediately
+                    if (window.app?.operationPipeline?.stateSyncManager?.optimisticEnabled) {
+                        result.result.nodes.forEach(nodeData => {
+                            // Find the actual node in the graph by ID
+                            const node = this.graph.getNodeById(nodeData.id);
+                            if (node) {
+                                this.selection.selectNode(node, true);
+                            }
+                        });
+                    } else {
+                        // For non-optimistic, store node IDs to select when they arrive from server
+                        this._pendingSelectionNodeIds = result.result.nodes.map(n => n.id);
+                    }
+                    
                     this.dirty_canvas = true;
+                    
+                    // Force immediate redraw to show loading states
+                    requestAnimationFrame(() => this.draw());
                 }
             } catch (error) {
                 console.error('Failed to duplicate nodes:', error);
+                
+                // Clear progress notification
+                if (progressNotification) {
+                    window.app?.notifications?.dismiss(progressNotification);
+                }
+                
+                // Show error to user
+                window.app?.notifications?.show({
+                    type: 'error',
+                    message: `Failed to duplicate ${nodeIds.length} nodes: ${error.message || 'Server error'}`,
+                    timeout: 5000
+                });
+                
             }
         } else {
             // Fallback to local operation
@@ -1567,14 +1946,10 @@ class LGraphCanvas {
         
         if (nodesToSync.length === 0) return;
         
+        // Define progressNotification at function scope
+        let progressNotification = null;
         
         try {
-            // Disable optimistic updates during this conversion to prevent conflicts
-            let originalOptimistic = true;
-            if (window.app.operationPipeline?.stateSyncManager) {
-                originalOptimistic = window.app.operationPipeline.stateSyncManager.optimisticEnabled;
-                window.app.operationPipeline.stateSyncManager.optimisticEnabled = false;
-            }
             
             // Convert local nodes to collaborative by removing them locally 
             // and creating them through the collaborative system at final position
@@ -1597,78 +1972,55 @@ class LGraphCanvas {
                 delete node._needsCollaborativeSync;
             });
             
-            // Create them through collaborative system at final positions
-            const createdNodes = [];
-            for (const nodeData of nodeDataArray) {
-                const result = await window.app.operationPipeline.execute('node_create', {
-                    type: nodeData.type,
-                    pos: nodeData.pos,
-                    size: nodeData.size,
-                    properties: nodeData.properties,
-                    flags: nodeData.flags,
-                    title: nodeData.title,
-                    rotation: nodeData.rotation,
-                    aspectRatio: nodeData.aspectRatio
+            // Show progress feedback for large operations
+            if (nodeDataArray.length > 50) {
+                progressNotification = window.app?.notifications?.show({
+                    type: 'info',
+                    message: `Converting ${nodeDataArray.length} nodes...`,
+                    timeout: 0 // Don't auto-dismiss
                 });
-                
-                if (result && result.success) {
-                    // The response structure is nested: result.result.result.node
-                    let createdNode = null;
-                    if (result.result && result.result.result && result.result.result.node) {
-                        createdNode = result.result.result.node;
-                    } else if (result.result && result.result.node) {
-                        createdNode = result.result.node;
-                    } else if (result.result && result.result.id) {
-                        // Maybe the node IS the result.result
-                        createdNode = result.result;
-                    }
-                    
-                    // Wait a bit for the server node to be added to the graph
-                    await new Promise(resolve => setTimeout(resolve, 100));
-                    
-                    // Find the created node by type and position in the graph
-                    // This is necessary because the server returns a different ID than the optimistic node
-                    const matchingNodes = this.graph.nodes.filter(n => 
-                        n.type === nodeData.type && 
-                        Math.abs(n.pos[0] - nodeData.pos[0]) < 5 && 
-                        Math.abs(n.pos[1] - nodeData.pos[1]) < 5 &&
-                        !createdNodes.some(cn => cn.id === n.id) &&
-                        !n._needsCollaborativeSync  // Don't find the local duplicate
-                    );
-                    
-                    if (matchingNodes.length > 0) {
-                        // Get the most recently added node (highest ID)
-                        const sortedNodes = matchingNodes.sort((a, b) => {
-                            // Server IDs are timestamps, so higher = newer
-                            const aId = parseInt(a.id) || 0;
-                            const bId = parseInt(b.id) || 0;
-                            return bId - aId;
-                        });
-                        createdNodes.push(sortedNodes[0]);
-                    }
-                } else {
-                    console.error('❌ Failed to create collaborative node:', result);
-                }
             }
             
-            // Clear and reselect the new collaborative nodes
-            this.selection.clear();
-            createdNodes.forEach(node => {
-                if (node && node.id) {
-                    this.selection.selectNode(node, true);
-                }
+            // Use node_duplicate for better cache utilization
+            const result = await window.app.operationPipeline.execute('node_duplicate', {
+                nodeIds: [], // Empty since we're providing explicit node data
+                nodeData: nodeDataArray, // Explicit node data with positions
+                offset: [0, 0] // No offset, already positioned
             });
+            
+            // Clear progress notification
+            if (progressNotification) {
+                window.app?.notifications?.dismiss(progressNotification);
+            }
+            
+            if (result && result.result && result.result.nodes) {
+                // Select the created nodes
+                result.result.nodes.forEach(node => {
+                    this.selection.selectNode(node, true);
+                });
+                console.log(`🔄 Converted ${result.result.nodes.length} local duplicates to collaborative nodes`);
+            } else {
+                console.error('❌ Failed to create collaborative nodes:', result);
+            }
             
             // Force the canvas to update selection visuals
             this.dirty_canvas = true;
             
-            // Restore optimistic updates
-            if (window.app.operationPipeline?.stateSyncManager) {
-                window.app.operationPipeline.stateSyncManager.optimisticEnabled = originalOptimistic;
-            }
             
         } catch (error) {
             console.error('Failed to convert local duplicates to collaborative:', error);
+            
+            // Clear progress notification
+            if (progressNotification) {
+                window.app?.notifications?.dismiss(progressNotification);
+            }
+            
+            // Show error to user
+            window.app?.notifications?.show({
+                type: 'error',
+                message: `Failed to convert ${nodeDataArray.length} nodes: ${error.message || 'Server error'}`,
+                timeout: 5000
+            });
             
             // If collaborative conversion failed (e.g., authentication error), 
             // we need to handle the local duplicates properly
@@ -1689,10 +2041,6 @@ class LGraphCanvas {
                 this.selection.clear();
             }
             
-            // Restore optimistic updates even on error
-            if (window.app.operationPipeline?.stateSyncManager) {
-                window.app.operationPipeline.stateSyncManager.optimisticEnabled = originalOptimistic;
-            }
         }
     }
     
@@ -3051,14 +3399,19 @@ class LGraphCanvas {
         ctx.font = '12px monospace';
         ctx.fillStyle = '#fff';
         
-        const cacheStats = window.imageCache ? window.imageCache.getStats() : { memorySize: 'N/A' };
+        // Count unique cached assets on the canvas
+        const uniqueCachedAssets = this.getUniqueCachedAssetsOnCanvas();
+        const cacheStats = window.app?.imageResourceCache ? window.app.imageResourceCache.getStats() : null;
+        const cacheDisplay = cacheStats ? 
+            `${uniqueCachedAssets}/${cacheStats.totalCached} (${cacheStats.hitRate})` : 
+            `${uniqueCachedAssets} unique`;
         
         const stats = [
             `FPS: ${this.fps}`,
             `Nodes: ${this.graph.nodes.length}`,
             `Selected: ${this.selection.size()}`,
             `Scale: ${(this.viewport.scale * 100).toFixed(0)}%`,
-            `Cache: ${cacheStats.memorySize}`
+            `References: ${uniqueCachedAssets}`
         ];
         
         stats.forEach((stat, i) => {
@@ -3071,6 +3424,22 @@ class LGraphCanvas {
     // ===================================
     // UTILITY METHODS
     // ===================================
+    
+    getUniqueCachedAssetsOnCanvas() {
+        // Count unique hashes of image/video nodes on the canvas that are cached
+        const uniqueHashes = new Set();
+        
+        for (const node of this.graph.nodes) {
+            if ((node.type === 'media/image' || node.type === 'media/video') && node.properties?.hash) {
+                // Only count if the asset is actually cached
+                if (window.app?.imageResourceCache?.has(node.properties.hash)) {
+                    uniqueHashes.add(node.properties.hash);
+                }
+            }
+        }
+        
+        return uniqueHashes.size;
+    }
     
     getConfig(path, defaultValue) {
         // Helper to safely get config values

@@ -16,6 +16,7 @@ class ImageNode extends BaseNode {
         this.size = [200, 200];
         
         // Progressive loading state
+        this.loadingState = 'idle'; // idle, loading, loaded, error
         this.loadingProgress = 0; // 0-1 for unified progress tracking
     }
     
@@ -23,8 +24,13 @@ class ImageNode extends BaseNode {
         this.properties.src = src;
         this.properties.filename = filename;
         this.properties.hash = hash;
-        this.loadingState = 'loading';
-        this.loadingProgress = 0.1; // 10% for starting load
+        // Only set loading state if not already set (preserve initial state)
+        if (!this.loadingState || this.loadingState === 'idle') {
+            this.loadingState = 'loading';
+            this.loadingProgress = 0.1; // 10% for starting load
+        }
+        
+        console.log(`🖼️ setImage called - node:${this.id || 'pending'} loadingState:${this.loadingState} hash:${hash?.substring(0, 8) || 'none'}`)
         
         // Update title
         if (filename && (!this.title || this.title === 'Image')) {
@@ -34,6 +40,7 @@ class ImageNode extends BaseNode {
         try {
             // Load image with progress tracking
             this.img = await this.loadImageAsyncOptimized(src);
+            console.log(`✅ Image loaded for node:${this.id}`);
             this.loadingState = 'loaded';
             this.loadingProgress = 0.3; // 30% for image loaded
             
@@ -65,6 +72,24 @@ class ImageNode extends BaseNode {
             
             this.onResize();
             this.markDirty();
+            
+            // Force canvas redraw when image loads
+            // Use global app reference as node might not be in graph yet
+            const canvas = this.graph?.canvas || window.app?.graphCanvas;
+            if (canvas) {
+                console.log(`🎨 Forcing canvas redraw for loaded image node:${this.id}`);
+                canvas.dirty_canvas = true;
+                
+                // Use a small delay to ensure node is fully initialized
+                setTimeout(() => {
+                    if (canvas.draw) {
+                        console.log(`🖌️ Executing canvas.draw() for node:${this.id}`);
+                        canvas.draw();
+                    }
+                }, 10);
+            } else {
+                console.warn(`⚠️ No canvas available for redraw - node:${this.id}`);
+            }
             
         } catch (error) {
             console.error('Failed to load image:', error);
@@ -195,7 +220,16 @@ class ImageNode extends BaseNode {
     onDrawForeground(ctx) {
         this.validate();
         
-        if (this.loadingState === 'loading' || this.loadingState === 'idle') {
+        // Auto-start loading if we have a source but haven't started yet
+        if (this.loadingState === 'idle' && this.properties.src && !this.img) {
+            console.log(`🎨 Auto-starting load for node:${this.id}`);
+            this.setImage(this.properties.src, this.properties.filename, this.properties.hash);
+        }
+        
+        // Show loading ring if loading or if we have a source but no image yet
+        if (this.loadingState === 'loading' || 
+            (this.loadingState === 'idle' && this.properties.src && !this.img)) {
+            console.log(`🔄 Drawing loading ring for node:${this.id} state:${this.loadingState}`);
             this.drawProgressRing(ctx, this.loadingProgress);
             return;
         }

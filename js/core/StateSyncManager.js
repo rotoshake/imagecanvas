@@ -15,6 +15,9 @@ class StateSyncManager {
         // Pending operations waiting for server confirmation
         this.pendingOperations = new Map();
         
+        // Operation tracker for reliable node correlation
+        this.operationTracker = new OperationTracker();
+        
         // Last known server state
         this.serverStateVersion = 0;
         
@@ -25,6 +28,10 @@ class StateSyncManager {
         this.optimisticEnabled = true;
         
         this.setupHandlers();
+        
+        // Start periodic cleanup of orphaned temporary nodes
+        this.startPeriodicCleanup();
+        
         console.log('🔄 StateSyncManager initialized');
     }
     
@@ -52,6 +59,17 @@ class StateSyncManager {
     async executeOperation(command) {
         const operationId = this.generateOperationId();
         
+        // DIAGNOSTIC: Log execution start
+        console.log('🔥 EXECUTEOP START:', {
+            type: command.type,
+            origin: command.origin,
+            optimisticEnabled: this.optimisticEnabled,
+            willCallOptimistic: this.optimisticEnabled && command.origin === 'local',
+            graphNodeCount: this.app?.graph?.nodes?.length || 0,
+            operationId: operationId,
+            timestamp: Date.now()
+        });
+        
         // Store operation as pending
         this.pendingOperations.set(operationId, {
             command,
@@ -62,12 +80,32 @@ class StateSyncManager {
         try {
             // 1. Apply optimistically if enabled
             let localResult = null;
+            let tempNodeIds = [];
+            
             if (this.optimisticEnabled && command.origin === 'local') {
+                console.log('🔮 ABOUT TO CALL applyOptimistic - graph has', this.app?.graph?.nodes?.length, 'nodes');
                 const optimisticResult = await this.applyOptimistic(command);
+                console.log('✅ applyOptimistic DONE - graph now has', this.app?.graph?.nodes?.length, 'nodes');
                 const pending = this.pendingOperations.get(operationId);
                 pending.rollbackData = optimisticResult.rollbackData;
                 pending.localResult = optimisticResult.localResult;
                 localResult = optimisticResult.localResult;
+                
+                // Track temporary nodes created
+                if (command.type === 'node_duplicate' || command.type === 'node_paste') {
+                    if (localResult?.nodes) {
+                        tempNodeIds = localResult.nodes.map(n => n.id);
+                    } else if (localResult?.node) {
+                        tempNodeIds = [localResult.node.id];
+                    }
+                    
+                    // Track this operation
+                    this.operationTracker.trackOperation(operationId, {
+                        type: command.type,
+                        tempNodeIds: tempNodeIds,
+                        nodeData: command.params.nodeData
+                    });
+                }
             }
             
             // 2. Send to server for authoritative execution
@@ -82,6 +120,12 @@ class StateSyncManager {
             if (!this.network) {
                 throw new Error('Network layer not initialized');
             }
+            
+            // Mark as sent in tracker
+            if (tempNodeIds.length > 0) {
+                this.operationTracker.markSent(operationId);
+            }
+            
             this.network.emit('execute_operation', serverRequest);
             
             // 3. Wait for server response (with timeout)
@@ -189,18 +233,33 @@ class StateSyncManager {
             return;
         }
         
-        // Lock updates
+        // For large updates, queue if we're already processing
+        const isLargeUpdate = (changes?.added?.length > 20 || changes?.updated?.length > 20 || changes?.removed?.length > 20);
+        
         if (this.updating) {
-            console.log('⏳ Update in progress, queueing...');
-            setTimeout(() => this.handleServerStateUpdate(data), 100);
+            if (isLargeUpdate) {
+                console.log(`⏳ Large update in progress, queueing (${changes?.added?.length || 0} adds, ${changes?.updated?.length || 0} updates)...`);
+            } else {
+                console.log('⏳ Update in progress, queueing...');
+            }
+            setTimeout(() => this.handleServerStateUpdate(data), isLargeUpdate ? 500 : 100);
             return;
         }
         
         this.updating = true;
         
         try {
-            // Apply changes
-            await this.applyServerChanges(changes);
+            // If we have an operation ID, mark it as acknowledged in tracker
+            if (operationId && changes?.added?.length > 0) {
+                const trackedOp = this.operationTracker.pendingOperations.get(operationId);
+                if (trackedOp) {
+                    console.log(`📊 Marking operation ${operationId} as acknowledged with ${changes.added.length} nodes`);
+                    this.operationTracker.markAcknowledged(operationId, changes.added);
+                }
+            }
+            
+            // Apply changes with better tracking
+            await this.applyServerChanges(changes, operationId);
             
             // Update version
             this.serverStateVersion = stateVersion;
@@ -221,7 +280,7 @@ class StateSyncManager {
     /**
      * Apply changes from server
      */
-    async applyServerChanges(changes) {
+    async applyServerChanges(changes, operationId) {
         const { added, updated, removed } = changes;
         
         // Remove nodes
@@ -236,6 +295,9 @@ class StateSyncManager {
         
         // Add new nodes
         if (added) {
+            const addedNodeIds = [];
+            const processedTempNodes = new Set();
+            
             for (const nodeData of added) {
                 // Check if server node already exists
                 const existingNode = this.app.graph.getNodeById(nodeData.id);
@@ -243,16 +305,109 @@ class StateSyncManager {
                     console.log(`⏭️ Skipping server node ${nodeData.id} - already exists`);
                     continue;
                 }
+                addedNodeIds.push(nodeData.id);
                 
-                console.log(`➕ Adding server node: ${nodeData.id}:${nodeData.type} at [${nodeData.pos[0]}, ${nodeData.pos[1]}]`);
-                const node = await this.createNodeFromData(nodeData);
-                if (node) {
-                    this.app.graph.add(node);
-                    console.log(`✅ Server node added successfully: ${node.id} (total nodes: ${this.app.graph.nodes.length})`);
+                // Check for temporary nodes that should be replaced
+                // Use OperationTracker for reliable correlation
+                let tempNode = null;
+                if (operationId) {
+                    const serverNodeData = this.operationTracker.getServerNodeForTemp(nodeData.id);
+                    if (serverNodeData) {
+                        // Find temp node using tracker's correlation
+                        const operation = this.operationTracker.pendingOperations.get(operationId);
+                        if (operation && operation.tempNodeIds) {
+                            const nodeIndex = added.indexOf(nodeData);
+                            const tempNodeId = operation.tempNodeIds[nodeIndex];
+                            if (tempNodeId) {
+                                tempNode = this.app.graph.getNodeById(tempNodeId);
+                                console.log(`🎯 Found temp node via tracker: ${tempNodeId} -> ${nodeData.id}`);
+                            }
+                        }
+                    }
+                }
+                
+                // Fallback to old methods if tracker doesn't have it
+                if (!tempNode) {
+                    tempNode = this.findTemporaryNodeByOperationId(nodeData._operationId) ||
+                              this.findTemporaryNodeAtPosition(nodeData.pos, nodeData.type);
+                }
+                if (tempNode && !processedTempNodes.has(tempNode.id)) {
+                    console.log(`🔄 Found temporary node to replace: temp:${tempNode.id} -> server:${nodeData.id} at [${nodeData.pos[0]}, ${nodeData.pos[1]}]`);
+                    processedTempNodes.add(tempNode.id);
+                    
+                    // Transfer any important state from temp node
+                    const wasSelected = this.app.graphCanvas?.selection?.isSelected(tempNode);
+                    
+                    // Remove temporary node
+                    if (this.app.graphCanvas?.selection) {
+                        this.app.graphCanvas.selection.deselectNode(tempNode);
+                    }
+                    this.app.graph.remove(tempNode);
+                    
+                    // Mark as replaced in tracker
+                    if (this.operationTracker.isNodeTracked(tempNode.id)) {
+                        this.operationTracker.markNodeReplaced(tempNode.id);
+                    }
+                    
+                    // Create server node
+                    console.log(`➕ Adding server node: ${nodeData.id}:${nodeData.type} at [${nodeData.pos[0]}, ${nodeData.pos[1]}]`);
+                    const node = await this.createNodeFromData(nodeData);
+                    if (node) {
+                        // Clear sync pending flags since we've successfully synced
+                        delete node._syncPending;
+                        delete node._operationId;
+                        
+                        this.app.graph.add(node);
+                        console.log(`✅ Server node added successfully: ${node.id} (total nodes: ${this.app.graph.nodes.length})`);
+                        
+                        // Restore selection if it was selected
+                        if (wasSelected && this.app.graphCanvas?.selection) {
+                            this.app.graphCanvas.selection.selectNode(node, true);
+                        }
+                    }
                 } else {
-                    console.error(`❌ Failed to create node from server data:`, nodeData);
+                    if (tempNode) {
+                        console.log(`⚠️ Temporary node ${tempNode.id} already processed`);
+                    } else {
+                        console.log(`🔍 No temporary node found at [${nodeData.pos[0]}, ${nodeData.pos[1]}] for type:${nodeData.type}`);
+                    }
+                    
+                    // Create server node anyway
+                    console.log(`➕ Adding server node: ${nodeData.id}:${nodeData.type} at [${nodeData.pos[0]}, ${nodeData.pos[1]}]`);
+                    const node = await this.createNodeFromData(nodeData);
+                    if (node) {
+                        this.app.graph.add(node);
+                        console.log(`✅ Server node added successfully: ${node.id} (total nodes: ${this.app.graph.nodes.length})`);
+                    } else {
+                        console.error(`❌ Failed to create node from server data:`, nodeData);
+                    }
                 }
             }
+            
+            // Don't clean up immediately - let the tracker verify all nodes are replaced
+            // The periodic cleanup will handle truly orphaned nodes
+            console.log('📊 Server changes applied, tracker will verify replacements');
+            
+            // Check if we need to restore selection for these nodes
+            if (this.app.graphCanvas?._pendingSelectionNodeIds && addedNodeIds.length > 0) {
+                const pendingIds = this.app.graphCanvas._pendingSelectionNodeIds;
+                const canvas = this.app.graphCanvas;
+                
+                // Select any of the newly added nodes that match pending selection
+                addedNodeIds.forEach(nodeId => {
+                    if (pendingIds.includes(nodeId)) {
+                        const node = this.app.graph.getNodeById(nodeId);
+                        if (node) {
+                            canvas.selection.selectNode(node, true);
+                        }
+                    }
+                });
+                
+                // Clear pending selection list
+                delete canvas._pendingSelectionNodeIds;
+            }
+            
+            // No longer using NodeSyncValidator - server handles validation gracefully
         }
         
         // Update existing nodes
@@ -314,6 +469,12 @@ class StateSyncManager {
                 }
             }
             
+            // Force canvas redraw to show loading states
+            if (this.app.graph.canvas) {
+                this.app.graph.canvas.dirty_canvas = true;
+                requestAnimationFrame(() => this.app.graph.canvas.draw());
+            }
+            
             // Update version
             this.serverStateVersion = stateVersion;
             
@@ -324,6 +485,8 @@ class StateSyncManager {
             this.app.graphCanvas.dirty_canvas = true;
             
             console.log('✅ Full state sync complete');
+            
+            // No longer using NodeSyncValidator - server handles validation gracefully
             
         } finally {
             this.updating = false;
@@ -366,14 +529,28 @@ class StateSyncManager {
         }
         
         // Handle media nodes
-        if (node.type === 'media/image' && nodeData.properties.src) {
-            await node.setImage(
-                nodeData.properties.src,
-                nodeData.properties.filename,
-                nodeData.properties.hash
-            );
+        if (node.type === 'media/image') {
+            // For cached images, try to use serverUrl if available
+            const src = nodeData.properties.serverUrl || nodeData.properties.src;
+            
+            if (src) {
+                console.log(`🖼️ Creating server image node ${node.id} with src:${src?.substring(0, 50)}...`);
+                // Set loading state immediately for visual feedback
+                node.loadingState = 'loading';
+                node.loadingProgress = 0;
+                
+                // Don't await so loading state is visible
+                node.setImage(
+                    src,
+                    nodeData.properties.filename,
+                    nodeData.properties.hash
+                );
+            } else {
+                console.warn(`⚠️ Server image node ${node.id} has no src or serverUrl`);
+            }
         } else if (node.type === 'media/video' && nodeData.properties.src) {
-            await node.setVideo(
+            // Don't await so loading state is visible
+            node.setVideo(
                 nodeData.properties.src,
                 nodeData.properties.filename,
                 nodeData.properties.hash
@@ -587,10 +764,160 @@ class StateSyncManager {
     }
     
     /**
+     * Find temporary node by operation ID
+     */
+    findTemporaryNodeByOperationId(operationId) {
+        if (!operationId) return null;
+        
+        for (const node of this.app.graph.nodes) {
+            if (node._operationId === operationId) {
+                console.log(`🎯 Found node by operation ID: ${operationId}`);
+                return node;
+            }
+        }
+        
+        return null;
+    }
+    
+    /**
+     * Find temporary node at given position
+     */
+    findTemporaryNodeAtPosition(pos, type) {
+        // Increase tolerance for better matching with floating point positions
+        const tolerance = 5; // 5 pixel tolerance for position matching
+        
+        // Find best match
+        let bestMatch = null;
+        let bestDistance = Infinity;
+        
+        for (const node of this.app.graph.nodes) {
+            if (node._isTemporary && node.type === type) {
+                const dx = node.pos[0] - pos[0];
+                const dy = node.pos[1] - pos[1];
+                const distance = Math.sqrt(dx * dx + dy * dy);
+                
+                if (distance < tolerance && distance < bestDistance) {
+                    bestMatch = node;
+                    bestDistance = distance;
+                }
+            }
+        }
+        
+        // Only log if no match found (to help debug issues)
+        if (!bestMatch) {
+            console.log(`🔍 No temporary node found at [${pos[0]}, ${pos[1]}] for type:${type}`);
+        }
+        
+        return bestMatch;
+    }
+    
+    /**
+     * Clean up orphaned temporary nodes - now based on operation tracking
+     */
+    cleanupOrphanedTemporaryNodes() {
+        // Skip cleanup if bulk operation in progress
+        if (this.app.bulkOperationInProgress) {
+            console.log('⏸️ Skipping cleanup - bulk operation in progress');
+            return;
+        }
+        
+        // First, let tracker clean up old operations
+        this.operationTracker.cleanup();
+        
+        // Get unresolved nodes from tracker
+        const unresolvedNodes = this.operationTracker.getUnresolvedNodes();
+        const now = Date.now();
+        const nodesToClean = [];
+        
+        // Adjust timeouts based on graph size
+        const nodeCount = this.app.graph.nodes.length;
+        const trackedTimeout = nodeCount > 100 ? 60000 : 30000; // 60s for 100+ nodes
+        const untrackedTimeout = nodeCount > 100 ? 45000 : 10000; // 45s for 100+ nodes
+        
+        // Count temporary nodes for diagnostics
+        let tempNodeCount = 0;
+        let trackedCount = 0;
+        let untrackedCount = 0;
+        
+        for (const node of this.app.graph.nodes) {
+            if (node._isTemporary) {
+                tempNodeCount++;
+                // Check if this node is tracked
+                const isTracked = this.operationTracker.isNodeTracked(node.id);
+                
+                if (isTracked) {
+                    trackedCount++;
+                    // Node is tracked - check if operation timed out
+                    const unresolved = unresolvedNodes.find(u => u.tempId === node.id);
+                    if (unresolved && unresolved.age > trackedTimeout) {
+                        console.log(`⏱️ Cleaning up timed-out node: ${node.id} (operation: ${unresolved.operationId}, age: ${Math.round(unresolved.age/1000)}s)`);
+                        nodesToClean.push(node);
+                    }
+                } else {
+                    untrackedCount++;
+                    // Untracked temporary node - use old logic
+                    if (!node._temporaryCreatedAt) {
+                        node._temporaryCreatedAt = now;
+                    } else if (now - node._temporaryCreatedAt > untrackedTimeout) {
+                        // Give untracked nodes more time based on graph size
+                        const nodeAge = Math.round((now - node._temporaryCreatedAt) / 1000);
+                        console.log(`🧹 Cleaning up untracked temp node: ${node.id} (age: ${nodeAge}s)`);
+                        nodesToClean.push(node);
+                    }
+                }
+            }
+        }
+        
+        // Log diagnostic info if we have many temp nodes
+        if (tempNodeCount > 10) {
+            console.log(`📊 Temp node status: ${tempNodeCount} total (${trackedCount} tracked, ${untrackedCount} untracked), cleaning ${nodesToClean.length}`);
+        }
+        
+        if (nodesToClean.length > 0) {
+            console.log(`🧹 Cleaning up ${nodesToClean.length} orphaned nodes (timeouts: ${trackedTimeout/1000}s tracked, ${untrackedTimeout/1000}s untracked)`);
+            nodesToClean.forEach(node => {
+                // Remove from selection first
+                if (this.app.graphCanvas?.selection) {
+                    this.app.graphCanvas.selection.deselectNode(node);
+                }
+                this.app.graph.remove(node);
+            });
+        }
+        
+        // Log tracker stats periodically
+        if (Math.random() < 0.1) { // 10% chance
+            const stats = this.operationTracker.getStats();
+            console.log('📊 Operation Tracker Stats:', stats);
+        }
+    }
+    
+    /**
      * Generate unique operation ID
      */
     generateOperationId() {
         return `${this.network.tabId}-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+    }
+    
+    /**
+     * Start periodic cleanup of orphaned temporary nodes
+     */
+    startPeriodicCleanup() {
+        // Run cleanup every 10 seconds
+        this.cleanupInterval = setInterval(() => {
+            if (!this.updating && this.app?.graph) {
+                this.cleanupOrphanedTemporaryNodes();
+            }
+        }, 10000);
+    }
+    
+    /**
+     * Stop periodic cleanup
+     */
+    stopPeriodicCleanup() {
+        if (this.cleanupInterval) {
+            clearInterval(this.cleanupInterval);
+            this.cleanupInterval = null;
+        }
     }
     
     /**

@@ -43,23 +43,9 @@ class CollaborativeUndoRedoManager {
             'cursor_move'
         ]);
         
-        // Setup interceptors immediately if possible, or wait
-        if (this.app.stateSyncManager) {
-            this.setupInterceptors();
-            console.log('🎯 Interceptors set up immediately');
-        } else {
-            // Delay interceptor setup to ensure dependencies are ready
-            const checkInterval = setInterval(() => {
-                if (this.app.stateSyncManager) {
-                    clearInterval(checkInterval);
-                    this.setupInterceptors();
-                    console.log('🎯 Interceptors set up after waiting');
-                }
-            }, 50);
-            
-            // Timeout after 5 seconds
-            setTimeout(() => clearInterval(checkInterval), 5000);
-        }
+        // Don't set up interceptors here - wait for explicit call from CollaborativeArchitecture
+        this.interceptorsSetUp = false;
+        console.log('🔧 CollaborativeUndoRedoManager created - awaiting interceptor setup');
         
         this.setupNetworkHandlers();
         console.log('🤝 CollaborativeUndoRedoManager initialized');
@@ -97,9 +83,19 @@ class CollaborativeUndoRedoManager {
      * Setup interceptors to capture operations WITH their results
      */
     setupInterceptors() {
+        if (this.interceptorsSetUp) {
+            console.log('⚠️ Interceptors already set up - skipping');
+            return;
+        }
+        
         console.log('🔧 Setting up interceptors...');
         console.log('  - Pipeline exists:', !!this.pipeline);
         console.log('  - StateSyncManager exists:', !!this.app.stateSyncManager);
+        
+        if (!this.app.stateSyncManager) {
+            console.error('❌ Cannot set up interceptors - StateSyncManager not available');
+            return;
+        }
         
         // Store original methods
         const originalExecute = this.pipeline.execute.bind(this.pipeline);
@@ -186,6 +182,10 @@ class CollaborativeUndoRedoManager {
             
             return result;
         };
+        
+        // Mark interceptors as set up
+        this.interceptorsSetUp = true;
+        console.log('✅ Interceptors successfully set up');
     }
     
     /**
@@ -644,6 +644,41 @@ class CollaborativeUndoRedoManager {
     handleRemoteRedo(data) {
         // Update UI to show what was redone by whom
         console.log(`👤 User ${data.userId} redid ${data.type}`);
+    }
+    
+    /**
+     * Verify undo system is properly set up
+     */
+    verifySetup() {
+        const issues = [];
+        
+        if (!this.interceptorsSetUp) {
+            issues.push('Interceptors not set up');
+        }
+        
+        if (!this.app.stateSyncManager) {
+            issues.push('StateSyncManager not available');
+        }
+        
+        if (!this.pipeline) {
+            issues.push('OperationPipeline not available');
+        }
+        
+        if (!this.userId && this.network?.connected) {
+            issues.push('User ID not set despite being connected');
+        }
+        
+        if (issues.length > 0) {
+            console.error('❌ Undo system issues:', issues);
+            return false;
+        }
+        
+        console.log('✅ Undo system verified and working');
+        console.log(`  - History: ${this.history.length} operations`);
+        console.log(`  - User ID: ${this.userId || 'local'}`);
+        console.log(`  - Can undo: ${this.canUndo()}`);
+        console.log(`  - Can redo: ${this.canRedo()}`);
+        return true;
     }
 }
 

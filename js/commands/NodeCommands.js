@@ -66,9 +66,14 @@ class MoveNodeCommand extends Command {
         
         // Multi-node move
         else if (this.params.nodeIds) {
+            const missingNodes = [];
+            
             this.params.nodeIds.forEach((nodeId, index) => {
                 const node = graph.getNodeById(nodeId);
-                if (!node) return;
+                if (!node) {
+                    missingNodes.push(nodeId);
+                    return;
+                }
                 
                 this.undoData.nodes.push({
                     id: node.id,
@@ -93,6 +98,13 @@ class MoveNodeCommand extends Command {
                 
                 movedNodes.push(node);
             });
+            
+            // Report missing nodes if any
+            if (missingNodes.length > 0) {
+                console.warn(`⚠️ Move operation: ${missingNodes.length} nodes not found: ${missingNodes.join(', ')}`);
+                // Don't throw error - partial success is better than total failure
+                // The server will handle the discrepancy
+            }
         }
         
         this.executed = true;
@@ -213,6 +225,14 @@ class CreateNodeCommand extends Command {
         
         // Handle media nodes
         if (node.type === 'media/image') {
+            // Set loading state immediately for visual feedback
+            node.loadingState = 'loading';
+            node.loadingProgress = 0;
+            
+            // Check if we have a local data URL that needs uploading
+            const needsUpload = this.params.properties?.src?.startsWith('data:') && 
+                               !this.params.properties?.serverUrl;
+            
             if (this.params.properties && this.params.properties.serverUrl) {
                 // Image already uploaded, use server URL
                 // Construct full URL if it's a relative path
@@ -220,18 +240,139 @@ class CreateNodeCommand extends Command {
                     ? this.params.properties.serverUrl 
                     : CONFIG.SERVER.API_BASE + this.params.properties.serverUrl;
                     
-                await node.setImage(
+                node.setImage(
                     url,
                     this.params.properties.filename,
                     this.params.properties.hash
                 );
             } else if (this.params.imageData) {
                 // Legacy: embedded image data
-                await node.setImage(
+                node.setImage(
                     this.params.imageData.src,
                     this.params.imageData.filename,
                     this.params.imageData.hash
                 );
+            } else if (this.params.properties?.src) {
+                // New: local data URL that will be uploaded later
+                node.setImage(
+                    this.params.properties.src,
+                    this.params.properties.filename,
+                    this.params.properties.hash
+                );
+            }
+            
+            // Add to graph BEFORE upload so user sees it immediately
+            graph.add(node);
+            
+            // Force immediate canvas redraw to show loading state
+            if (graph.canvas) {
+                graph.canvas.dirty_canvas = true;
+                requestAnimationFrame(() => graph.canvas.draw());
+            }
+            
+            // Store for undo - this is the actual node that will persist
+            this.undoData = { nodeId: node.id };
+            this.executed = true;
+            
+            // Handle background upload if needed
+            if (needsUpload && window.imageUploadManager) {
+                // Pre-populate cache with local data URL so duplicates can use it immediately
+                if (window.app?.imageResourceCache && this.params.properties.hash) {
+                    console.log('📋 Pre-caching image with local data URL for immediate duplicates');
+                    window.app.imageResourceCache.set(this.params.properties.hash, {
+                        url: this.params.properties.src, // Local data URL
+                        serverFilename: null, // Will be updated when upload completes
+                        originalFilename: this.params.properties.filename,
+                        thumbnail: node.thumbnail,
+                        isLocal: true // Mark as local so we know to update later
+                    });
+                }
+                
+                // Start background upload
+                const uploadPromise = window.imageUploadManager.uploadImage(
+                    this.params.properties.src,
+                    this.params.properties.filename,
+                    this.params.properties.hash
+                );
+                
+                // Update node when upload completes
+                uploadPromise.then(async (uploadResult) => {
+                    console.log('✅ Image uploaded, updating node with server URL');
+                    
+                    // Update the node's properties with server URL
+                    node.properties.serverUrl = uploadResult.url;
+                    node.properties.serverFilename = uploadResult.filename;
+                    
+                    // Update the image source to use server URL
+                    const fullUrl = CONFIG.SERVER.API_BASE + uploadResult.url;
+                    if (node.img) {
+                        node.img.src = fullUrl;
+                    }
+                    
+                    // Store upload result for future syncs
+                    node._uploadResult = uploadResult;
+                    
+                    // Debug cache state
+                    console.log('🔍 Cache debug after upload:', {
+                        hasCache: !!window.app?.imageResourceCache,
+                        hasHash: !!node.properties.hash,
+                        hash: node.properties.hash,
+                        cacheSize: window.app?.imageResourceCache?.hashToUrl?.size || 0,
+                        nodeId: node.id
+                    });
+                    
+                    // Upgrade cache with server URL (replacing any local data URL)
+                    if (window.app?.imageResourceCache && node.properties.hash) {
+                        const wasLocal = window.app.imageResourceCache.get(node.properties.hash)?.isLocal;
+                        window.app.imageResourceCache.set(node.properties.hash, {
+                            url: fullUrl,
+                            serverFilename: uploadResult.filename,
+                            originalFilename: node.properties.filename,
+                            thumbnail: node.thumbnail,
+                            isLocal: false // Now upgraded to server URL
+                        });
+                        
+                        if (wasLocal) {
+                            console.log(`🔄 Upgraded cache from local to server URL: ${node.properties.hash.substring(0, 8)}...`);
+                        } else {
+                            console.log(`💾 Added image to cache: ${node.properties.hash.substring(0, 8)}...`);
+                        }
+                        
+                        // Also populate any existing nodes with the same hash that don't have server URLs
+                        // This handles cases where duplicates were created before upload completed
+                        const allNodes = context.graph?.nodes || [];
+                        let updatedNodes = 0;
+                        allNodes.forEach(existingNode => {
+                            if (existingNode.type === 'media/image' && 
+                                existingNode.properties.hash === node.properties.hash &&
+                                existingNode.id !== node.id &&
+                                !existingNode.properties.serverUrl) {
+                                
+                                console.log(`🔄 Updating existing node ${existingNode.id} with server URL`);
+                                existingNode.properties.serverUrl = fullUrl;
+                                existingNode.properties.serverFilename = uploadResult.filename;
+                                
+                                // Update image source if the node has an img element
+                                if (existingNode.img) {
+                                    existingNode.img.src = fullUrl;
+                                }
+                                updatedNodes++;
+                            }
+                        });
+                        
+                        if (updatedNodes > 0) {
+                            console.log(`🔄 Updated ${updatedNodes} existing nodes with server URL`);
+                        }
+                    } else {
+                        console.warn('❌ Could not add to cache:', {
+                            cache: !!window.app?.imageResourceCache,
+                            hash: node.properties.hash
+                        });
+                    }
+                }).catch(error => {
+                    console.error('❌ Failed to upload image:', error);
+                    // Node remains with local data URL
+                });
             }
         } else if (node.type === 'media/video' && this.params.videoData) {
             await node.setVideo(
@@ -239,14 +380,22 @@ class CreateNodeCommand extends Command {
                 this.params.videoData.filename,
                 this.params.videoData.hash
             );
+            
+            // Add to graph
+            graph.add(node);
+            
+            // Store for undo
+            this.undoData = { nodeId: node.id };
+            this.executed = true;
+        } else {
+            // Non-media nodes
+            // Add to graph
+            graph.add(node);
+            
+            // Store for undo
+            this.undoData = { nodeId: node.id };
+            this.executed = true;
         }
-        
-        // Add to graph
-        graph.add(node);
-        
-        // Store for undo
-        this.undoData = { nodeId: node.id };
-        this.executed = true;
         
         return { node };
     }
@@ -339,7 +488,7 @@ class DeleteNodeCommand extends Command {
                 
                 // Restore media if needed
                 if (node.type === 'media/image' && nodeData.properties.src) {
-                    await node.setImage(
+                    node.setImage(
                         nodeData.properties.src,
                         nodeData.properties.filename,
                         nodeData.properties.hash

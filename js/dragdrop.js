@@ -153,117 +153,32 @@ class DragDropManager {
                 if (nodeData) {
                     if (window.app?.operationPipeline) {
                         try {
-                            // Create node immediately with local data
-                            const node = NodeFactory.createNode(nodeData.type);
-                            if (node) {
-                                node.pos = [...nodeData.pos];
-                                node.size = [...nodeData.size];
-                                node.properties = { ...nodeData.properties };
-                                
-                                // Load the media locally for immediate display
-                                if (nodeData.type === 'media/video') {
-                                    await node.setVideo(nodeData.dataURL, nodeData.properties.filename, nodeData.properties.hash);
-                                } else {
-                                    await node.setImage(nodeData.dataURL, nodeData.properties.filename, nodeData.properties.hash);
-                                }
-                                
-                                // Add to graph immediately
-                                this.graph.add(node);
-                                newNodes.push(node);
-                                
-                                // Start background upload if it's an image
-                                if (nodeData.type === 'media/image' && window.imageUploadManager) {
-                                    const uploadPromise = window.imageUploadManager.uploadImage(
-                                        nodeData.dataURL,
-                                        nodeData.properties.filename,
-                                        nodeData.properties.hash
-                                    );
-                                    
-                                    // Once uploaded, update the node with server URL
-                                    uploadPromise.then(async (uploadResult) => {
-                                        console.log('✅ Image uploaded, updating node with server URL');
-                                        
-                                        // Update the node's properties with the server URL
-                                        node.properties.serverUrl = uploadResult.url;
-                                        
-                                        // Update the image source to use the server URL
-                                        const fullUrl = CONFIG.SERVER.API_BASE + uploadResult.url;
-                                        if (node.img) {
-                                            node.img.src = fullUrl;
-                                        }
-                                        
-                                        // Mark node as temporary until server sync
-                                        node._isTemporary = true;
-                                        
-                                        // Sync with server
-                                        window.app.operationPipeline.execute('node_create', {
-                                            type: nodeData.type,
-                                            pos: [...node.pos],
-                                            size: [...node.size],
-                                            properties: { 
-                                                ...node.properties,
-                                                serverUrl: uploadResult.url,
-                                                src: uploadResult.url  // Server might expect src
-                                            },
-                                            imageData: {
-                                                src: CONFIG.SERVER.API_BASE + uploadResult.url,
-                                                filename: node.properties.filename,
-                                                hash: node.properties.hash
-                                            }
-                                            // Don't include the node ID - let server generate it
-                                        }).then(result => {
-                                            if (result.success && result.result?.node) {
-                                                console.log(`✅ Node synced with server, replacing temporary node`);
-                                                // Remove the temporary node
-                                                this.graph.remove(node);
-                                                // Update reference in newNodes array
-                                                const index = newNodes.indexOf(node);
-                                                if (index !== -1) {
-                                                    newNodes[index] = result.result.node;
-                                                }
-                                            } else {
-                                                // Sync failed, keep the temporary node
-                                                delete node._isTemporary;
-                                                console.warn('Server sync failed, keeping local node');
-                                            }
-                                        }).catch(error => {
-                                            // Sync failed, keep the temporary node
-                                            delete node._isTemporary;
-                                            console.warn('Background sync failed:', error.message);
-                                        });
-                                    }).catch(error => {
-                                        console.error('❌ Failed to upload/sync image:', error);
-                                        if (window.unifiedNotifications) {
-                                            window.unifiedNotifications.error(
-                                                'Failed to sync image with server',
-                                                { detail: error.message }
-                                            );
-                                        }
-                                    });
-                                } else {
-                                    // For non-image nodes, create normally
-                                    const result = await window.app.operationPipeline.execute('node_create', {
-                                        type: nodeData.type,
-                                        pos: [...nodeData.pos],
-                                        size: [...nodeData.size],
-                                        properties: { ...nodeData.properties },
-                                        videoData: nodeData.type === 'media/video' ? {
-                                            src: nodeData.dataURL,
-                                            filename: nodeData.properties.filename,
-                                            hash: nodeData.properties.hash
-                                        } : undefined
-                                    });
+                            // Use operation pipeline from the start for proper undo tracking
+                            const result = await window.app.operationPipeline.execute('node_create', {
+                                type: nodeData.type,
+                                pos: [...nodeData.pos],
+                                size: [...nodeData.size],
+                                properties: {
+                                    ...nodeData.properties,
+                                    src: nodeData.dataURL  // Include the data URL for immediate display
+                                },
+                                // For videos, include video data
+                                videoData: nodeData.type === 'media/video' ? {
+                                    src: nodeData.dataURL,
+                                    filename: nodeData.properties.filename,
+                                    hash: nodeData.properties.hash
+                                } : undefined
+                            });
                             
-                                    if (result.success && result.result?.node) {
-                                        const createdNode = result.result.node;
-                                        // For videos, replace the local node
-                                        this.graph.remove(node);
-                                        newNodes[newNodes.indexOf(node)] = createdNode;
-                                        console.log('✅ Video node created via OperationPipeline, ID:', createdNode.id);
-                                    } else {
-                                        console.error('❌ OperationPipeline returned no node');
-                                    }
-                                }
+                            if (result.success && result.result?.node) {
+                                const createdNode = result.result.node;
+                                newNodes.push(createdNode);
+                                console.log(`✅ ${nodeData.type} node created via OperationPipeline, ID:`, createdNode.id);
+                                
+                                // For images, the CreateNodeCommand will handle background upload
+                                // No need for additional sync operations here
+                            } else {
+                                console.error('❌ OperationPipeline returned no node');
                             }
                         } catch (error) {
                             console.error('Failed to create node via pipeline:', error);
@@ -285,15 +200,27 @@ class DragDropManager {
                                 node.size = [...nodeData.size];
                                 node.properties = { ...nodeData.properties };
                                 
+                                // Set loading state immediately for visual feedback
+                                if (node.type === 'media/image') {
+                                    node.loadingState = 'loading';
+                                    node.loadingProgress = 0;
+                                }
+                                
                                 // Load the media
                                 if (nodeData.type === 'media/video') {
-                                    await node.setVideo(nodeData.dataURL, nodeData.properties.filename, nodeData.properties.hash);
+                                    node.setVideo(nodeData.dataURL, nodeData.properties.filename, nodeData.properties.hash);
                                 } else {
-                                    await node.setImage(nodeData.dataURL, nodeData.properties.filename, nodeData.properties.hash);
+                                    node.setImage(nodeData.dataURL, nodeData.properties.filename, nodeData.properties.hash);
                                 }
                                 
                                 this.graph.add(node);
                                 newNodes.push(node);
+                                
+                                // Force immediate redraw to show loading state
+                                if (this.graph.canvas) {
+                                    this.graph.canvas.dirty_canvas = true;
+                                    requestAnimationFrame(() => this.graph.canvas.draw());
+                                }
                                 
                                 // Mark for later sync when connection improves
                                 node._needsServerSync = true;
@@ -308,15 +235,27 @@ class DragDropManager {
                             node.size = [...nodeData.size];
                             node.properties = { ...nodeData.properties };
                             
+                            // Set loading state immediately for visual feedback
+                            if (node.type === 'media/image') {
+                                node.loadingState = 'loading';
+                                node.loadingProgress = 0;
+                            }
+                            
                             // Load the media
                             if (nodeData.type === 'media/video') {
-                                await node.setVideo(nodeData.dataURL, nodeData.properties.filename, nodeData.properties.hash);
+                                node.setVideo(nodeData.dataURL, nodeData.properties.filename, nodeData.properties.hash);
                             } else {
-                                await node.setImage(nodeData.dataURL, nodeData.properties.filename, nodeData.properties.hash);
+                                node.setImage(nodeData.dataURL, nodeData.properties.filename, nodeData.properties.hash);
                             }
                             
                             this.graph.add(node);
                             newNodes.push(node);
+                            
+                            // Force immediate redraw to show loading state
+                            if (this.graph.canvas) {
+                                this.graph.canvas.dirty_canvas = true;
+                                requestAnimationFrame(() => this.graph.canvas.draw());
+                            }
                         }
                     }
                     

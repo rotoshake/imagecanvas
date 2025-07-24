@@ -86,13 +86,8 @@ class CanvasStateManager {
         // Apply operation to state
         const changes = await this.applyOperation(operation, state);
         
-        if (!changes) {
-            return {
-                success: false,
-                error: 'Operation had no effect',
-                stateVersion: currentVersion
-            };
-        }
+        // All operations now return changes object, even if empty
+        // An empty changes object still means the operation succeeded
         
         // Increment version
         const newVersion = currentVersion + 1;
@@ -220,10 +215,11 @@ class CanvasStateManager {
         if (params.nodeId) {
             // Single node move
             const node = state.nodes.find(n => n.id === params.nodeId);
-            if (!node) return null;
-            
-            node.pos = [...params.position];
-            changes.updated.push(node);
+            if (node) {
+                node.pos = [...params.position];
+                changes.updated.push(node);
+            }
+            // If node not found, silently ignore - eventual consistency
             
         } else if (params.nodeIds && params.positions) {
             // Multi-node move
@@ -233,10 +229,12 @@ class CanvasStateManager {
                     node.pos = [...params.positions[index]];
                     changes.updated.push(node);
                 }
+                // Missing nodes are silently ignored
             });
         }
         
-        return changes.updated.length > 0 ? changes : null;
+        // Always return changes, even if empty - operation still succeeded
+        return changes;
     }
     
     /**
@@ -255,7 +253,8 @@ class CanvasStateManager {
         }
         
         state.nodes = remaining;
-        return changes.removed.length > 0 ? changes : null;
+        // Always return changes, even if empty - operation still succeeded
+        return changes;
     }
     
     /**
@@ -291,9 +290,11 @@ class CanvasStateManager {
                 
                 changes.updated.push(node);
             }
+            // Missing nodes are silently ignored
         });
         
-        return changes.updated.length > 0 ? changes : null;
+        // Always return changes, even if empty - operation still succeeded
+        return changes;
     }
     
     /**
@@ -301,11 +302,13 @@ class CanvasStateManager {
      */
     applyNodePropertyUpdate(params, state, changes) {
         const node = state.nodes.find(n => n.id === params.nodeId);
-        if (!node) return null;
+        if (node) {
+            node.properties[params.property] = params.value;
+            changes.updated.push(node);
+        }
+        // Missing nodes are silently ignored
         
-        node.properties[params.property] = params.value;
-        changes.updated.push(node);
-        
+        // Always return changes, even if empty - operation still succeeded
         return changes;
     }
     
@@ -316,11 +319,11 @@ class CanvasStateManager {
         // Single node rotation
         if (params.nodeId) {
             const node = state.nodes.find(n => n.id === params.nodeId);
-            if (!node) return null;
-            
-            node.rotation = params.angle;
-            changes.updated.push(node);
-            
+            if (node) {
+                node.rotation = params.angle;
+                changes.updated.push(node);
+            }
+            // Missing nodes are silently ignored
             return changes;
         }
         
@@ -340,12 +343,14 @@ class CanvasStateManager {
                     
                     changes.updated.push(node);
                 }
+                // Missing nodes are silently ignored
             });
             
-            return changes.updated.length > 0 ? changes : null;
+            return changes;
         }
         
-        return null;
+        // Always return changes, even if empty
+        return changes;
     }
     
     /**
@@ -388,14 +393,16 @@ class CanvasStateManager {
      */
     applyVideoToggle(params, state, changes) {
         const node = state.nodes.find(n => n.id === params.nodeId);
-        if (!node || node.type !== 'media/video') return null;
+        if (node && node.type === 'media/video') {
+            const newPaused = params.paused !== undefined ? 
+                params.paused : !node.properties.paused;
+            
+            node.properties.paused = newPaused;
+            changes.updated.push(node);
+        }
+        // Missing nodes or non-video nodes are silently ignored
         
-        const newPaused = params.paused !== undefined ? 
-            params.paused : !node.properties.paused;
-        
-        node.properties.paused = newPaused;
-        changes.updated.push(node);
-        
+        // Always return changes, even if empty - operation still succeeded
         return changes;
     }
     
@@ -409,43 +416,73 @@ class CanvasStateManager {
                 node.properties[update.property] = update.value;
                 changes.updated.push(node);
             }
+            // Missing nodes are silently ignored
         }
         
-        return changes.updated.length > 0 ? changes : null;
+        // Always return changes, even if empty - operation still succeeded
+        return changes;
     }
     
     /**
      * Apply node duplication
      */
     applyNodeDuplicate(params, state, changes) {
-        const { nodeIds, offset } = params;
+        const { nodeIds, nodeData, offset } = params;
         
-        if (!nodeIds || !Array.isArray(nodeIds)) return null;
-        
-        const defaultOffset = offset || [20, 20];
-        
-        for (const nodeId of nodeIds) {
-            const originalNode = state.nodes.find(n => n.id === nodeId);
-            if (!originalNode) continue;
+        // Handle explicit node data (Alt+drag) or standard duplication
+        if (nodeData && Array.isArray(nodeData)) {
+            const defaultOffset = offset || [0, 0];
             
-            // Create duplicate with new ID
-            const duplicate = {
-                id: this.generateNodeId(),
-                type: originalNode.type,
-                pos: [originalNode.pos[0] + defaultOffset[0], originalNode.pos[1] + defaultOffset[1]],
-                size: [...originalNode.size],
-                properties: { ...originalNode.properties },
-                rotation: originalNode.rotation || 0,
-                flags: { ...originalNode.flags },
-                title: originalNode.title,
-                aspectRatio: originalNode.aspectRatio
-            };
+            for (const data of nodeData) {
+                // Create duplicate with new ID using explicit data
+                const duplicate = {
+                    id: this.generateNodeId(),
+                    type: data.type,
+                    pos: [data.pos[0] + defaultOffset[0], data.pos[1] + defaultOffset[1]],
+                    size: [...data.size],
+                    properties: { ...data.properties },
+                    rotation: data.rotation || 0,
+                    flags: { ...data.flags },
+                    title: data.title,
+                    aspectRatio: data.aspectRatio,
+                    // Preserve operation ID for sync tracking
+                    _operationId: data._operationId
+                };
+                
+                state.nodes.push(duplicate);
+                changes.added.push(duplicate);
+            }
+        } else if (nodeIds && Array.isArray(nodeIds)) {
+            // Standard duplication from existing nodes
+            const defaultOffset = offset || [20, 20];
             
-            state.nodes.push(duplicate);
-            changes.added.push(duplicate);
+            for (const nodeId of nodeIds) {
+                const originalNode = state.nodes.find(n => n.id === nodeId);
+                if (originalNode) {
+                    // Create duplicate with new ID
+                    const duplicate = {
+                        id: this.generateNodeId(),
+                        type: originalNode.type,
+                        pos: [originalNode.pos[0] + defaultOffset[0], originalNode.pos[1] + defaultOffset[1]],
+                        size: [...originalNode.size],
+                        properties: { ...originalNode.properties },
+                        rotation: originalNode.rotation || 0,
+                        flags: { ...originalNode.flags },
+                        title: originalNode.title,
+                        aspectRatio: originalNode.aspectRatio,
+                        // Generate operation ID for standard duplication
+                        _operationId: `dup-${Date.now()}-${nodeId}`
+                    };
+                    
+                    state.nodes.push(duplicate);
+                    changes.added.push(duplicate);
+                }
+                // Missing nodes are silently ignored
+            }
         }
         
-        return changes.added.length > 0 ? changes : null;
+        // Always return changes, even if empty - operation still succeeded
+        return changes;
     }
     
     /**
@@ -454,46 +491,47 @@ class CanvasStateManager {
     applyNodePaste(params, state, changes) {
         const { nodeData, targetPosition } = params;
         
-        if (!nodeData || !Array.isArray(nodeData) || !targetPosition) return null;
-        
-        // Calculate center of clipboard content
-        let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
-        for (const data of nodeData) {
-            minX = Math.min(minX, data.pos[0]);
-            minY = Math.min(minY, data.pos[1]);
-            maxX = Math.max(maxX, data.pos[0] + data.size[0]);
-            maxY = Math.max(maxY, data.pos[1] + data.size[1]);
+        if (nodeData && Array.isArray(nodeData) && targetPosition) {
+            // Calculate center of clipboard content
+            let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+            for (const data of nodeData) {
+                minX = Math.min(minX, data.pos[0]);
+                minY = Math.min(minY, data.pos[1]);
+                maxX = Math.max(maxX, data.pos[0] + data.size[0]);
+                maxY = Math.max(maxY, data.pos[1] + data.size[1]);
+            }
+            
+            const clipboardCenter = [(minX + maxX) / 2, (minY + maxY) / 2];
+            
+            for (const data of nodeData) {
+                // Position relative to target position
+                const offsetFromCenter = [
+                    data.pos[0] - clipboardCenter[0],
+                    data.pos[1] - clipboardCenter[1]
+                ];
+                
+                const node = {
+                    id: this.generateNodeId(),
+                    type: data.type,
+                    pos: [
+                        targetPosition[0] + offsetFromCenter[0],
+                        targetPosition[1] + offsetFromCenter[1]
+                    ],
+                    size: [...data.size],
+                    properties: { ...data.properties },
+                    rotation: data.rotation || 0,
+                    flags: { ...data.flags },
+                    title: data.title,
+                    aspectRatio: data.aspectRatio
+                };
+                
+                state.nodes.push(node);
+                changes.added.push(node);
+            }
         }
         
-        const clipboardCenter = [(minX + maxX) / 2, (minY + maxY) / 2];
-        
-        for (const data of nodeData) {
-            // Position relative to target position
-            const offsetFromCenter = [
-                data.pos[0] - clipboardCenter[0],
-                data.pos[1] - clipboardCenter[1]
-            ];
-            
-            const node = {
-                id: this.generateNodeId(),
-                type: data.type,
-                pos: [
-                    targetPosition[0] + offsetFromCenter[0],
-                    targetPosition[1] + offsetFromCenter[1]
-                ],
-                size: [...data.size],
-                properties: { ...data.properties },
-                rotation: data.rotation || 0,
-                flags: { ...data.flags },
-                title: data.title,
-                aspectRatio: data.aspectRatio
-            };
-            
-            state.nodes.push(node);
-            changes.added.push(node);
-        }
-        
-        return changes.added.length > 0 ? changes : null;
+        // Always return changes, even if empty - operation still succeeded
+        return changes;
     }
     
     /**
@@ -537,21 +575,12 @@ class CanvasStateManager {
         });
         
         validators.set('node_move', (op, state) => {
-            if (op.params.nodeId) {
-                const node = state.nodes.find(n => n.id === op.params.nodeId);
-                if (!node) {
-                    return { valid: false, error: 'Node not found' };
-                }
-            } else if (op.params.nodeIds) {
-                const missing = op.params.nodeIds.filter(id => 
-                    !state.nodes.find(n => n.id === id)
-                );
-                if (missing.length > 0) {
-                    return { valid: false, error: `Nodes not found: ${missing.join(', ')}` };
-                }
-            } else {
+            if (!op.params.nodeId && !op.params.nodeIds) {
                 return { valid: false, error: 'Missing nodeId or nodeIds' };
             }
+            
+            // Always valid - missing nodes will be silently ignored during apply
+            // This allows for eventual consistency between client and server
             return { valid: true };
         });
         
@@ -559,6 +588,8 @@ class CanvasStateManager {
             if (!op.params.nodeIds || op.params.nodeIds.length === 0) {
                 return { valid: false, error: 'No nodes to delete' };
             }
+            // Always valid - missing nodes will be silently ignored during apply
+            // This prevents "node not found" errors during collaborative editing
             return { valid: true };
         });
         
@@ -569,6 +600,7 @@ class CanvasStateManager {
             if (op.params.nodeIds.length !== op.params.sizes.length) {
                 return { valid: false, error: 'Mismatched nodeIds and sizes arrays' };
             }
+            // Always valid - missing nodes will be silently ignored during apply
             return { valid: true };
         });
         
@@ -576,10 +608,8 @@ class CanvasStateManager {
             if (!op.params.nodeId || !op.params.property) {
                 return { valid: false, error: 'Missing required parameters' };
             }
-            const node = state.nodes.find(n => n.id === op.params.nodeId);
-            if (!node) {
-                return { valid: false, error: 'Node not found' };
-            }
+            // Always valid - missing nodes will be silently ignored during apply
+            // This allows property updates during node creation/sync
             return { valid: true };
         });
         
@@ -589,10 +619,7 @@ class CanvasStateManager {
                 if (typeof op.params.angle !== 'number') {
                     return { valid: false, error: 'Missing required parameters' };
                 }
-                const node = state.nodes.find(n => n.id === op.params.nodeId);
-                if (!node) {
-                    return { valid: false, error: 'Node not found' };
-                }
+                // Always valid - missing nodes will be silently ignored during apply
                 return { valid: true };
             }
             
@@ -607,13 +634,7 @@ class CanvasStateManager {
                 if (op.params.positions && op.params.positions.length !== op.params.nodeIds.length) {
                     return { valid: false, error: 'Mismatched positions array length' };
                 }
-                // Check all nodes exist
-                for (const nodeId of op.params.nodeIds) {
-                    const node = state.nodes.find(n => n.id === nodeId);
-                    if (!node) {
-                        return { valid: false, error: `Node not found: ${nodeId}` };
-                    }
-                }
+                // Always valid - missing nodes will be silently ignored during apply
                 return { valid: true };
             }
             
@@ -627,13 +648,7 @@ class CanvasStateManager {
             if (!op.params.resetRotation && !op.params.resetAspectRatio) {
                 return { valid: false, error: 'Missing reset parameters' };
             }
-            // Validate that all nodes exist
-            for (const nodeId of op.params.nodeIds) {
-                const node = state.nodes.find(n => n.id === nodeId);
-                if (!node) {
-                    return { valid: false, error: `Node not found: ${nodeId}` };
-                }
-            }
+            // Always valid - missing nodes will be silently ignored during apply
             return { valid: true };
         });
         
@@ -641,10 +656,8 @@ class CanvasStateManager {
             if (!op.params.nodeId) {
                 return { valid: false, error: 'Missing nodeId' };
             }
-            const node = state.nodes.find(n => n.id === op.params.nodeId);
-            if (!node || node.type !== 'media/video') {
-                return { valid: false, error: 'Video node not found' };
-            }
+            // Always valid - missing nodes will be silently ignored during apply
+            // Non-video nodes will also be ignored gracefully
             return { valid: true };
         });
         
@@ -652,20 +665,21 @@ class CanvasStateManager {
             if (!op.params.updates || !Array.isArray(op.params.updates)) {
                 return { valid: false, error: 'Missing updates array' };
             }
+            // Always valid - missing nodes will be silently ignored during apply
             return { valid: true };
         });
         
         validators.set('node_duplicate', (op, state) => {
+            // Support explicit node data (Alt+drag) or standard duplication
+            if (op.params.nodeData && Array.isArray(op.params.nodeData) && op.params.nodeData.length > 0) {
+                return { valid: true }; // Explicit node data provided
+            }
+            
             if (!op.params.nodeIds || !Array.isArray(op.params.nodeIds) || op.params.nodeIds.length === 0) {
-                return { valid: false, error: 'Missing or invalid nodeIds' };
+                return { valid: false, error: 'Missing or invalid nodeIds or nodeData' };
             }
-            // Validate that all nodes exist
-            for (const nodeId of op.params.nodeIds) {
-                const node = state.nodes.find(n => n.id === nodeId);
-                if (!node) {
-                    return { valid: false, error: `Node not found: ${nodeId}` };
-                }
-            }
+            // Always valid - missing nodes will be silently ignored during apply
+            // This allows duplication during sync and handles race conditions
             return { valid: true };
         });
         

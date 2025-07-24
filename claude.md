@@ -23,6 +23,7 @@ Documentation can be read, maintained and added to in the `/docs` subdirectory. 
   - NEVER place test files in the project root unless explicitly requested
 - ALWAYS write documentation .md files into the `/docs` subdirectory.
 - NEVER claim that what you've done works perfectly unless you've tested it yourself.
+- When troubleshooting and fixing bugs, be more proactive and think ahead to how a bug fix might apply to other similar circumstances, especially across multiple node and synced operation types.
 
 ## Prime Directive
 

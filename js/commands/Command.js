@@ -8,6 +8,7 @@ class Command {
         this.type = type;
         this.params = params || {};
         this.origin = origin; // 'local' or 'remote'
+        this.source = params.source; // For operation bundling (e.g., 'group_rotation', 'alignment')
         this.timestamp = Date.now();
         this.executed = false;
         this.undoData = null;
