@@ -29,6 +29,37 @@ class MoveNodeCommand extends Command {
         return { valid: false, error: 'Missing nodeId or nodeIds' };
     }
     
+    async prepareUndoData(context) {
+        const { graph } = context;
+        this.undoData = { nodes: [] };
+        
+        // Single node move
+        if (this.params.nodeId) {
+            const node = graph.getNodeById(this.params.nodeId);
+            if (node) {
+                this.undoData.nodes.push({
+                    id: node.id,
+                    oldPosition: [...node.pos]
+                });
+            }
+        }
+        
+        // Multi-node move
+        else if (this.params.nodeIds) {
+            this.params.nodeIds.forEach(nodeId => {
+                const node = graph.getNodeById(nodeId);
+                if (node) {
+                    this.undoData.nodes.push({
+                        id: node.id,
+                        oldPosition: [...node.pos]
+                    });
+                }
+            });
+        }
+        
+        console.log(`📝 Prepared undo data for MoveNodeCommand: ${this.undoData.nodes.length} nodes`);
+    }
+    
     async execute(context) {
         const { graph } = context;
         const movedNodes = [];
@@ -181,6 +212,20 @@ class CreateNodeCommand extends Command {
         }
         
         return { valid: true };
+    }
+    
+    async prepareUndoData(context) {
+        // For node creation, we need to know the node ID that will be created
+        // We can't predict it perfectly, but we can prepare the structure
+        if (this.params.id) {
+            // If ID is provided, use it
+            this.undoData = { nodeId: this.params.id };
+        } else {
+            // Generate a temporary ID that matches the pattern used by the command factory
+            // This should match what will be generated on the server
+            this.undoData = { nodeId: 'temp_' + Date.now() };
+        }
+        console.log(`📝 Prepared undo data for CreateNodeCommand: nodeId=${this.undoData.nodeId}`);
     }
     
     async execute(context) {
@@ -495,6 +540,58 @@ class DeleteNodeCommand extends Command {
         return { valid: true };
     }
     
+    async prepareUndoData(context) {
+        const { graph } = context;
+        this.undoData = { nodes: [] };
+        
+        this.params.nodeIds.forEach(nodeId => {
+            const node = graph.getNodeById(nodeId);
+            if (node) {
+                // Store complete node data for restoration
+                const nodeData = {
+                    id: node.id,
+                    type: node.type,
+                    pos: [...node.pos],
+                    size: [...node.size],
+                    properties: { ...node.properties },
+                    rotation: node.rotation,
+                    flags: { ...node.flags },
+                    title: node.title
+                };
+                
+                // Optimize media node data same as in execute method
+                if ((node.type === 'media/image' || node.type === 'media/video') && 
+                    nodeData.properties.src && 
+                    nodeData.properties.src.startsWith('data:')) {
+                    
+                    if (nodeData.properties.serverUrl) {
+                        nodeData.properties = {
+                            serverUrl: nodeData.properties.serverUrl,
+                            hash: nodeData.properties.hash,
+                            filename: nodeData.properties.filename,
+                            _hadDataUrl: true
+                        };
+                    } else if (nodeData.properties.hash && window.app?.imageResourceCache?.has(nodeData.properties.hash)) {
+                        const cached = window.app.imageResourceCache.get(nodeData.properties.hash);
+                        nodeData.properties = {
+                            hash: nodeData.properties.hash,
+                            filename: nodeData.properties.filename || cached.filename,
+                            _hadDataUrl: true,
+                            _fromCache: true
+                        };
+                        if (cached.serverUrl) {
+                            nodeData.properties.serverUrl = cached.serverUrl;
+                        }
+                    }
+                }
+                
+                this.undoData.nodes.push(nodeData);
+            }
+        });
+        
+        console.log(`📝 Prepared undo data for DeleteNodeCommand: ${this.undoData.nodes.length} nodes`);
+    }
+    
     async execute(context) {
         const { graph, canvas } = context;
         
@@ -688,6 +785,38 @@ class UpdateNodePropertyCommand extends Command {
         return { valid: true };
     }
     
+    async prepareUndoData(context) {
+        const { graph } = context;
+        const node = graph.getNodeById(this.params.nodeId);
+        
+        if (node) {
+            // Store old value for undo
+            const isDirectProperty = ['title'].includes(this.params.property);
+            const oldValue = isDirectProperty ? node[this.params.property] : node.properties[this.params.property];
+            
+            // Debug logging for title property
+            if (this.params.property === 'title') {
+                console.log(`🔍 Debug title property for node ${node.id}:`, {
+                    nodeTitle: node.title,
+                    nodeType: node.type,
+                    nodeProperties: node.properties,
+                    oldValue: oldValue,
+                    newValue: this.params.value
+                });
+            }
+            
+            this.undoData = {
+                nodeId: node.id,
+                property: this.params.property,
+                oldValue: oldValue,
+                isDirectProperty: isDirectProperty
+            };
+            console.log(`📝 Prepared undo data for UpdateNodePropertyCommand: ${this.params.property}=${this.undoData.oldValue} -> ${this.params.value}`);
+        } else {
+            console.warn(`⚠️ Cannot prepare undo data for UpdateNodePropertyCommand: node ${this.params.nodeId} not found`);
+        }
+    }
+    
     async execute(context) {
         const { graph } = context;
         const node = graph.getNodeById(this.params.nodeId);
@@ -697,14 +826,27 @@ class UpdateNodePropertyCommand extends Command {
         }
         
         // Store old value for undo
+        const isDirectProperty = ['title'].includes(this.params.property);
+        const oldValue = isDirectProperty ? node[this.params.property] : node.properties[this.params.property];
+        
+        
         this.undoData = {
             nodeId: node.id,
             property: this.params.property,
-            oldValue: node.properties[this.params.property]
+            oldValue: oldValue,
+            isDirectProperty: isDirectProperty
         };
         
         // Update property
-        node.properties[this.params.property] = this.params.value;
+        if (isDirectProperty) {
+            const oldValue = node[this.params.property];
+            node[this.params.property] = this.params.value;
+            if (this.params.property === 'title') {
+                console.log(`📝 Title updated: "${oldValue}" → "${this.params.value}" for node ${node.id}`);
+            }
+        } else {
+            node.properties[this.params.property] = this.params.value;
+        }
         
         // Handle special properties that need additional processing
         if (node.updateProperty) {
@@ -724,7 +866,11 @@ class UpdateNodePropertyCommand extends Command {
         
         const node = graph.getNodeById(this.undoData.nodeId);
         if (node) {
-            node.properties[this.undoData.property] = this.undoData.oldValue;
+            if (this.undoData.isDirectProperty) {
+                node[this.undoData.property] = this.undoData.oldValue;
+            } else {
+                node.properties[this.undoData.property] = this.undoData.oldValue;
+            }
             
             if (node.updateProperty) {
                 node.updateProperty(this.undoData.property, this.undoData.oldValue);

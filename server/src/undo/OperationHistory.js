@@ -104,6 +104,12 @@ class OperationHistory {
             transactionId: transactionId
         });
         
+        // Warn if operation is missing undo data for undoable types
+        const undoableTypes = ['node_move', 'node_create', 'node_delete', 'node_duplicate', 'node_property_update'];
+        if (undoableTypes.includes(operation.type) && !operation.undoData) {
+            console.warn(`⚠️ Operation ${operationId} of type ${operation.type} is missing undo data - will not be undoable`);
+        }
+        
         // Store operation record
         const record = {
             id: operationId,

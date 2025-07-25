@@ -16,6 +16,14 @@ class NetworkLayer {
         this.maxReconnectDelay = 30000;
         this.reconnectAttempts = 0;
         
+        // Heartbeat settings
+        this.heartbeatInterval = null;
+        this.heartbeatTimeout = null;
+        this.lastPingTime = null;
+        this.lastPongTime = null;
+        this.connectionQuality = 'unknown'; // excellent, good, poor, critical, unknown
+        this.pingLatencies = []; // Track last 5 ping times for averaging
+        
         // Session management
         this.sessionId = this.generateSessionId();
         this.tabId = window.__imageCanvasTabId || this.generateTabId();
@@ -76,6 +84,9 @@ class NetworkLayer {
                     this.reconnectAttempts = 0;
                     console.log('✅ Connected to server');
                     
+                    // Start heartbeat monitoring
+                    this.startHeartbeat();
+                    
                     // Update status to connected
                     if (this.app.updateConnectionStatus) {
                         this.app.updateConnectionStatus('connected');
@@ -119,11 +130,19 @@ class NetworkLayer {
         this.socket.on('disconnect', () => {
             this.isConnected = false;
             console.log('🔌 Disconnected from server');
+            
+            // Stop heartbeat monitoring
+            this.stopHeartbeat();
+            
             this.app.updateConnectionStatus('disconnected');
         });
         
         this.socket.on('reconnect', () => {
             console.log('🔄 Reconnected to server');
+            
+            // Restart heartbeat monitoring
+            this.startHeartbeat();
+            
             this.app.updateConnectionStatus('connected');
             
             // Re-join current project if any
@@ -216,6 +235,11 @@ class NetworkLayer {
         this.socket.on('error_message', (data) => {
             console.error('⚠️ Server error:', data.message);
             this.app.showError(data.message);
+        });
+        
+        // Heartbeat events
+        this.socket.on('pong', (timestamp) => {
+            this.handlePong(timestamp);
         });
     }
     
@@ -359,14 +383,18 @@ class NetworkLayer {
             return;
         }
         
+        // Get the user ID from the canvas navigator if available
+        const userId = this.app.canvasNavigator?.userId || this.currentUser?.id;
+        const username = userId || `user-${this.tabId.substr(-8)}`;
+        
         const data = {
             projectId,
             canvasId,
             tabId: this.tabId,
-            userId: this.currentUser?.id,
+            userId: userId,
             // Server expects username and displayName
-            username: this.currentUser?.username || `user-${this.tabId.substr(-8)}`,
-            displayName: this.currentUser?.displayName || `User ${this.tabId.substr(-8)}`
+            username: username,
+            displayName: this.currentUser?.displayName || username
         };
         
         console.log('📤 Emitting join_project:', data);
@@ -440,10 +468,151 @@ class NetworkLayer {
     }
     
     /**
+     * Start heartbeat monitoring
+     */
+    startHeartbeat() {
+        // Clear any existing heartbeat
+        this.stopHeartbeat();
+        
+        // Reset connection quality
+        this.connectionQuality = 'unknown';
+        this.pingLatencies = [];
+        
+        // Send initial ping immediately
+        this.sendPing();
+        
+        // Set up regular pings every 30 seconds
+        this.heartbeatInterval = setInterval(() => {
+            this.sendPing();
+        }, 30000);
+        
+        console.log('💓 Heartbeat monitoring started');
+    }
+    
+    /**
+     * Stop heartbeat monitoring
+     */
+    stopHeartbeat() {
+        if (this.heartbeatInterval) {
+            clearInterval(this.heartbeatInterval);
+            this.heartbeatInterval = null;
+        }
+        
+        if (this.heartbeatTimeout) {
+            clearTimeout(this.heartbeatTimeout);
+            this.heartbeatTimeout = null;
+        }
+        
+        this.connectionQuality = 'unknown';
+        console.log('💓 Heartbeat monitoring stopped');
+    }
+    
+    /**
+     * Send ping to server
+     */
+    sendPing() {
+        if (!this.isConnected || !this.socket) {
+            return;
+        }
+        
+        const timestamp = Date.now();
+        this.lastPingTime = timestamp;
+        
+        // Set timeout for pong response (10 seconds)
+        this.heartbeatTimeout = setTimeout(() => {
+            console.warn('💓 Ping timeout - connection may be degraded');
+            this.connectionQuality = 'critical';
+            this.updateConnectionQuality();
+            
+            // If we haven't received a pong in 30 seconds, consider connection lost
+            if (this.lastPongTime && (Date.now() - this.lastPongTime > 30000)) {
+                console.error('💓 Connection appears dead, triggering manual reconnect');
+                this.socket.disconnect();
+                this.socket.connect();
+            }
+        }, 10000);
+        
+        // Send ping with timestamp
+        this.socket.emit('ping', timestamp);
+    }
+    
+    /**
+     * Handle pong response from server
+     */
+    handlePong(timestamp) {
+        if (this.heartbeatTimeout) {
+            clearTimeout(this.heartbeatTimeout);
+            this.heartbeatTimeout = null;
+        }
+        
+        const now = Date.now();
+        const latency = now - timestamp;
+        this.lastPongTime = now;
+        
+        // Track latency for quality assessment
+        this.pingLatencies.push(latency);
+        if (this.pingLatencies.length > 5) {
+            this.pingLatencies.shift(); // Keep only last 5 measurements
+        }
+        
+        // Calculate average latency
+        const avgLatency = this.pingLatencies.reduce((a, b) => a + b, 0) / this.pingLatencies.length;
+        
+        // Determine connection quality
+        let newQuality;
+        if (avgLatency < 100) {
+            newQuality = 'excellent';
+        } else if (avgLatency < 300) {
+            newQuality = 'good';
+        } else if (avgLatency < 1000) {
+            newQuality = 'poor';
+        } else {
+            newQuality = 'critical';
+        }
+        
+        // Only update if quality changed
+        if (newQuality !== this.connectionQuality) {
+            this.connectionQuality = newQuality;
+            this.updateConnectionQuality();
+        }
+        
+        console.log(`💓 Pong received: ${latency}ms (avg: ${Math.round(avgLatency)}ms, quality: ${this.connectionQuality})`);
+    }
+    
+    /**
+     * Update connection status with quality info
+     */
+    updateConnectionQuality() {
+        if (!this.app.updateConnectionStatus) return;
+        
+        const qualityMessages = {
+            excellent: null, // Don't show notification for excellent connections
+            good: null,      // Don't show notification for good connections
+            poor: 'Connection quality is poor',
+            critical: 'Connection quality is critical',
+            unknown: null
+        };
+        
+        const message = qualityMessages[this.connectionQuality];
+        if (message && this.isConnected) {
+            // Show a warning notification but keep status as connected
+            if (window.unifiedNotifications) {
+                window.unifiedNotifications.warning(message, {
+                    duration: 5000,
+                    id: 'connection-quality'
+                });
+            }
+        }
+    }
+    
+    /**
      * Cleanup resources
      */
     cleanup() {
         console.log('🧹 Cleaning up NetworkLayer...');
+        
+        // Stop heartbeat
+        this.stopHeartbeat();
         
         // Clear event handlers
         this.eventHandlers.clear();

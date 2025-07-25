@@ -31,7 +31,9 @@ class TransactionManager {
      * Setup transaction patterns
      */
     setupTransactionPatterns() {
-        // Multi-node operations
+        // Multi-node operations - DISABLED
+        // Move operations should be atomic, not wrapped in transactions
+        /*
         this.transactionPatterns.set('multi_node', {
             detect: (operation) => {
                 return operation.params && (
@@ -42,6 +44,7 @@ class TransactionManager {
             timeout: 100,
             source: 'multi_node_operation'
         });
+        */
         
         // Alignment operations - DISABLED for now
         // These are already single operations with arrays of nodes
@@ -154,7 +157,9 @@ class TransactionManager {
             }
         }
         
-        // Check for rapid operations on same nodes (likely part of same action)
+        // Check for rapid operations on same nodes - DISABLED
+        // This was causing move operations to be bundled unnecessarily
+        /*
         if (this.recentOperations.length > 0) {
             const lastOp = this.recentOperations[this.recentOperations.length - 1];
             const timeDiff = now - lastOp.timestamp;
@@ -168,6 +173,7 @@ class TransactionManager {
                 };
             }
         }
+        */
         
         return { shouldStart: false };
     }

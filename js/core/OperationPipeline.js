@@ -105,9 +105,21 @@ class OperationPipeline {
             // REMOVED: Pre-validation was causing more problems than it solved
             // Operations should succeed locally and handle server errors gracefully
             
+            // LOG ALL OPERATIONS FOR DEBUGGING
+            console.log(`🔍 OPERATION REQUESTED: ${commandOrType}`, {
+                params: params,
+                origin: options.origin || 'local',
+                caller: new Error().stack.split('\n')[2] // Get caller for debugging
+            });
+            
             command = this.createCommand(commandOrType, params, options.origin || 'local');
         } else {
             command = commandOrType;
+            console.log(`🔍 OPERATION REQUESTED: ${command.type}`, {
+                params: command.params,
+                origin: command.origin,
+                caller: new Error().stack.split('\n')[2]
+            });
         }
         
         // Check for duplicate remote operations

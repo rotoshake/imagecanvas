@@ -70,26 +70,19 @@ class CollaborativeArchitecture {
                 // Continue in offline mode
             }
             
-            // 7. Initialize new client undo manager
+            // 7. Initialize client undo manager (single source of truth)
             if (typeof ClientUndoManager !== 'undefined') {
                 this.app.undoManager = new ClientUndoManager(this.app);
-                console.log('✅ Client undo manager initialized');
+                console.log('✅ Client undo manager initialized as single source of truth');
                 
                 // Initialize transaction manager
                 if (typeof TransactionManager !== 'undefined') {
                     this.app.transactionManager = new TransactionManager(this.app.undoManager);
                     console.log('✅ Transaction manager initialized');
                 }
-            } else if (typeof CollaborativeUndoRedoManager !== 'undefined') {
-                // Fallback to old undo manager if new one not available
-                this.app.undoRedoManager = new CollaborativeUndoRedoManager(this.app);
-                // Force immediate interceptor setup now that all dependencies are available
-                if (this.app.undoRedoManager.setupInterceptors) {
-                    this.app.undoRedoManager.setupInterceptors();
-                    console.log('✅ Collaborative undo/redo manager initialized with interceptors (fallback)');
-                } else {
-                    console.log('✅ Collaborative undo/redo manager initialized (fallback)');
-                }
+            } else {
+                console.error('❌ ClientUndoManager not available - undo system will not work');
+                throw new Error('ClientUndoManager is required for undo functionality');
             }
             
             // Keep backward compatibility

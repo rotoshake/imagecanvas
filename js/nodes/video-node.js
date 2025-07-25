@@ -29,8 +29,9 @@ class VideoNode extends BaseNode {
         this.properties.hash = hash;
         this.loadingState = 'loading';
         
-        // Update title
-        if (filename && (!this.title || this.title === 'Video')) {
+        // Only set title if it's empty or undefined
+        // This preserves user-customized titles while ensuring new nodes get a title
+        if (filename && !this.title) {
             this.title = filename;
         }
         

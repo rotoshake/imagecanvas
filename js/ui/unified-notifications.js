@@ -161,6 +161,7 @@ class UnifiedNotifications {
                 height: 10px;
             }
             
+            
             /* Animations */
             @keyframes pulse {
                 0%, 100% { opacity: 1; }
@@ -298,6 +299,7 @@ class UnifiedNotifications {
                 ${progress ? this.getProgressHTML(progress) : ''}
             </div>
         `;
+        
         
         
         notification.innerHTML = html;
@@ -450,8 +452,8 @@ class UnifiedNotifications {
         const statusMessages = {
             connected: 'Connected to server',
             connecting: 'Connecting to server...',
-            disconnected: 'Disconnected from server',
-            error: 'Connection error'
+            disconnected: 'Reconnecting...',
+            error: 'Connection error - will retry automatically'
         };
         
         const statusTypes = {

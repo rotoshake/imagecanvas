@@ -336,7 +336,19 @@ class CanvasStateManager {
     applyNodePropertyUpdate(params, state, changes) {
         const node = state.nodes.find(n => n.id === params.nodeId);
         if (node) {
-            node.properties[params.property] = params.value;
+            // Handle special properties that belong on the node object itself
+            const nodeDirectProperties = ['title', 'rotation', 'aspectRatio'];
+            
+            if (nodeDirectProperties.includes(params.property)) {
+                // Update property directly on the node object
+                node[params.property] = params.value;
+                console.log(`📝 Updated node.${params.property} = "${params.value}" for node ${params.nodeId}`);
+            } else {
+                // Update property in the properties object
+                node.properties[params.property] = params.value;
+                console.log(`📝 Updated node.properties.${params.property} = "${params.value}" for node ${params.nodeId}`);
+            }
+            
             changes.updated.push(node);
         }
         // Missing nodes are silently ignored

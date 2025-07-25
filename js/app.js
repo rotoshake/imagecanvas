@@ -186,6 +186,99 @@ class ImageCanvasApp {
         }
         console.log(`Connection status: ${status}${detail ? ' - ' + detail : ''}`);
     }
+    
+    /**
+     * Create properties inspector toggle button
+     */
+    createPropertiesButton() {
+        // Create button element
+        this.propertiesBtn = document.createElement('button');
+        this.propertiesBtn.className = 'properties-inspector-toggle';
+        this.propertiesBtn.innerHTML = '<span class="icon">ⓘ</span>';
+        this.propertiesBtn.title = 'Show/Hide Properties Inspector';
+        
+        // Add styles
+        this.addPropertiesButtonStyles();
+        
+        // Add click handler
+        this.propertiesBtn.addEventListener('click', () => {
+            this.propertiesInspector.toggle();
+            this.propertiesBtn.classList.toggle('active', this.propertiesInspector.isVisible);
+        });
+        
+        // Add to DOM
+        document.body.appendChild(this.propertiesBtn);
+        
+        console.log('✅ Properties inspector button created');
+    }
+    
+    /**
+     * Add styles for properties button
+     */
+    addPropertiesButtonStyles() {
+        const style = document.createElement('style');
+        style.textContent = `
+            /* Properties Inspector Toggle Button */
+            .properties-inspector-toggle {
+                position: fixed;
+                bottom: 20px;
+                right: 20px;
+                background: #1e1e1e;
+                border: 1px solid #333;
+                color: #e0e0e0;
+                padding: 6px;
+                border-radius: 50%;
+                cursor: pointer;
+                font-size: 12px;
+                width: 20px;
+                height: 20px;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                transition: all 0.2s ease;
+                z-index: 999;
+                box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+            }
+            
+            .properties-inspector-toggle .icon {
+                font-size: 14px;
+                line-height: 1;
+            }
+            
+            .properties-inspector-toggle:hover {
+                background: #252525;
+                border-color: #444;
+                box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+                transform: translateY(-1px);
+            }
+            
+            .properties-inspector-toggle.active {
+                background: #333;
+                border-color: #0066cc;
+                box-shadow: 0 0 0 2px rgba(0, 102, 204, 0.2);
+            }
+            
+            .properties-inspector-toggle:active {
+                transform: translateY(0);
+            }
+            
+            /* Responsive adjustments */
+            @media (max-width: 768px) {
+                .properties-inspector-toggle {
+                    bottom: 15px;
+                    right: 15px;
+                    width: 18px;
+                    height: 18px;
+                    padding: 5px;
+                }
+                
+                .properties-inspector-toggle .icon {
+                    font-size: 12px;
+                }
+            }
+        `;
+        document.head.appendChild(style);
+    }
 }
 
 // ===================================
@@ -207,14 +300,17 @@ class NodeFactory {
             switch (type) {
                 case 'media/image':
                 case 'canvas/image':
+                case 'image':  // Legacy database type
                     node = new ImageNode();
                     break;
                 case 'media/video':
                 case 'canvas/video':
+                case 'video':  // Legacy database type
                     node = new VideoNode();
                     break;
                 case 'media/text':
                 case 'canvas/text':
+                case 'text':   // Legacy database type
                     node = new TextNode();
                     break;
                 default:
@@ -301,31 +397,79 @@ async function initApp() {
         app.propertiesInspector = new FloatingPropertiesInspector(app.graphCanvas);
         window.propertiesInspector = app.propertiesInspector;
         
+        // Create Properties Inspector Toggle Button
+        app.createPropertiesButton();
+        
+        // Set up visibility sync between button and inspector
+        app.propertiesInspector.setVisibilityCallback((isVisible) => {
+            app.propertiesBtn.classList.toggle('active', isVisible);
+        });
+        
         // Initialize Navigation State Manager
         app.navigationStateManager = new NavigationStateManager(app);
         window.navigationStateManager = app.navigationStateManager;
         
         // Load last canvas or create default
-        // Wait for network connection and architecture initialization
+        // Use more robust initialization that doesn't strictly depend on collaborative architecture
         setTimeout(() => {
             console.log('🚀 Preparing to load startup canvas...');
             
-            // Check if collaborative architecture is ready
+            let attempts = 0;
+            const maxAttempts = 20; // 10 seconds max wait
+            
+            // Check if essential components are ready (with fallback)
             const checkAndLoad = () => {
-                if (app.collaborativeArchitecture?.initialized) {
-                    console.log('✅ Collaborative architecture ready');
-                    console.log('📊 Network status:', {
-                        hasNetworkLayer: !!app.networkLayer,
-                        isConnected: app.networkLayer?.isConnected,
-                        hasStateSyncManager: !!app.stateSyncManager
+                attempts++;
+                
+                // Check if we have the essential components needed for startup
+                const hasEssentials = app.canvasNavigator && 
+                                    (app.networkLayer || attempts > 10); // Allow fallback after 5 seconds
+                
+                const isArchitectureReady = app.collaborativeArchitecture?.initialized;
+                
+                if (isArchitectureReady || (hasEssentials && attempts > 6)) {
+                    console.log('✅ Starting canvas load:', {
+                        architectureReady: isArchitectureReady,
+                        hasEssentials: hasEssentials,
+                        attempts: attempts,
+                        fallbackMode: !isArchitectureReady
                     });
                     
-                    // Initialize NavigationStateManager
-                    app.navigationStateManager.initialize();
+                    console.log('📊 Component status:', {
+                        hasNetworkLayer: !!app.networkLayer,
+                        isConnected: app.networkLayer?.isConnected,
+                        hasStateSyncManager: !!app.stateSyncManager,
+                        hasCanvasNavigator: !!app.canvasNavigator
+                    });
                     
-                    app.canvasNavigator.loadStartupCanvas();
+                    // Initialize NavigationStateManager if available
+                    if (app.navigationStateManager) {
+                        app.navigationStateManager.initialize();
+                    }
+                    
+                    // Load startup canvas
+                    if (app.canvasNavigator?.loadStartupCanvas) {
+                        app.canvasNavigator.loadStartupCanvas().catch(error => {
+                            console.error('❌ Failed to load startup canvas:', error);
+                            // Continue anyway, user can manually open navigator
+                        });
+                    } else {
+                        console.warn('⚠️ Canvas navigator not available for startup loading');
+                    }
+                    
+                } else if (attempts >= maxAttempts) {
+                    console.warn('⚠️ Startup loading timeout - proceeding without full initialization');
+                    console.warn('User will need to manually select a canvas');
+                    
+                    // Still try to load if we have canvas navigator
+                    if (app.canvasNavigator?.loadStartupCanvas) {
+                        app.canvasNavigator.loadStartupCanvas().catch(error => {
+                            console.error('❌ Fallback startup canvas load failed:', error);
+                        });
+                    }
+                    
                 } else {
-                    console.log('⏳ Waiting for collaborative architecture...');
+                    console.log(`⏳ Waiting for components... (${attempts}/${maxAttempts})`);
                     setTimeout(checkAndLoad, 500);
                 }
             };

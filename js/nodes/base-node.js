@@ -149,8 +149,30 @@ class BaseNode {
         }
     }
     
+    /**
+     * Get the display title for the node
+     * Falls back to filename if title is empty
+     * @returns {string} The title to display
+     */
+    getDisplayTitle() {
+        // Return custom title if it exists and isn't empty
+        if (this.title && this.title.trim()) {
+            return this.title;
+        }
+        
+        // Fall back to filename if available
+        if (this.properties?.filename) {
+            return this.properties.filename;
+        }
+        
+        // Fall back to node type as last resort
+        return this.type || 'Node';
+    }
+    
     drawTitle(ctx) {
-        if (!this.title || this.flags.hide_title) return;
+        // Default implementation draws title inside the node
+        // Override in subclasses for custom behavior
+        if (!this.title || this.flags?.hide_title) return;
         
         ctx.save();
         ctx.font = 'bold 15px Arial';

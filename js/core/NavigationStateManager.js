@@ -65,6 +65,17 @@ class NavigationStateManager {
             return result;
         };
 
+        // Hook into animateTo method (for navigation animations)
+        if (this.canvas.viewport.animateTo) {
+            const originalAnimateTo = this.canvas.viewport.animateTo.bind(this.canvas.viewport);
+            this.canvas.viewport.animateTo = (...args) => {
+                const result = originalAnimateTo(...args);
+                // Note: onViewportChange will be called when animation completes
+                // via the callback we added to the animateTo method
+                return result;
+            };
+        }
+
         // Also hook into canvas methods that affect viewport
         if (this.canvas.keyboardZoom) {
             const originalKeyboardZoom = this.canvas.keyboardZoom.bind(this.canvas);

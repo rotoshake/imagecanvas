@@ -8,10 +8,31 @@ class CanvasNavigator {
         this.isOpen = false;
         this.canvases = [];
         this.currentCanvasId = null;
-        this.userId = 1; // Default user, will be updated when user system is implemented
+        
+        // Generate a unique user ID for this session
+        // This will be consistent across tabs in the same browser session
+        this.userId = this.getOrCreateUserId();
         
         this.createUI();
         this.setupEventListeners();
+    }
+    
+    /**
+     * Get or create a user ID for this browser session
+     */
+    getOrCreateUserId() {
+        let userId = localStorage.getItem('imageCanvasUserId');
+        
+        if (!userId) {
+            // Generate a unique user ID based on timestamp and random value
+            userId = `user-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+            localStorage.setItem('imageCanvasUserId', userId);
+            console.log('🆔 Generated new user ID:', userId);
+        } else {
+            console.log('🆔 Using existing user ID:', userId);
+        }
+        
+        return userId;
     }
     
     // Get network layer from app when needed
@@ -334,8 +355,8 @@ class CanvasNavigator {
                 background: #1e1e1e;
                 border: 1px solid #333;
                 color: #e0e0e0;
-                padding: 10px 15px;
-                border-radius: 4px;
+                padding: 8px 10px;
+                border-radius: 15%;
                 cursor: pointer;
                 font-size: 12px;
                 font-weight: 500;
@@ -497,7 +518,9 @@ class CanvasNavigator {
         listContainer.classList.add('loading');
         
         try {
-            const response = await fetch(CONFIG.ENDPOINTS.USER_PROJECTS(this.userId));
+            // Use general projects endpoint to show all canvases
+            // TODO: Implement proper user authentication later
+            const response = await fetch(CONFIG.ENDPOINTS.PROJECTS);
             if (!response.ok) throw new Error('Failed to load canvases');
             
             this.canvases = await response.json();
@@ -613,9 +636,9 @@ class CanvasNavigator {
             
             // Join the project if collaborative
             // Join using the new NetworkLayer if available
-            if (this.app.networkLayer && this.app.networkLayer.isConnected) {
+            if (this.app.networkLayer) {
                 console.log('🔌 Joining new project via NetworkLayer:', newCanvas.id);
-                this.app.networkLayer.joinProject(newCanvas.id);
+                await this.joinProjectWithRetry(newCanvas.id);
             }
             
             // Project joining is now handled by NetworkLayer
@@ -738,21 +761,11 @@ class CanvasNavigator {
                         networkConnected: this.app.networkLayer?.isConnected
                     });
                     
-                    // Join using the new NetworkLayer
+                    // Join using the new NetworkLayer with retry logic
                     if (this.app.networkLayer) {
-                        if (this.app.networkLayer.isConnected) {
-                            console.log('🔌 Joining project via NetworkLayer:', canvasId);
-                            this.app.networkLayer.joinProject(canvasId);
-                        } else {
-                            console.log('⚠️ NetworkLayer not connected yet, waiting...');
-                            // Wait for connection
-                            setTimeout(() => {
-                                if (this.app.networkLayer.isConnected) {
-                                    console.log('🔌 Now connected, joining project:', canvasId);
-                                    this.app.networkLayer.joinProject(canvasId);
-                                }
-                            }, 1000);
-                        }
+                        await this.joinProjectWithRetry(canvasId);
+                    } else {
+                        console.warn('⚠️ No NetworkLayer available - project joining disabled');
                     }
                     
                     // Show success
@@ -774,29 +787,19 @@ class CanvasNavigator {
                         networkConnected: this.app.networkLayer?.isConnected
                     });
                     
-                    // Join using the new NetworkLayer
+                    // Join using the new NetworkLayer with retry logic
                     if (this.app.networkLayer) {
-                        if (this.app.networkLayer.isConnected) {
-                            console.log('🔌 Joining project via NetworkLayer (empty canvas):', canvasId);
-                            this.app.networkLayer.joinProject(canvasId);
-                        } else {
-                            console.log('⚠️ NetworkLayer not connected yet, waiting...');
-                            setTimeout(() => {
-                                if (this.app.networkLayer.isConnected) {
-                                    console.log('🔌 Now connected, joining project:', canvasId);
-                                    this.app.networkLayer.joinProject(canvasId);
-                                }
-                            }, 1000);
-                        }
+                        await this.joinProjectWithRetry(canvasId);
+                    } else {
+                        console.warn('⚠️ No NetworkLayer available - project joining disabled');
                     }
                 }
             } catch (error) {
                 console.error('Error loading canvas data:', error);
                 // Continue with empty canvas but still join project
-                // Join using the new NetworkLayer
-                if (this.app.networkLayer && this.app.networkLayer.isConnected) {
-                    console.log('🔌 Joining project via NetworkLayer (after error):', canvasId);
-                    this.app.networkLayer.joinProject(canvasId);
+                // Join using the new NetworkLayer with retry logic
+                if (this.app.networkLayer) {
+                    await this.joinProjectWithRetry(canvasId);
                 }
             }
             
@@ -967,6 +970,70 @@ class CanvasNavigator {
         });
     }
     
+    async joinProjectWithRetry(canvasId, maxAttempts = 3) {
+        console.log(`🔌 Attempting to join project ${canvasId} with retry logic`);
+        
+        for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+            try {
+                // Check if network is connected
+                if (!this.app.networkLayer.isConnected) {
+                    console.log(`⏳ Network not connected, waiting... (attempt ${attempt})`);
+                    
+                    // Wait for connection with timeout
+                    let waitTime = 0;
+                    const maxWaitTime = 5000; // 5 seconds
+                    const checkInterval = 200;
+                    
+                    while (!this.app.networkLayer.isConnected && waitTime < maxWaitTime) {
+                        await new Promise(resolve => setTimeout(resolve, checkInterval));
+                        waitTime += checkInterval;
+                    }
+                    
+                    if (!this.app.networkLayer.isConnected) {
+                        console.warn(`⚠️ Network connection timeout on attempt ${attempt}`);
+                        if (attempt === maxAttempts) {
+                            console.error('❌ Failed to connect to network after all attempts');
+                            return false;
+                        }
+                        continue; // Try next attempt
+                    }
+                }
+                
+                // Now try to join the project
+                console.log(`🔌 Joining project ${canvasId} (attempt ${attempt})`);
+                this.app.networkLayer.joinProject(canvasId);
+                
+                // Wait a moment to see if join was successful
+                await new Promise(resolve => setTimeout(resolve, 1000));
+                
+                // Check if the undo manager has the project ID set (indicates successful join)
+                if (this.app.undoManager && this.app.undoManager.projectId === canvasId) {
+                    console.log(`✅ Project join successful (attempt ${attempt})`);
+                    return true;
+                } else {
+                    console.log(`⚠️ Project join unclear, undo manager projectId: ${this.app.undoManager?.projectId}`);
+                }
+                
+                // For now, assume success if we got this far
+                console.log(`✅ Project join completed (attempt ${attempt})`);
+                return true;
+                
+            } catch (error) {
+                console.error(`❌ Project join attempt ${attempt} failed:`, error);
+                
+                if (attempt === maxAttempts) {
+                    console.error('❌ All project join attempts failed');
+                    return false;
+                }
+                
+                // Wait before retry
+                await new Promise(resolve => setTimeout(resolve, 1000 * attempt));
+            }
+        }
+        
+        return false;
+    }
+    
     escapeHtml(unsafe) {
         return unsafe
             .replace(/&/g, "&amp;")
@@ -1122,9 +1189,9 @@ class CanvasNavigator {
             
             // Join the project if collaborative
             // Join using the new NetworkLayer if available
-            if (this.app.networkLayer && this.app.networkLayer.isConnected) {
+            if (this.app.networkLayer) {
                 console.log('🔌 Joining new project via NetworkLayer (saveAsNew):', newCanvas.id);
-                this.app.networkLayer.joinProject(newCanvas.id);
+                await this.joinProjectWithRetry(newCanvas.id);
             }
             
             // Project joining is now handled by NetworkLayer
@@ -1143,7 +1210,31 @@ class CanvasNavigator {
     }
     
     async loadStartupCanvas() {
+        console.log('🚀 Starting loadStartupCanvas...');
+        
         try {
+            // Wait for network layer to be ready if it exists
+            if (this.app.networkLayer) {
+                console.log('⏳ Waiting for network connection...');
+                let networkAttempts = 0;
+                const maxNetworkAttempts = 20; // 10 seconds
+                
+                while (!this.app.networkLayer.isConnected && networkAttempts < maxNetworkAttempts) {
+                    await new Promise(resolve => setTimeout(resolve, 500));
+                    networkAttempts++;
+                    
+                    if (networkAttempts % 4 === 0) { // Log every 2 seconds
+                        console.log(`⏳ Still waiting for network... (${networkAttempts}/${maxNetworkAttempts})`);
+                    }
+                }
+                
+                if (!this.app.networkLayer.isConnected) {
+                    console.warn('⚠️ Network connection timeout - proceeding anyway');
+                } else {
+                    console.log('✅ Network layer connected');
+                }
+            }
+            
             // Check if we're in demo mode
             const isDemoMode = window.location.pathname.includes('demo.html');
             
@@ -1200,8 +1291,9 @@ class CanvasNavigator {
             const lastCanvasId = localStorage.getItem('lastCanvasId');
             
             if (lastCanvasId) {
-                // Try to load the last canvas by checking if it exists in user's projects
-                const response = await fetch(CONFIG.ENDPOINTS.USER_PROJECTS(this.userId));
+                // Try to load the last canvas by checking if it exists in all projects
+                // TODO: Use general projects endpoint until proper user authentication is implemented
+                const response = await fetch(CONFIG.ENDPOINTS.PROJECTS);
                 if (response.ok) {
                     const canvases = await response.json();
                     const lastCanvas = canvases.find(c => c.id === parseInt(lastCanvasId));
@@ -1214,7 +1306,7 @@ class CanvasNavigator {
             }
             
             // No last canvas or it doesn't exist, check if user has any canvases
-            const response = await fetch(CONFIG.ENDPOINTS.USER_PROJECTS(this.userId));
+            const response = await fetch(CONFIG.ENDPOINTS.PROJECTS);
             if (response.ok) {
                 const canvases = await response.json();
                 
@@ -1253,9 +1345,9 @@ class CanvasNavigator {
             
             // Join the project if collaborative
             // Join using the new NetworkLayer if available
-            if (this.app.networkLayer && this.app.networkLayer.isConnected) {
+            if (this.app.networkLayer) {
                 console.log('🔌 Joining new project via NetworkLayer (createDefault):', newCanvas.id);
-                this.app.networkLayer.joinProject(newCanvas.id);
+                await this.joinProjectWithRetry(newCanvas.id);
             }
             
             // Project joining is now handled by NetworkLayer

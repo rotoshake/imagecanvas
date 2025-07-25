@@ -65,7 +65,20 @@ class UndoStateSync {
         // Get operation details
         const operations = operationIds.map(id => this.history.operations.get(id)).filter(Boolean);
         console.log(`🔍 Retrieved ${operations.length} operations with undo data:`, 
-            operations.map(op => ({ type: op.type, hasUndoData: !!op.undoData })));
+            operations.map(op => ({ 
+                id: op.id, 
+                type: op.type, 
+                hasUndoData: !!op.undoData, 
+                state: op.state,
+                userId: op.userId 
+            })));
+            
+        // Check if any operations are missing undo data
+        const opsWithoutUndo = operations.filter(op => !op.undoData);
+        if (opsWithoutUndo.length > 0) {
+            console.warn(`⚠️ ${opsWithoutUndo.length} operations missing undo data:`, 
+                opsWithoutUndo.map(op => ({ id: op.id, type: op.type })));
+        }
         
         // Check for conflicts
         const conflicts = await this.history.checkUndoConflicts(operationIds, userId, projectId);

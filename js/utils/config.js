@@ -64,6 +64,13 @@ const CONFIG = {
         ANIMATION_THRESHOLD: 2.0  // Higher = tighter/faster finish, lower = smoother/longer tail
     },
     
+    NAVIGATION: {
+        ANIMATION_DURATION: 240, // milliseconds
+        ENABLE_ANIMATION: true,
+        ARROW_KEY_ENABLED: true,
+        DIRECTION_ANGLE_TOLERANCE: 45 // degrees for direction quadrants
+    },
+    
     HANDLES: {
         SIZE: 16,
         MIN_NODE_SIZE: 24,

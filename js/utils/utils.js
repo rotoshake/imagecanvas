@@ -10,6 +10,30 @@ const Utils = {
     
     distance: (x1, y1, x2, y2) => Math.sqrt((x2 - x1) ** 2 + (y2 - y1) ** 2),
     
+    // Animation easing functions
+    easeInOutCubic: (t) => {
+        return t < 0.5 
+            ? 4 * t * t * t 
+            : 1 - Math.pow(-2 * t + 2, 3) / 2;
+    },
+    
+    // Angle utilities
+    angleFromTo: (x1, y1, x2, y2) => {
+        return Math.atan2(y2 - y1, x2 - x1);
+    },
+    
+    radToDeg: (rad) => rad * (180 / Math.PI),
+    
+    degToRad: (deg) => deg * (Math.PI / 180),
+    
+    normalizeAngle: (angle) => {
+        // Normalize angle to -180 to 180 degrees
+        angle = angle % 360;
+        if (angle > 180) angle -= 360;
+        if (angle < -180) angle += 360;
+        return angle;
+    },
+    
     // Validation utilities
     isValidArray: (arr, length) => Array.isArray(arr) && arr.length === length && arr.every(Number.isFinite),
     

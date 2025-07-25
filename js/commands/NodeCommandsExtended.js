@@ -25,6 +25,24 @@ class ResizeNodeCommand extends Command {
         return { valid: true };
     }
     
+    async prepareUndoData(context) {
+        const { graph } = context;
+        this.undoData = { nodes: [] };
+        
+        this.params.nodeIds.forEach(nodeId => {
+            const node = graph.getNodeById(nodeId);
+            if (node) {
+                this.undoData.nodes.push({
+                    id: node.id,
+                    oldSize: [...node.size],
+                    oldPosition: [...node.pos]
+                });
+            }
+        });
+        
+        console.log(`📝 Prepared undo data for ResizeNodeCommand: ${this.undoData.nodes.length} nodes`);
+    }
+    
     async execute(context) {
         const { graph } = context;
         
@@ -129,6 +147,51 @@ class ResetNodeCommand extends Command {
         }
         
         return { valid: true };
+    }
+    
+    async prepareUndoData(context) {
+        const { graph } = context;
+        this.undoData = { nodes: [] };
+        
+        this.params.nodeIds.forEach((nodeId, index) => {
+            const node = graph.getNodeById(nodeId);
+            if (!node) return;
+            
+            const undoInfo = {
+                id: node.id,
+                operations: []
+            };
+            
+            // Check what we're resetting
+            const resetRotation = this.params.resetRotation || this.params.resetType === 'rotation' || !this.params.resetType;
+            const resetAspectRatio = this.params.resetAspectRatio || this.params.resetType === 'aspectRatio';
+            const resetScale = this.params.resetType === 'scale';
+            
+            if (resetRotation) {
+                undoInfo.operations.push({
+                    type: 'rotation',
+                    oldValue: node.rotation || 0
+                });
+            }
+            
+            if (resetScale && node.properties.scale !== undefined) {
+                undoInfo.operations.push({
+                    type: 'scale',
+                    oldValue: node.properties.scale
+                });
+            }
+            
+            if (resetAspectRatio && node.originalAspect) {
+                undoInfo.operations.push({
+                    type: 'aspectRatio',
+                    oldSize: [...node.size]
+                });
+            }
+            
+            this.undoData.nodes.push(undoInfo);
+        });
+        
+        console.log(`📝 Prepared undo data for ResetNodeCommand: ${this.undoData.nodes.length} nodes`);
     }
     
     async execute(context) {
@@ -317,6 +380,39 @@ class RotateNodeCommand extends Command {
         return { valid: false, error: 'Missing nodeId or nodeIds' };
     }
     
+    async prepareUndoData(context) {
+        const { graph } = context;
+        
+        // Single node rotation
+        if (this.params.nodeId) {
+            const node = graph.getNodeById(this.params.nodeId);
+            if (node) {
+                this.undoData = {
+                    nodeId: node.id,
+                    oldRotation: node.rotation || 0,
+                    oldPosition: this.params.position ? [...node.pos] : null
+                };
+            }
+        }
+        // Multi-node rotation
+        else if (this.params.nodeIds) {
+            this.undoData = { nodes: [] };
+            
+            this.params.nodeIds.forEach((nodeId, index) => {
+                const node = graph.getNodeById(nodeId);
+                if (node) {
+                    this.undoData.nodes.push({
+                        id: node.id,
+                        oldRotation: node.rotation || 0,
+                        oldPosition: this.params.positions?.[index] ? [...node.pos] : null
+                    });
+                }
+            });
+        }
+        
+        console.log(`📝 Prepared undo data for RotateNodeCommand`);
+    }
+    
     async execute(context) {
         const { graph } = context;
         
@@ -412,6 +508,21 @@ class VideoToggleCommand extends Command {
         return { valid: true };
     }
     
+    async prepareUndoData(context) {
+        const { graph } = context;
+        const node = graph.getNodeById(this.params.nodeId);
+        
+        if (node && node.type === 'media/video') {
+            this.undoData = {
+                nodeId: node.id,
+                wasPlaying: node.properties.playing || false,
+                wasPaused: node.properties.paused || false
+            };
+        }
+        
+        console.log(`📝 Prepared undo data for VideoToggleCommand`);
+    }
+    
     async execute(context) {
         const { graph } = context;
         const node = graph.getNodeById(this.params.nodeId);
@@ -488,10 +599,36 @@ class BatchPropertyUpdateCommand extends Command {
         return { valid: true };
     }
     
+    async prepareUndoData(context) {
+        const { graph } = context;
+        this.undoData = { updates: [] };
+        
+        for (const update of this.params.updates) {
+            const node = graph.getNodeById(update.nodeId);
+            if (!node) continue;
+            
+            // Store old value
+            const oldValue = update.property === 'properties' 
+                ? { ...node.properties }
+                : node[update.property];
+                
+            this.undoData.updates.push({
+                nodeId: update.nodeId,
+                property: update.property,
+                oldValue: oldValue,
+                newValue: update.value
+            });
+        }
+        
+        console.log(`📝 Prepared undo data for BatchPropertyUpdateCommand: ${this.undoData.updates.length} updates`);
+    }
+    
     async execute(context) {
         const { graph } = context;
         
-        this.undoData = { updates: [] };
+        // Undo data should already be prepared
+        if (!this.undoData) {
+            this.undoData = { updates: [] };
         
         for (const update of this.params.updates) {
             const node = graph.getNodeById(update.nodeId);
@@ -559,6 +696,15 @@ class DuplicateNodesCommand extends Command {
         return { valid: true };
     }
     
+    async prepareUndoData(context) {
+        // For duplicate, we need to store the IDs of nodes that will be created
+        // Since we don't know the IDs yet, we'll store placeholder data
+        this.undoData = {
+            createdNodeIds: [] // Will be populated during execute
+        };
+        console.log('📝 Prepared undo data for DuplicateNodesCommand');
+    }
+    
     async execute(context) {
         const { graph } = context;
         
@@ -568,7 +714,11 @@ class DuplicateNodesCommand extends Command {
         
         // Declare createdNodes at function level to avoid scoping issues
         let createdNodes = [];
-        this.undoData = { createdNodes: [] };
+        
+        // Initialize undoData if not already done by prepareUndoData
+        if (!this.undoData) {
+            this.undoData = { createdNodeIds: [] };
+        }
         
         // Handle explicit node data (Alt+drag) or standard duplication
         if (this.params.nodeData && Array.isArray(this.params.nodeData)) {
@@ -604,7 +754,7 @@ class DuplicateNodesCommand extends Command {
                     }
                     
                     createdNodes.push(duplicate);
-                    this.undoData.createdNodes.push(duplicate.id);
+                    this.undoData.createdNodeIds.push(duplicate.id);
                 }
             }
         } else {
@@ -641,7 +791,7 @@ class DuplicateNodesCommand extends Command {
                     }
                     
                     createdNodes.push(duplicate);
-                    this.undoData.createdNodes.push(duplicate.id);
+                    this.undoData.createdNodeIds.push(duplicate.id);
                 }
             }
         }
@@ -664,7 +814,7 @@ class DuplicateNodesCommand extends Command {
         }
         
         // Remove created nodes
-        for (const nodeId of this.undoData.createdNodes) {
+        for (const nodeId of this.undoData.createdNodeIds) {
             const node = graph.getNodeById(nodeId);
             if (node) {
                 graph.remove(node);
@@ -814,6 +964,15 @@ class PasteNodesCommand extends Command {
         return { valid: true };
     }
     
+    async prepareUndoData(context) {
+        // For paste, we need to store the IDs of nodes that will be created
+        // Since we don't know the IDs yet, we'll store placeholder data
+        this.undoData = {
+            createdNodeIds: [] // Will be populated during execute
+        };
+        console.log('📝 Prepared undo data for PasteNodesCommand');
+    }
+    
     async execute(context) {
         const { graph } = context;
         
@@ -821,7 +980,10 @@ class PasteNodesCommand extends Command {
         const optimisticEnabled = window.app?.operationPipeline?.stateSyncManager?.optimisticEnabled === true;
         const isRemoteOrigin = this.origin === 'remote' || this.origin === 'server';
         
-        this.undoData = { createdNodes: [] };
+        // Initialize undoData if not already done by prepareUndoData
+        if (!this.undoData) {
+            this.undoData = { createdNodeIds: [] };
+        }
         const createdNodes = [];
         const { nodeData, targetPosition } = this.params;
         
@@ -856,7 +1018,7 @@ class PasteNodesCommand extends Command {
                     graph.add(node);
                 }
                 createdNodes.push(node);
-                this.undoData.createdNodes.push(node.id);
+                this.undoData.createdNodeIds.push(node.id);
             }
         }
         
@@ -878,7 +1040,7 @@ class PasteNodesCommand extends Command {
         }
         
         // Remove created nodes
-        for (const nodeId of this.undoData.createdNodes) {
+        for (const nodeId of this.undoData.createdNodeIds) {
             const node = graph.getNodeById(nodeId);
             if (node) {
                 graph.remove(node);

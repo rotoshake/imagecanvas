@@ -8,11 +8,25 @@ class FloatingPropertiesInspector {
         this.position = { x: window.innerWidth - 320, y: 100 };
         this.size = { width: 280, height: 400 };
         
+        // Debounce timers for different property types
+        this.debounceTimers = new Map();
+        this.debounceDelay = 150; // milliseconds
+        
+        // Track which inputs are currently focused/being edited
+        this.focusedInputs = new Set();
+        this.lastPropertyValues = new Map(); // Cache to compare values
+        
+        // Callback for when visibility changes
+        this.visibilityCallback = null;
+        
         this.createUI();
         this.setupEventListeners();
         this.updatePosition();
         // Start hidden - user can toggle with 'p' key
         this.updateProperties(); // Initialize properties even when hidden
+        
+        // Load saved state from localStorage
+        this.loadPropertiesState();
         
         // Delay selection integration to ensure canvas is ready
         setTimeout(() => {
@@ -40,6 +54,9 @@ class FloatingPropertiesInspector {
         
         // Make sure panel doesn't block canvas interactions when starting a drag
         this.setupCanvasInteractionHandling();
+        
+        // Prevent keyboard events from bubbling to canvas
+        this.setupKeyboardHandling();
     }
 
     addStyles() {
@@ -316,33 +333,86 @@ class FloatingPropertiesInspector {
                 background: #222;
             }
 
-            .canvas-stats-compact {
+            .canvas-stats-grid {
+                display: grid;
+                grid-template-columns: 1fr 1fr;
+                gap: 8px;
+            }
+
+            .stat-item {
                 display: flex;
                 flex-direction: column;
-                gap: 4px;
-            }
-
-            .stat-row {
-                display: flex;
                 align-items: center;
-                gap: 8px;
-                font-size: 10px;
+                text-align: center;
+                padding: 6px;
+                background: rgba(255, 255, 255, 0.05);
+                border-radius: 4px;
+                border: 2px solid rgba(255, 255, 255, 0.1);
             }
 
-            .stat-row .stat-label {
+            .stat-item.full-width {
+                grid-column: 1 / -1;
+            }
+
+            .stat-item .stat-label {
                 color: #999;
                 font-weight: 500;
-                min-width: 40px;
+                font-size: 9px;
+                text-transform: uppercase;
+                letter-spacing: 0.5px;
+                margin-bottom: 2px;
             }
 
-            .stat-row .stat-value {
+            .stat-item .stat-value {
                 color: #e0e0e0;
                 font-weight: 600;
-                min-width: 20px;
+                font-size: 11px;
             }
 
             .property-input.transform-input {
                 width: 50px; /* Adjust this value as needed */
+            }
+
+            /* Title input with visibility toggle */
+            .title-input-container {
+                display: flex;
+                align-items: center;
+                gap: 8px;
+            }
+
+            .title-visibility-toggle {
+                width: 8px;
+                height: 8px;
+                border-radius: 50%;
+                background-color: #999;
+                cursor: pointer;
+                transition: background-color 0.2s ease;
+                flex-shrink: 0;
+            }
+
+            .title-visibility-toggle:hover {
+                background-color: #bbb;
+            }
+
+            .title-visibility-toggle.hidden {
+                background-color: #555;
+            }
+
+            .title-visibility-toggle.hidden:hover {
+                background-color: #666;
+            }
+
+            .property-input.title-hidden {
+                color: #666;
+                background-color: rgba(255, 255, 255, 0.03);
+            }
+
+            .property-value-text {
+                color: #999;
+                font-size: 12px;
+                font-style: italic;
+                display: inline-block;
+                padding: 6px 0;
             }
         `;
         document.head.appendChild(style);
@@ -407,6 +477,37 @@ class FloatingPropertiesInspector {
             enablePanelAfterDrag();
         });
     }
+    
+    setupKeyboardHandling() {
+        // Prevent keyboard events from bubbling up to canvas when panel is focused
+        this.panel.addEventListener('keydown', (e) => {
+            // Always stop propagation to prevent canvas shortcuts
+            e.stopPropagation();
+            
+            // Handle Enter key to commit changes
+            if (e.key === 'Enter' && e.target.matches('input')) {
+                e.target.blur(); // This will trigger the change event
+                e.preventDefault();
+            }
+            
+            // Handle Escape key to cancel editing
+            if (e.key === 'Escape' && e.target.matches('input')) {
+                // Restore original value by triggering updatePropertyValues
+                this.updatePropertyValues();
+                e.target.blur();
+                e.preventDefault();
+            }
+        });
+        
+        // Also prevent keyup and keypress from bubbling
+        this.panel.addEventListener('keyup', (e) => {
+            e.stopPropagation();
+        });
+        
+        this.panel.addEventListener('keypress', (e) => {
+            e.stopPropagation();
+        });
+    }
 
     makeDraggable(handle) {
         let isDragging = false;
@@ -440,6 +541,9 @@ class FloatingPropertiesInspector {
             isDragging = false;
             document.removeEventListener('mousemove', onMouseMove);
             document.removeEventListener('mouseup', onMouseUp);
+            
+            // Save position to localStorage after drag
+            this.savePropertiesState();
         };
     }
 
@@ -473,13 +577,23 @@ class FloatingPropertiesInspector {
     }
 
     setupCanvasStateListeners() {
-        // Listen for canvas draw events to update statistics
+        this.lastZoomLevel = null;
+        
+        // Listen for canvas draw events to update zoom level only
         const originalDraw = this.canvas.draw.bind(this.canvas);
         this.canvas.draw = (...args) => {
             const result = originalDraw(...args);
+            
             // Update properties if showing canvas info (no nodes selected)
             if (this.currentNodes.size === 0) {
                 this.updateProperties();
+            } else {
+                // Only update zoom if it changed
+                const currentZoom = this.canvas.viewport?.scale || 1;
+                if (this.lastZoomLevel !== currentZoom) {
+                    this.lastZoomLevel = currentZoom;
+                    this.updatePropertyValues();
+                }
             }
             return result;
         };
@@ -526,26 +640,59 @@ class FloatingPropertiesInspector {
             };
         }
 
-        // Set up periodic updates for live data
+        // Set up periodic updates for live data - use less frequent updates
         this.updateInterval = setInterval(() => {
-            // Always update - this will refresh stats and selected node properties
-            this.updateProperties();
-        }, 500); // More frequent updates for live editing
+            // Only update values, not the entire UI
+            this.updatePropertyValues();
+        }, 1000); // Less frequent to reduce interference
+        
+        // Throttle canvas draw updates to prevent excessive updates
+        this.lastDrawUpdate = 0;
+        const drawUpdateThrottle = 100; // minimum ms between updates
+        
+        // Listen for canvas draw events to update values after changes
+        const updateAfterDraw = () => {
+            const now = Date.now();
+            // Only update if we have selected nodes and enough time has passed
+            if (this.currentNodes.size > 0 && (now - this.lastDrawUpdate) > drawUpdateThrottle) {
+                this.lastDrawUpdate = now;
+                // Use a small delay to batch multiple rapid draw calls
+                setTimeout(() => {
+                    this.updatePropertyValues();
+                }, 50);
+            }
+        };
+        
+        // Add listener for canvas redraws (less aggressive)
+        if (this.canvas) {
+            const originalDraw = this.canvas.draw.bind(this.canvas);
+            this.canvas.draw = (...args) => {
+                const result = originalDraw(...args);
+                updateAfterDraw();
+                return result;
+            };
+        }
     }
 
     updateSelection(selectedNodes) {
+        // Clear property value cache when selection changes
+        this.lastPropertyValues.clear();
+        
         this.currentNodes = new Map(selectedNodes);
-        this.updateProperties();
+        this.updateProperties(); // Only rebuild UI when selection changes
     }
 
     updateProperties() {
         const contentEl = this.panel.querySelector('.properties-list');
+        
+        // Clear focused inputs since we're rebuilding the UI
+        this.focusedInputs.clear();
+        
         contentEl.innerHTML = '';
 
-        // Always show canvas statistics at the top
-        this.renderCanvasStats(contentEl);
-
         if (this.currentNodes.size === 0) {
+            // Show canvas statistics and properties only when no nodes are selected
+            this.renderCanvasStats(contentEl);
             this.renderCanvasProperties(contentEl);
             return;
         }
@@ -559,6 +706,99 @@ class FloatingPropertiesInspector {
 
         const commonProperties = this.getCommonProperties();
         this.renderPropertyGroups(contentEl, commonProperties);
+    }
+    
+    updateTitleToggleState(toggleDot, inputEl, isHidden) {
+        if (isHidden) {
+            toggleDot.classList.add('hidden');
+            inputEl.classList.add('title-hidden');
+        } else {
+            toggleDot.classList.remove('hidden');
+            inputEl.classList.remove('title-hidden');
+        }
+    }
+    
+    updatePropertyValues() {
+        // Skip update if any input is focused to prevent interference
+        if (this.focusedInputs.size > 0) {
+            return;
+        }
+        
+        // Update title toggle state if it exists
+        if (this.titleToggleDot && this.currentNodes.size > 0) {
+            const nodes = Array.from(this.currentNodes.values());
+            const isHidden = nodes.every(node => node.flags?.hide_title);
+            this.updateTitleToggleState(this.titleToggleDot, this.titleToggleDot.titleInput, isHidden);
+        }
+        
+        // Update input values without recreating the UI
+        const commonProperties = this.getCommonProperties();
+        
+        for (const [prop, propData] of Object.entries(commonProperties)) {
+            const input = document.getElementById(`property-input-${prop}`) || 
+                          document.getElementById(`property-select-${prop}`) ||
+                          document.getElementById(`property-checkbox-${prop}`);
+            
+            if (!input) continue;
+            
+            // Skip if this input is focused or has user selection
+            if (this.focusedInputs.has(input.id) || 
+                input === document.activeElement ||
+                (input.selectionStart !== input.selectionEnd)) {
+                continue;
+            }
+            
+            // Compare with cached value to avoid unnecessary updates
+            const cacheKey = `${prop}`;
+            const currentValue = propData.mixed ? 'mixed' : propData.value;
+            
+            if (this.lastPropertyValues.get(cacheKey) === currentValue) {
+                continue; // No change, skip update
+            }
+            
+            this.lastPropertyValues.set(cacheKey, currentValue);
+            
+            // Update the input value
+            if (input.type === 'checkbox') {
+                input.checked = !propData.mixed && !!propData.value;
+                input.indeterminate = propData.mixed;
+            } else if (input.type === 'number') {
+                if (propData.mixed) {
+                    input.value = '';
+                    input.placeholder = 'Mixed';
+                } else {
+                    // Format position values to show decimals
+                    if ((prop === 'x' || prop === 'y' || prop === 'width' || prop === 'height') && typeof propData.value === 'number') {
+                        input.value = propData.value.toFixed(2);
+                    } else {
+                        input.value = propData.value || 0;
+                    }
+                }
+            } else {
+                input.value = propData.mixed ? '' : (propData.value || '');
+                input.placeholder = propData.mixed ? 'Mixed values' : '';
+            }
+        }
+        
+        // Also update canvas stats
+        const statsRows = this.panel.querySelectorAll('.stat-value');
+        if (statsRows.length > 0) {
+            const canvasInfo = this.getCanvasInfo();
+            const values = [
+                canvasInfo.nodeCount,
+                `${canvasInfo.zoomLevel}%`,
+                canvasInfo.imageCount,
+                canvasInfo.videoCount,
+                canvasInfo.textCount,
+                `${canvasInfo.canvasWidth} × ${canvasInfo.canvasHeight}`
+            ];
+            
+            statsRows.forEach((el, index) => {
+                if (values[index] !== undefined) {
+                    el.textContent = values[index];
+                }
+            });
+        }
     }
 
     getCommonProperties() {
@@ -596,8 +836,9 @@ class FloatingPropertiesInspector {
                 autoplay: 'checkbox',
                 paused: 'checkbox'
             });
-        } else if (firstNode.type === 'image') {
+        } else if (firstNode.type === 'image' || firstNode.type === 'media/image') {
             Object.assign(allProperties, {
+                filename: 'readonly',
                 scale: 'range'
             });
         }
@@ -624,6 +865,7 @@ class FloatingPropertiesInspector {
             case 'y': return node.pos?.[1];
             case 'width': return node.size?.[0];
             case 'height': return node.size?.[1];
+            case 'filename': return node.properties?.filename;
             default: return node[prop];
         }
     }
@@ -631,7 +873,7 @@ class FloatingPropertiesInspector {
     renderPropertyGroups(container, properties) {
         const groups = {
             'Transform': ['x', 'y', 'width', 'height', 'rotation'],
-            'Content': ['title', 'text', 'fontSize', 'fontFamily', 'textAlign', 'padding', 'leadingFactor'],
+            'Content': ['filename', 'title', 'text', 'fontSize', 'fontFamily', 'textAlign', 'padding', 'leadingFactor'],
             'Appearance': ['textColor', 'bgColor', 'bgAlpha', 'scale'],
             'Playback': ['loop', 'muted', 'autoplay', 'paused']
         };
@@ -694,8 +936,59 @@ class FloatingPropertiesInspector {
         labelEl.textContent = this.formatPropertyLabel(prop);
         itemEl.appendChild(labelEl);
 
-        const inputEl = this.createPropertyInput(prop, propData);
-        itemEl.appendChild(inputEl);
+        if (prop === 'title') {
+            // Special handling for title with visibility toggle
+            const inputContainer = document.createElement('div');
+            inputContainer.className = 'title-input-container';
+            
+            const inputEl = this.createPropertyInput(prop, propData);
+            inputContainer.appendChild(inputEl);
+            
+            // Create visibility toggle dot
+            const toggleDot = document.createElement('div');
+            toggleDot.className = 'title-visibility-toggle';
+            
+            // Check if title is hidden for all selected nodes
+            const nodes = Array.from(this.currentNodes.values());
+            const isHidden = nodes.every(node => node.flags?.hide_title);
+            
+            if (isHidden) {
+                toggleDot.classList.add('hidden');
+                inputEl.classList.add('title-hidden');
+            }
+            
+            // Store references for external updates
+            toggleDot.titleInput = inputEl;
+            this.titleToggleDot = toggleDot;
+            
+            toggleDot.addEventListener('click', (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                
+                const newHiddenState = !toggleDot.classList.contains('hidden');
+                
+                // Update all selected nodes
+                nodes.forEach(node => {
+                    if (!node.flags) node.flags = {};
+                    node.flags.hide_title = newHiddenState;
+                });
+                
+                // Update UI
+                this.updateTitleToggleState(toggleDot, inputEl, newHiddenState);
+                
+                // Force canvas redraw
+                if (this.canvas.dirty_canvas !== undefined) {
+                    this.canvas.dirty_canvas = true;
+                }
+            });
+            
+            inputContainer.appendChild(toggleDot);
+            
+            itemEl.appendChild(inputContainer);
+        } else {
+            const inputEl = this.createPropertyInput(prop, propData);
+            itemEl.appendChild(inputEl);
+        }
 
         container.appendChild(itemEl);
     }
@@ -716,6 +1009,8 @@ class FloatingPropertiesInspector {
                 return this.createSelectInput(prop, value, mixed);
             case 'checkbox':
                 return this.createCheckboxInput(prop, value, mixed);
+            case 'readonly':
+                return this.createReadonlyInput(prop, value, mixed);
             default:
                 return this.createTextInput(prop, value, mixed);
         }
@@ -730,8 +1025,44 @@ class FloatingPropertiesInspector {
         input.value = mixed ? '' : (value || '');
         input.placeholder = mixed ? 'Mixed values' : '';
         
-        input.addEventListener('change', (e) => {
-            this.updateNodeProperty(prop, e.target.value);
+        // Store original value for canceling
+        let originalValue = input.value;
+        
+        // Add focus tracking
+        input.addEventListener('focus', () => {
+            this.focusedInputs.add(input.id);
+            originalValue = input.value; // Store value when focus starts
+        });
+        
+        input.addEventListener('blur', () => {
+            this.focusedInputs.delete(input.id);
+            // Commit change on blur
+            this.updateNodeProperty(prop, input.value);
+        });
+        
+        // Handle keyboard events
+        input.addEventListener('keydown', (e) => {
+            if (e.key === 'Backspace') {
+                e.stopPropagation();
+            } else if (e.key === 'Enter') {
+                e.preventDefault();
+                e.stopPropagation();
+                // Commit change and blur with delay to prevent UI rebuild
+                console.log(`Committing ${prop} change: "${input.value}"`);
+                this.updateNodeProperty(prop, input.value);
+                
+                // Keep input in focused set briefly to prevent UI rebuild
+                setTimeout(() => {
+                    console.log(`Blurring ${prop} input`);
+                    input.blur();
+                }, 50);
+            } else if (e.key === 'Escape') {
+                e.preventDefault();
+                e.stopPropagation();
+                // Cancel change - restore original value and blur
+                input.value = originalValue;
+                input.blur();
+            }
         });
         
         return input;
@@ -766,10 +1097,47 @@ class FloatingPropertiesInspector {
             input.max = 360;
         } else if (prop === 'x' || prop === 'y') {
             input.step = 0.1; // Allow decimal positions
+        } else if (prop === 'width' || prop === 'height') {
+            input.min = 50; // Minimum size
+            input.step = 1;
         }
         
-        input.addEventListener('change', (e) => {
-            this.updateNodeProperty(prop, parseFloat(e.target.value) || 0);
+        // Store original value for canceling
+        let originalValue = input.value;
+        
+        // Add focus tracking
+        input.addEventListener('focus', () => {
+            this.focusedInputs.add(input.id);
+            originalValue = input.value; // Store value when focus starts
+        });
+        
+        input.addEventListener('blur', () => {
+            this.focusedInputs.delete(input.id);
+            // Commit change on blur
+            this.updateNodeProperty(prop, parseFloat(input.value) || 0);
+        });
+        
+        // Handle keyboard events
+        input.addEventListener('keydown', (e) => {
+            if (e.key === 'Backspace') {
+                e.stopPropagation();
+            } else if (e.key === 'Enter') {
+                e.preventDefault();
+                e.stopPropagation();
+                // Commit change and blur with delay to prevent UI rebuild
+                this.updateNodeProperty(prop, parseFloat(input.value) || 0);
+                
+                // Keep input in focused set briefly to prevent UI rebuild
+                setTimeout(() => {
+                    input.blur();
+                }, 50);
+            } else if (e.key === 'Escape') {
+                e.preventDefault();
+                e.stopPropagation();
+                // Cancel change - restore original value and blur
+                input.value = originalValue;
+                input.blur();
+            }
         });
         
         return input;
@@ -889,6 +1257,15 @@ class FloatingPropertiesInspector {
         return container;
     }
 
+    createReadonlyInput(prop, value, mixed) {
+        const span = document.createElement('span');
+        span.className = 'property-value-text';
+        span.id = `property-input-${prop}`;
+        span.textContent = mixed ? 'Mixed' : (value || 'No file');
+        
+        return span;
+    }
+
     formatPropertyLabel(prop) {
         const labels = {
             x: 'X',
@@ -897,6 +1274,7 @@ class FloatingPropertiesInspector {
             height: 'Height',
             rotation: 'Rotation',
             title: 'Title',
+            filename: 'Source File',
             text: 'Text',
             fontSize: 'Font Size',
             fontFamily: 'Font Family',
@@ -916,24 +1294,110 @@ class FloatingPropertiesInspector {
     }
 
     updateNodeProperty(prop, value) {
-        for (const node of this.currentNodes.values()) {
-            const operation = {
-                type: 'update',
-                nodeId: node.id,
-                data: {
-                    updates: this.formatPropertyUpdate(prop, value),
-                    previous: this.formatPropertyUpdate(prop, this.getNodeProperty(node, prop))
-                }
-            };
-            
-            if (this.canvas.operationPipeline) {
-                this.canvas.operationPipeline.execute(operation);
-            } else {
-                this.applyPropertyUpdate(node, prop, value);
-            }
+        // Debounce the update to avoid too many operations
+        const timerKey = `${prop}-update`;
+        
+        if (this.debounceTimers.has(timerKey)) {
+            clearTimeout(this.debounceTimers.get(timerKey));
         }
         
-        this.canvas.draw();
+        this.debounceTimers.set(timerKey, setTimeout(() => {
+            this.debounceTimers.delete(timerKey);
+            this.executeNodePropertyUpdate(prop, value);
+        }, this.debounceDelay));
+    }
+    
+    executeNodePropertyUpdate(prop, value) {
+        // Access operation pipeline from global app object like the canvas does
+        if (!window.app?.operationPipeline) {
+            console.warn('Operation pipeline not available');
+            return;
+        }
+
+        const nodes = Array.from(this.currentNodes.values());
+        
+        // Handle different property types with appropriate commands
+        if (prop === 'x' || prop === 'y') {
+            // Position update
+            if (nodes.length === 1) {
+                const node = nodes[0];
+                const newPos = [...node.pos];
+                if (prop === 'x') newPos[0] = value;
+                else newPos[1] = value;
+                
+                window.app.operationPipeline.execute('node_move', {
+                    nodeId: node.id,
+                    position: newPos
+                });
+            } else {
+                // Multi-node move
+                const nodeIds = [];
+                const positions = [];
+                
+                nodes.forEach(node => {
+                    nodeIds.push(node.id);
+                    const newPos = [...node.pos];
+                    if (prop === 'x') newPos[0] = value;
+                    else newPos[1] = value;
+                    positions.push(newPos);
+                });
+                
+                window.app.operationPipeline.execute('node_move', {
+                    nodeIds,
+                    positions
+                });
+            }
+        } else if (prop === 'width' || prop === 'height') {
+            // Size update with validation
+            const nodeIds = [];
+            const sizes = [];
+            
+            nodes.forEach(node => {
+                const newSize = [...node.size];
+                // Ensure minimum size of 50px
+                const validatedValue = Math.max(50, value);
+                
+                if (prop === 'width') newSize[0] = validatedValue;
+                else newSize[1] = validatedValue;
+                
+                nodeIds.push(node.id);
+                sizes.push(newSize);
+            });
+            
+            window.app.operationPipeline.execute('node_resize', {
+                nodeIds,
+                sizes
+            });
+        } else if (prop === 'rotation') {
+            // Rotation update
+            nodes.forEach(node => {
+                window.app.operationPipeline.execute('node_rotate', {
+                    nodeId: node.id,
+                    angle: value
+                });
+            });
+        } else if (prop === 'title') {
+            // Title update
+            nodes.forEach(node => {
+                window.app.operationPipeline.execute('node_property_update', {
+                    nodeId: node.id,
+                    property: 'title',
+                    value: value
+                });
+            });
+            
+            // Update property values after title change
+            setTimeout(() => this.updatePropertyValues(), 100);
+        } else {
+            // Generic property update
+            nodes.forEach(node => {
+                window.app.operationPipeline.execute('node_property_update', {
+                    nodeId: node.id,
+                    property: prop,
+                    value: value
+                });
+            });
+        }
     }
 
     renderCanvasStats(container) {
@@ -948,25 +1412,31 @@ class FloatingPropertiesInspector {
         statsGroup.appendChild(titleEl);
 
         const statsEl = document.createElement('div');
-        statsEl.className = 'canvas-stats-compact';
+        statsEl.className = 'canvas-stats-grid';
         statsEl.innerHTML = `
-            <div class="stat-row">
-                <span class="stat-label">Nodes:</span>
-                <span class="stat-value">${canvasInfo.nodeCount}</span>
-                <span class="stat-label">Zoom:</span>
-                <span class="stat-value">${canvasInfo.zoomLevel}%</span>
+            <div class="stat-item">
+                <div class="stat-label">Nodes</div>
+                <div class="stat-value">${canvasInfo.nodeCount}</div>
             </div>
-            <div class="stat-row">
-                <span class="stat-label">Images:</span>
-                <span class="stat-value">${canvasInfo.imageCount}</span>
-                <span class="stat-label">Videos:</span>
-                <span class="stat-value">${canvasInfo.videoCount}</span>
-                <span class="stat-label">Text:</span>
-                <span class="stat-value">${canvasInfo.textCount}</span>
+            <div class="stat-item">
+                <div class="stat-label">Zoom</div>
+                <div class="stat-value">${canvasInfo.zoomLevel}%</div>
             </div>
-            <div class="stat-row">
-                <span class="stat-label">Size:</span>
-                <span class="stat-value">${canvasInfo.canvasWidth} × ${canvasInfo.canvasHeight}</span>
+            <div class="stat-item">
+                <div class="stat-label">Images</div>
+                <div class="stat-value">${canvasInfo.imageCount}</div>
+            </div>
+            <div class="stat-item">
+                <div class="stat-label">Videos</div>
+                <div class="stat-value">${canvasInfo.videoCount}</div>
+            </div>
+            <div class="stat-item">
+                <div class="stat-label">Text</div>
+                <div class="stat-value">${canvasInfo.textCount}</div>
+            </div>
+            <div class="stat-item full-width">
+                <div class="stat-label">Canvas Size</div>
+                <div class="stat-value">${canvasInfo.canvasWidth} × ${canvasInfo.canvasHeight}</div>
             </div>
         `;
         
@@ -977,11 +1447,6 @@ class FloatingPropertiesInspector {
     renderCanvasProperties(container) {
         const canvasInfo = this.getCanvasInfo();
         
-        const titleEl = document.createElement('div');
-        titleEl.className = 'property-group-title';
-        titleEl.textContent = 'Canvas Actions';
-        container.appendChild(titleEl);
-
         const groupEl = document.createElement('div');
         groupEl.className = 'property-group';
         
@@ -1024,10 +1489,14 @@ class FloatingPropertiesInspector {
         
         // Get zoom level more reliably
         let zoomLevel = 100;
-        if (this.canvas.ds && typeof this.canvas.ds.scale === 'number') {
+        if (this.canvas.viewport && typeof this.canvas.viewport.scale === 'number') {
+            zoomLevel = Math.round(this.canvas.viewport.scale * 100);
+        } else if (this.canvas.ds && typeof this.canvas.ds.scale === 'number') {
             zoomLevel = Math.round(this.canvas.ds.scale * 100);
         } else if (this.canvas.scale && typeof this.canvas.scale === 'number') {
             zoomLevel = Math.round(this.canvas.scale * 100);
+        } else if (window.app && window.app.graphCanvas && window.app.graphCanvas.viewport && typeof window.app.graphCanvas.viewport.scale === 'number') {
+            zoomLevel = Math.round(window.app.graphCanvas.viewport.scale * 100);
         }
         
         return {
@@ -1106,6 +1575,10 @@ class FloatingPropertiesInspector {
             requestAnimationFrame(() => {
                 this.panel.classList.add('visible');
             });
+            
+            // Notify any listeners that visibility changed
+            this.onVisibilityChange();
+            this.savePropertiesState();
         }
     }
 
@@ -1115,6 +1588,10 @@ class FloatingPropertiesInspector {
             this.panel.classList.remove('visible');
             // Don't hide the display, just make it non-interactive
             // This prevents layout jumps and keeps transitions smooth
+            
+            // Notify any listeners that visibility changed
+            this.onVisibilityChange();
+            this.savePropertiesState();
         }
     }
 
@@ -1126,6 +1603,22 @@ class FloatingPropertiesInspector {
         }
     }
 
+    /**
+     * Set callback for visibility changes
+     */
+    setVisibilityCallback(callback) {
+        this.visibilityCallback = callback;
+    }
+    
+    /**
+     * Notify listeners of visibility change
+     */
+    onVisibilityChange() {
+        if (this.visibilityCallback) {
+            this.visibilityCallback(this.isVisible);
+        }
+    }
+    
     destroy() {
         // Clean up update interval
         if (this.updateInterval) {
@@ -1135,6 +1628,45 @@ class FloatingPropertiesInspector {
         
         if (this.panel) {
             this.panel.remove();
+        }
+    }
+    
+    savePropertiesState() {
+        // Save properties panel state to localStorage
+        try {
+            localStorage.setItem('floating-properties-state', JSON.stringify({
+                position: { x: this.position.x, y: this.position.y },
+                visible: this.isVisible
+            }));
+        } catch (e) {
+            console.warn('Failed to save properties panel state:', e);
+        }
+    }
+    
+    loadPropertiesState() {
+        try {
+            const saved = localStorage.getItem('floating-properties-state');
+            if (saved) {
+                const state = JSON.parse(saved);
+                
+                // Restore position
+                if (state.position) {
+                    this.position.x = Math.max(0, Math.min(window.innerWidth - 320, state.position.x));
+                    this.position.y = Math.max(0, Math.min(window.innerHeight - 200, state.position.y));
+                    this.updatePosition();
+                }
+                
+                // Restore visibility state
+                if (state.visible !== undefined) {
+                    if (state.visible) {
+                        this.show();
+                    } else {
+                        this.hide();
+                    }
+                }
+            }
+        } catch (e) {
+            console.warn('Failed to load properties panel state:', e);
         }
     }
 }

@@ -66,3 +66,22 @@ body, html {
 .drop-overlay {
     font-family: Arial, sans-serif;
 }
+
+/* Floating Properties Inspector */
+.property-input.readonly {
+    background-color: #f5f5f5;
+    color: #666;
+    cursor: default;
+}
+
+.property-input.readonly:focus {
+    outline: none;
+    box-shadow: none;
+}
+
+.source-filename {
+    font-size: 11px;
+    color: #888;
+    margin-top: 2px;
+    font-style: italic;
+}

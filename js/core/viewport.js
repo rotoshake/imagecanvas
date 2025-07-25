@@ -17,6 +17,10 @@ class ViewportManager {
         this.lastMovementTime = 0;
         this.movementTimeout = null;
         
+        // Animation properties
+        this.animation = null;
+        this.animationFrameId = null;
+        
         this.setupEventListeners();
         this.validateState();
     }
@@ -108,7 +112,7 @@ class ViewportManager {
         this.validateState();
     }
     
-    zoomToFit(boundingBox, margin = 40) {
+    zoomToFit(boundingBox, margin = 40, animate = true) {
         if (!boundingBox) return;
         
         const [x, y, width, height] = boundingBox;
@@ -122,7 +126,7 @@ class ViewportManager {
         
         const scaleX = availableWidth / width;
         const scaleY = availableHeight / height;
-        this.scale = Utils.clamp(
+        const targetScale = Utils.clamp(
             Math.min(scaleX, scaleY),
             CONFIG.CANVAS.MIN_SCALE,
             CONFIG.CANVAS.MAX_SCALE
@@ -130,10 +134,78 @@ class ViewportManager {
         
         const centerX = x + width / 2;
         const centerY = y + height / 2;
-        this.offset[0] = canvasWidth / 2 - centerX * this.scale;
-        this.offset[1] = canvasHeight / 2 - centerY * this.scale;
+        const targetOffsetX = canvasWidth / 2 - centerX * targetScale;
+        const targetOffsetY = canvasHeight / 2 - centerY * targetScale;
         
-        this.validateState();
+        if (animate && CONFIG.NAVIGATION.ENABLE_ANIMATION) {
+            this.animateTo(
+                [targetOffsetX, targetOffsetY],
+                targetScale,
+                CONFIG.NAVIGATION.ANIMATION_DURATION
+            );
+        } else {
+            this.scale = targetScale;
+            this.offset[0] = targetOffsetX;
+            this.offset[1] = targetOffsetY;
+            this.validateState();
+        }
+    }
+    
+    animateTo(targetOffset, targetScale, duration = 400) {
+        // Cancel any existing animation
+        if (this.animationFrameId) {
+            cancelAnimationFrame(this.animationFrameId);
+            this.animationFrameId = null;
+        }
+        
+        // Store start values
+        const startOffset = [...this.offset];
+        const startScale = this.scale;
+        const startTime = performance.now();
+        
+        // Mark as animating
+        this.isAnimating = true;
+        
+        const animate = (currentTime) => {
+            const elapsed = currentTime - startTime;
+            const progress = Math.min(elapsed / duration, 1);
+            
+            // Apply easing
+            const easedProgress = Utils.easeInOutCubic(progress);
+            
+            // Interpolate values
+            this.offset[0] = Utils.lerp(startOffset[0], targetOffset[0], easedProgress);
+            this.offset[1] = Utils.lerp(startOffset[1], targetOffset[1], easedProgress);
+            this.scale = Utils.lerp(startScale, targetScale, easedProgress);
+            
+            // Validate and trigger redraw
+            this.validateState();
+            
+            // Mark canvas as dirty for main render loop
+            if (this.canvas && this.canvas.graphCanvas) {
+                this.canvas.graphCanvas.dirty_canvas = true;
+            }
+            
+            // Continue or finish animation
+            if (progress < 1) {
+                this.animationFrameId = requestAnimationFrame(animate);
+            } else {
+                this.animationFrameId = null;
+                this.isAnimating = false;
+                // Ensure final values are exact
+                this.offset[0] = targetOffset[0];
+                this.offset[1] = targetOffset[1];
+                this.scale = targetScale;
+                this.validateState();
+                
+                // Trigger navigation state save after animation completes
+                if (this.canvas.graphCanvas && window.navigationStateManager) {
+                    window.navigationStateManager.onViewportChange();
+                }
+            }
+        };
+        
+        this.animationFrameId = requestAnimationFrame(animate);
     }
     
     resetView() {

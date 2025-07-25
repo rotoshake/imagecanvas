@@ -108,7 +108,50 @@ class StateSyncManager {
                 }
             }
             
-            // 2. Send to server for authoritative execution
+            // 2. Ensure undo data exists for ALL operations (critical for server-authoritative undo)
+            if (!command.undoData) {
+                console.log(`📝 Generating undo data for ${command.type} before sending to server`);
+                
+                // Check if command has prepareUndoData method
+                if (!command.prepareUndoData) {
+                    console.error(`❌ CRITICAL: Command ${command.type} is missing prepareUndoData method!`);
+                    console.error(`This command will not be undoable. Please add prepareUndoData to ${command.constructor.name}`);
+                    
+                    // Show warning to user
+                    if (window.unifiedNotifications) {
+                        window.unifiedNotifications.warning(
+                            `Operation "${command.type}" may not be undoable - missing undo support`,
+                            { duration: 5000 }
+                        );
+                    }
+                } else {
+                    // Generate undo data without executing the command
+                    try {
+                        const context = {
+                            graph: this.app?.graph,
+                            canvas: this.app?.graphCanvas
+                        };
+                        
+                        if (context.graph && context.canvas) {
+                            await command.prepareUndoData(context);
+                            if (command.undoData) {
+                                console.log(`✅ Generated undo data for ${command.type}:`, command.undoData);
+                            } else {
+                                console.warn(`⚠️ prepareUndoData() did not generate undoData for ${command.type}`);
+                            }
+                        } else {
+                            console.error(`❌ Missing graph or canvas context for ${command.type}`);
+                        }
+                    } catch (error) {
+                        console.error(`❌ Failed to prepare undo data for ${command.type}:`, error);
+                        console.error('Error details:', error.stack);
+                    }
+                }
+            } else {
+                console.log(`✅ Command ${command.type} already has undo data`);
+            }
+            
+            // 3. Send to server for authoritative execution
             const serverRequest = {
                 operationId,
                 type: command.type,
@@ -596,6 +639,9 @@ class StateSyncManager {
         node.properties = { ...nodeData.properties };
         node.rotation = nodeData.rotation || 0;
         node.flags = { ...nodeData.flags };
+        if (nodeData.title !== node.title) {
+            console.log(`🔄 Server updating title: "${node.title}" → "${nodeData.title}" for node ${nodeData.id}`);
+        }
         node.title = nodeData.title;
         
         // Restore aspect ratio if available
@@ -685,6 +731,7 @@ class StateSyncManager {
             // If image node just got a serverUrl (from upload in another tab), trigger loading
             if (node.type === 'media/image' && !hadServerUrl && willHaveServerUrl) {
                 console.log(`🖼️ Image node ${node.id} received serverUrl from sync: ${willHaveServerUrl}`);
+                console.log(`🔍 Node title before setImage: "${node.title}"`);
                 // Trigger image loading with the new serverUrl
                 if (node.setImage) {
                     node.setImage(
@@ -706,6 +753,9 @@ class StateSyncManager {
         }
         
         if (nodeData.title !== undefined) {
+            if (nodeData.title !== node.title) {
+                console.log(`🔄 updateNodeFromData changing title: "${node.title}" → "${nodeData.title}" for node ${node.id}`);
+            }
             node.title = nodeData.title;
         }
         
@@ -831,6 +881,14 @@ class StateSyncManager {
      */
     handleOperationAck(data) {
         // Handled by waitForServerResponse
+        
+        // Update operation tracking time and request undo state
+        if (window.app?.undoManager) {
+            // Track operation time to prevent premature undo requests
+            window.app.undoManager.lastOperationTime = Date.now();
+            console.log('📋 Requesting undo state after operation acknowledgment');
+            window.app.undoManager.requestUndoState();
+        }
     }
     
     /**

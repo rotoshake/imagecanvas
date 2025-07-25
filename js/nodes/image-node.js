@@ -13,7 +13,7 @@ class ImageNode extends BaseNode {
             filename: null,       // Original filename
             scale: 1.0           // Display scale
         };
-        this.flags = { hide_title: true };
+        this.flags = { hide_title: false };
         this.img = null;
         // Remove individual thumbnail storage - use global cache
         this.thumbnailSizes = [64, 128, 256, 512, 1024, 2048];
@@ -27,6 +27,8 @@ class ImageNode extends BaseNode {
     }
     
     async setImage(src, filename = null, hash = null) {
+        console.log(`🖼️ setImage called on node ${this.id}: current title="${this.title}", filename="${filename}"`);
+        
         // Store only references, not the data
         this.properties.filename = filename;
         this.properties.hash = hash;
@@ -49,9 +51,13 @@ class ImageNode extends BaseNode {
         
         // console.log(`🖼️ setImage called - node:${this.id || 'pending'} loadingState:${this.loadingState} hash:${hash?.substring(0, 8) || 'none'}`)
         
-        // Update title
-        if (filename && (!this.title || this.title === 'Image')) {
+        // Only set title if it's empty or undefined
+        // This preserves user-customized titles while ensuring new nodes get a title
+        if (filename && !this.title) {
+            console.log(`🔄 setImage setting title to filename: "${filename}"`);
             this.title = filename;
+        } else if (filename && this.title) {
+            console.log(`✅ setImage preserving existing title: "${this.title}" (filename: "${filename}")`);
         }
         
         // Resolve the actual image source
@@ -121,15 +127,19 @@ class ImageNode extends BaseNode {
             const canvas = this.graph?.canvas || window.app?.graphCanvas;
             if (canvas) {
                 // console.log(`🎨 Forcing canvas redraw for loaded image node:${this.id}`);
+                
+                // Mark as dirty immediately
                 canvas.dirty_canvas = true;
                 
-                // Use a small delay to ensure node is fully initialized
-                setTimeout(() => {
-                    if (canvas.draw) {
-                        // console.log(`🖌️ Executing canvas.draw() for node:${this.id}`);
+                // Force an immediate draw to ensure the image appears
+                // This bypasses the render loop to guarantee immediate visibility
+                if (canvas.draw) {
+                    // console.log(`🖌️ Executing immediate canvas.draw() for node:${this.id}`);
+                    requestAnimationFrame(() => {
+                        canvas.dirty_canvas = true;
                         canvas.draw();
-                    }
-                }, 10);
+                    });
+                }
             } else {
                 console.warn(`⚠️ No canvas available for redraw - node:${this.id}`);
             }
@@ -144,7 +154,13 @@ class ImageNode extends BaseNode {
     loadImageAsync(src) {
         return new Promise((resolve, reject) => {
             const img = new Image();
-            img.onload = () => resolve(img);
+            img.onload = () => {
+                // Trigger immediate redraw when image loads
+                if (this.graph?.canvas) {
+                    this.graph.canvas.dirty_canvas = true;
+                }
+                resolve(img);
+            };
             img.onerror = reject;
             img.src = src;
         });
@@ -237,10 +253,20 @@ class ImageNode extends BaseNode {
                                         img.onload = () => {
                                             URL.revokeObjectURL(blobUrl);
                                             this.loadingProgress = 0.9; // 90% when loaded
+                                            
+                                            // Trigger immediate redraw when image loads
+                                            if (this.graph?.canvas) {
+                                                this.graph.canvas.dirty_canvas = true;
+                                            }
+                                            
                                             if (img.decode) {
                                                 img.decode()
                                                     .then(() => {
                                                         this.loadingProgress = 1.0; // 100% when decoded
+                                                        // Trigger redraw after decode
+                                                        if (this.graph?.canvas) {
+                                                            this.graph.canvas.dirty_canvas = true;
+                                                        }
                                                         resolve(img);
                                                     })
                                                     .catch(() => resolve(img));
@@ -273,10 +299,20 @@ class ImageNode extends BaseNode {
                             // No content-length, fall back to simple loading
                             img.onload = () => {
                                 this.loadingProgress = 0.9;
+                                
+                                // Trigger immediate redraw when image loads
+                                if (this.graph?.canvas) {
+                                    this.graph.canvas.dirty_canvas = true;
+                                }
+                                
                                 if (img.decode) {
                                     img.decode()
                                         .then(() => {
                                             this.loadingProgress = 1.0;
+                                            // Trigger redraw after decode
+                                            if (this.graph?.canvas) {
+                                                this.graph.canvas.dirty_canvas = true;
+                                            }
                                             resolve(img);
                                         })
                                         .catch(() => resolve(img));
@@ -293,6 +329,10 @@ class ImageNode extends BaseNode {
                         console.warn('Fetch failed, falling back to regular image loading:', error);
                         img.onload = () => {
                             this.loadingProgress = 1.0;
+                            // Trigger immediate redraw when image loads
+                            if (this.graph?.canvas) {
+                                this.graph.canvas.dirty_canvas = true;
+                            }
                             resolve(img);
                         };
                         img.src = src;
@@ -301,10 +341,20 @@ class ImageNode extends BaseNode {
                 // For data URLs or other sources, use regular loading
                 img.onload = () => {
                     this.loadingProgress = 0.9;
+                    
+                    // Trigger immediate redraw when image loads
+                    if (this.graph?.canvas) {
+                        this.graph.canvas.dirty_canvas = true;
+                    }
+                    
                     if (img.decode) {
                         img.decode()
                             .then(() => {
                                 this.loadingProgress = 1.0;
+                                // Trigger redraw after decode
+                                if (this.graph?.canvas) {
+                                    this.graph.canvas.dirty_canvas = true;
+                                }
                                 resolve(img);
                             })
                             .catch(() => resolve(img));
@@ -491,9 +541,6 @@ class ImageNode extends BaseNode {
             ctx.drawImage(this.img, 0, 0, this.size[0], this.size[1]);
         }
         
-        // Draw title if not using thumbnail and not hidden
-        if (!useThumbnail) {
-            this.drawTitle(ctx);
-        }
+        // Title rendering is handled at canvas level by drawNodeTitle()
     }
 }

@@ -103,6 +103,11 @@ class CollaborationManager {
                 await this.handleAbortTransaction(socket, data);
             });
             
+            // Heartbeat monitoring
+            socket.on('ping', (timestamp) => {
+                this.handlePing(socket, timestamp);
+            });
+            
             // Disconnect
             socket.on('disconnect', () => {
                 this.handleDisconnect(socket);
@@ -457,6 +462,21 @@ class CollaborationManager {
         }
     }
     
+    /**
+     * Handle heartbeat ping from client
+     */
+    handlePing(socket, timestamp) {
+        // Simple pong response - just echo back the timestamp
+        // This allows client to calculate round-trip time
+        socket.emit('pong', timestamp);
+        
+        // Optional: Update last seen time for connection monitoring
+        const session = this.socketSessions.get(socket.id);
+        if (session) {
+            session.lastPing = Date.now();
+        }
+    }
+    
     async handleLeaveProject(socket, { projectId }) {
         // Similar to disconnect but initiated by user
         this.handleDisconnect(socket);
@@ -468,10 +488,21 @@ class CollaborationManager {
      */
     async handleExecuteOperation(socket, data) {
         const { operationId, type, params, stateVersion, undoData, transactionId } = data;
-        // console.log(`🎯 handleExecuteOperation called: ${type}, has undo data: ${!!undoData}`);
+        
         const session = this.socketSessions.get(socket.id);
         
+        console.log(`🎯 Execute operation request:`, {
+            operationId,
+            type,
+            hasUndoData: !!undoData,
+            undoDataKeys: undoData ? Object.keys(undoData) : null,
+            userId: session?.userId,
+            projectId: session?.projectId,
+            socketId: socket.id
+        });
+        
         if (!session) {
+            console.error('❌ Operation rejected: No session for socket', socket.id);
             socket.emit('operation_rejected', {
                 operationId,
                 error: 'Not authenticated'
@@ -526,12 +557,23 @@ class CollaborationManager {
                 const activeTransaction = this.activeTransactions.get(transactionKey);
                 const txId = activeTransaction ? activeTransaction.id : transactionId;
                 
+                console.log(`📝 Recording operation in history:`, {
+                    operationId: operation.id,
+                    type: operation.type,
+                    hasUndoData: !!operation.undoData,
+                    userId: session.userId,
+                    projectId: projectId,
+                    transactionId: txId
+                });
+                
                 await this.operationHistory.recordOperation(
                     operation,
                     session.userId,
                     projectId,
                     txId
                 );
+                
+                console.log(`✅ Operation recorded successfully`);
                 
                 // Send acknowledgment to originator
                 socket.emit('operation_ack', {
@@ -550,7 +592,11 @@ class CollaborationManager {
                 
                 // Send updated undo state to all user's sessions
                 const undoState = this.operationHistory.getUserUndoState(session.userId, projectId);
-                console.log(`📤 Sending undo state update to user ${session.userId}:`, undoState);
+                console.log(`📤 Sending undo state update to user ${session.userId}:`, {
+                    canUndo: undoState.canUndo,
+                    undoCount: undoState.undoCount,
+                    projectId: projectId
+                });
                 this.undoStateSync.broadcastToUser(session.userId, 'undo_state_update', {
                     projectId,
                     undoState
@@ -700,9 +746,20 @@ class CollaborationManager {
     async handleRequestUndoState(socket, data) {
         const session = this.socketSessions.get(socket.id);
         if (!session) {
+            console.error('❌ Request undo state failed: No session found for socket', socket.id);
             socket.emit('error', { message: 'Not authenticated' });
             return;
         }
+        
+        // Log the request details
+        console.log('📋 Undo state requested:', {
+            socketId: socket.id,
+            sessionUserId: session.userId,
+            sessionProjectId: session.projectId,
+            requestUserId: data?.userId,
+            requestProjectId: data?.projectId,
+            tabId: session.tabId
+        });
         
         try {
             const undoState = this.operationHistory.getUserUndoState(
@@ -710,12 +767,21 @@ class CollaborationManager {
                 session.projectId
             );
             
+            console.log('📊 Undo state retrieved:', {
+                userId: session.userId,
+                projectId: session.projectId,
+                canUndo: undoState.canUndo,
+                undoCount: undoState.undoCount,
+                canRedo: undoState.canRedo,
+                redoCount: undoState.redoCount
+            });
+            
             socket.emit('undo_state_update', {
                 projectId: session.projectId,
                 undoState
             });
         } catch (error) {
-            console.error('Error getting undo state:', error);
+            console.error('❌ Error getting undo state:', error);
             socket.emit('error', { message: 'Failed to get undo state' });
         }
     }
