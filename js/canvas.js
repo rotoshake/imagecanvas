@@ -113,9 +113,25 @@ class LGraphCanvas {
         // Call resize immediately to set initial size
         this.onWindowResize();
         
+        // Start render loop
+        this.startRenderLoop();
+        
         // Selection callbacks
         this.selection.addCallback(this.onSelectionChanged.bind(this));
     }
+    
+    startRenderLoop() {
+        // Use requestAnimationFrame for efficient rendering
+        const renderFrame = () => {
+            if (this.dirty_canvas) {
+                this.dirty_canvas = false;
+                this.draw();
+            }
+            requestAnimationFrame(renderFrame);
+        };
+        requestAnimationFrame(renderFrame);
+    }
+    
     
     // ===================================
     // EVENT HANDLERS
@@ -354,6 +370,16 @@ class LGraphCanvas {
             return;
         }
         
+        // Check for title double-click first (since title area is outside node bounds)
+        const nodes = this.graph.nodes || [];
+        for (let i = nodes.length - 1; i >= 0; i--) {
+            const node = nodes[i];
+            if (this.canEditTitle(node, this.mouseState.graph)) {
+                this.startTitleEditing(node, e);
+                return;
+            }
+        }
+        
         // Otherwise, check for node double-click
         const node = this.handleDetector.getNodeAtPosition(...this.mouseState.graph, this.graph.nodes);
         if (node) {
@@ -398,9 +424,8 @@ class LGraphCanvas {
             // Fallback to default behaviors
             if (node.type === 'media/text') {
                 this.startTextEditing(node, e);
-            } else if (this.canEditTitle(node, this.mouseState.graph)) {
-                this.startTitleEditing(node, e);
             }
+            // Title editing is now handled before node detection
         }
         // else: do nothing on background double-click
     }
@@ -2218,6 +2243,11 @@ class LGraphCanvas {
         const canvasHeight = this.canvas.height / this.viewport.dpr;
         this.viewport.offset = [canvasWidth / 2, canvasHeight / 2];
         
+        // Trigger navigation state save
+        if (window.navigationStateManager) {
+            window.navigationStateManager.onViewportChange();
+        }
+        
         this.dirty_canvas = true;
         this.debouncedSave();
     }
@@ -2796,24 +2826,51 @@ class LGraphCanvas {
         input.style.background = 'rgba(0, 0, 0, 0.8)';
         input.style.color = '#ffffff';
         input.style.fontFamily = 'Arial';
-        input.style.padding = '4px 8px';
+        input.style.padding = '2px 4px';
         input.style.borderRadius = '4px';
         input.style.minWidth = '150px';
+        input.style.boxSizing = 'border-box';
         
-        // Calculate position for input above the node
-        const titlePadding = 20 / this.viewport.scale;
-        const [screenX, screenY] = this.viewport.convertGraphToOffset(node.pos[0], node.pos[1] - titlePadding);
+        // Get actual draw position (accounting for animations)
+        let drawPos = node.pos;
+        if (this.animationManager && this.animationManager.getNodeDrawPosition) {
+            drawPos = this.animationManager.getNodeDrawPosition(node);
+        } else if (node._gridAnimPos) {
+            drawPos = node._gridAnimPos;
+        } else if (node._animPos) {
+            drawPos = node._animPos;
+        }
+        
+        // Calculate position for input above the node - must match drawNodeTitle
+        const screenScale = this.viewport.scale;
+        const titlePadding = 8 / screenScale; // Same as in drawNodeTitle
+        const fontSize = 14 / screenScale; // Same as in drawNodeTitle
+        const titleY = drawPos[1] - titlePadding;
+        
+        // Convert to screen coordinates
+        const [screenX, screenY] = this.viewport.convertGraphToOffset(drawPos[0], titleY);
+        
+        // Get canvas bounds for positioning
+        const canvasRect = this.canvas.getBoundingClientRect();
         
         // Account for device pixel ratio
         const dpr = window.devicePixelRatio || 1;
         
         // Set font size that looks consistent at current zoom
-        const baseFontSize = 12;
+        const baseFontSize = 14; // Match drawNodeTitle base size
         input.style.fontSize = `${baseFontSize}px`;
         
-        // Position the input
-        input.style.left = `${screenX / dpr}px`;
-        input.style.top = `${(screenY / dpr) - 20}px`; // Adjust for input height
+        // Position the input - add canvas offset and adjust for input height
+        // Note: convertGraphToOffset already returns CSS pixels, not canvas pixels
+        // Account for input border (2px) and padding (2px)
+        const inputBorderPadding = 4; // 2px border + 2px padding
+        input.style.left = `${canvasRect.left + screenX - inputBorderPadding}px`;
+        // Adjust vertical position to align baseline - canvas draws from baseline, input from top
+        input.style.top = `${canvasRect.top + screenY - baseFontSize - inputBorderPadding}px`;
+        
+        // Set width to match node width
+        const nodeScreenWidth = node.size[0] * this.viewport.scale;
+        input.style.width = `${Math.max(150, nodeScreenWidth)}px`;
         
         // Store references
         this._editingTitleInput = input;
@@ -2821,12 +2878,19 @@ class LGraphCanvas {
         this._originalTitle = node.title || '';
         
         // Event handlers
-        input.addEventListener('blur', () => this.finishTitleEditing());
+        let isFinishing = false;
+        input.addEventListener('blur', () => {
+            if (!isFinishing) {
+                this.finishTitleEditing();
+            }
+        });
         input.addEventListener('keydown', (e) => {
             e.stopPropagation();
             if (e.key === 'Escape') {
+                isFinishing = true;
                 this.cancelTitleEditing();
             } else if (e.key === 'Enter') {
+                isFinishing = true;
                 this.finishTitleEditing();
             }
         });
@@ -2986,12 +3050,16 @@ class LGraphCanvas {
         const node = this._editingTitleNode;
         const input = this._editingTitleInput;
         
+        // Clear references first to prevent double execution
+        this._editingTitleInput = null;
+        this._editingTitleNode = null;
+        
         // Update node title
         const newTitle = input.value.trim();
         if (newTitle !== node.title) {
             // Use operation pipeline for collaborative support
             if (window.app?.operationPipeline) {
-                window.app.operationPipeline.execute('node_update', {
+                window.app.operationPipeline.execute('node_property_update', {
                     nodeId: node.id,
                     property: 'title',
                     value: newTitle
@@ -3004,10 +3072,10 @@ class LGraphCanvas {
             this.dirty_canvas = true;
         }
         
-        // Cleanup
-        document.body.removeChild(input);
-        this._editingTitleInput = null;
-        this._editingTitleNode = null;
+        // Cleanup - check if input still has parent before removing
+        if (input.parentNode) {
+            input.parentNode.removeChild(input);
+        }
         this._originalTitle = null;
     }
 
@@ -3017,13 +3085,17 @@ class LGraphCanvas {
         const node = this._editingTitleNode;
         const input = this._editingTitleInput;
         
+        // Clear references first to prevent double execution
+        this._editingTitleInput = null;
+        this._editingTitleNode = null;
+        
         // Restore original title (no changes)
         node.title = this._originalTitle;
         
-        // Cleanup
-        document.body.removeChild(input);
-        this._editingTitleInput = null;
-        this._editingTitleNode = null;
+        // Cleanup - check if input still has parent before removing
+        if (input.parentNode) {
+            input.parentNode.removeChild(input);
+        }
         this._originalTitle = null;
         
         this.dirty_canvas = true;

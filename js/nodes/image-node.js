@@ -514,9 +514,7 @@ class ImageNode extends BaseNode {
             if (thumbnail) {
                 // Simplified debug - only log significant quality mismatches occasionally
                 const actualSize = Math.max(thumbnail.width, thumbnail.height);
-                if (actualSize < optimalSize * 0.7 && Math.random() < 0.1) { // 10% chance, worse mismatch
-                    console.log(`LOD quality issue: wanted=${optimalSize}px, got=${actualSize}px (${thumbnail.width}x${thumbnail.height})`);
-                }
+                // LOD quality tracking disabled to reduce console spam
                 
                 ctx.imageSmoothingEnabled = true;
                 ctx.imageSmoothingQuality = CONFIG.THUMBNAILS.QUALITY;

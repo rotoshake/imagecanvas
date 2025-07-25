@@ -31,12 +31,17 @@ class MoveNodeCommand extends Command {
     
     async prepareUndoData(context) {
         const { graph } = context;
-        this.undoData = { nodes: [] };
+        this.undoData = { 
+            previousPositions: {},
+            nodes: [] // Keep for backward compatibility
+        };
         
         // Single node move
         if (this.params.nodeId) {
             const node = graph.getNodeById(this.params.nodeId);
             if (node) {
+                this.undoData.previousPositions[node.id] = [...node.pos];
+                // Also keep old format for compatibility
                 this.undoData.nodes.push({
                     id: node.id,
                     oldPosition: [...node.pos]
@@ -49,6 +54,8 @@ class MoveNodeCommand extends Command {
             this.params.nodeIds.forEach(nodeId => {
                 const node = graph.getNodeById(nodeId);
                 if (node) {
+                    this.undoData.previousPositions[node.id] = [...node.pos];
+                    // Also keep old format for compatibility
                     this.undoData.nodes.push({
                         id: node.id,
                         oldPosition: [...node.pos]
@@ -57,26 +64,23 @@ class MoveNodeCommand extends Command {
             });
         }
         
-        console.log(`📝 Prepared undo data for MoveNodeCommand: ${this.undoData.nodes.length} nodes`);
+        // Undo data prepared for move command
     }
     
     async execute(context) {
         const { graph } = context;
         const movedNodes = [];
         
-        // Store undo data
-        this.undoData = { nodes: [] };
-        console.log(`📝 MoveNodeCommand: Initializing undo data for ${this.id}`);
+        // Undo data should already be prepared by prepareUndoData()
+        if (!this.undoData) {
+            // This shouldn't happen with the new flow, but provide a fallback
+            this.undoData = { nodes: [], previousPositions: {} };
+        }
         
         // Single node move
         if (this.params.nodeId) {
             const node = graph.getNodeById(this.params.nodeId);
             if (!node) throw new Error('Node not found');
-            
-            this.undoData.nodes.push({
-                id: node.id,
-                oldPosition: [...node.pos]
-            });
             
             node.pos[0] = this.params.position[0];
             node.pos[1] = this.params.position[1];
@@ -107,11 +111,6 @@ class MoveNodeCommand extends Command {
                     return;
                 }
                 
-                this.undoData.nodes.push({
-                    id: node.id,
-                    oldPosition: [...node.pos]
-                });
-                
                 node.pos[0] = this.params.positions[index][0];
                 node.pos[1] = this.params.positions[index][1];
                 
@@ -140,7 +139,6 @@ class MoveNodeCommand extends Command {
         }
         
         this.executed = true;
-        console.log(`✅ MoveNodeCommand ${this.id}: Undo data populated with ${this.undoData.nodes.length} nodes`);
         return { nodes: movedNodes };
     }
     

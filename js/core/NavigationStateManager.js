@@ -16,6 +16,8 @@ class NavigationStateManager {
         this.debounceTimer = null;
         this.lastSavedState = null;
         this.saveDelay = 300; // 300ms debounce
+        this.isRestoring = false; // Flag to prevent saving while restoring
+        this.pendingRestore = null; // Track if we have a pending restore
         
         console.log('📍 NavigationStateManager initialized');
     }
@@ -24,6 +26,19 @@ class NavigationStateManager {
      * Initialize navigation state manager
      */
     initialize() {
+        // Check if we're on initial page load
+        const currentCanvasId = localStorage.getItem('lastCanvasId');
+        if (currentCanvasId) {
+            // Try to load navigation state immediately on startup
+            console.log('📍 Initial page load detected, preloading navigation state...');
+            const state = this.loadFromLocalCache();
+            if (state) {
+                console.log('📍 Found cached navigation state for startup, applying immediately');
+                // Apply navigation state before any renders
+                this.applyNavigationState(state);
+            }
+        }
+        
         // Hook into viewport changes
         this.setupViewportListeners();
         
@@ -46,7 +61,9 @@ class NavigationStateManager {
         // Hook into existing viewport methods
         const originalZoom = this.canvas.viewport.zoom.bind(this.canvas.viewport);
         this.canvas.viewport.zoom = (...args) => {
+            console.log('📍 NavigationStateManager: viewport.zoom hook called with args:', args);
             const result = originalZoom(...args);
+            console.log('📍 NavigationStateManager: triggering onViewportChange after viewport.zoom');
             this.onViewportChange();
             return result;
         };
@@ -80,10 +97,13 @@ class NavigationStateManager {
         if (this.canvas.keyboardZoom) {
             const originalKeyboardZoom = this.canvas.keyboardZoom.bind(this.canvas);
             this.canvas.keyboardZoom = (...args) => {
+                console.log('📍 NavigationStateManager: keyboardZoom hook called with args:', args);
                 const result = originalKeyboardZoom(...args);
+                console.log('📍 NavigationStateManager: triggering onViewportChange after keyboardZoom');
                 this.onViewportChange();
                 return result;
             };
+            console.log('📍 NavigationStateManager: keyboardZoom hook installed');
         }
 
         console.log('📍 Viewport listeners established');
@@ -106,11 +126,67 @@ class NavigationStateManager {
             
             const result = await originalLoadCanvas(...args);
             
-            // Load navigation state for new canvas
-            await this.loadNavigationState();
+            // Don't load navigation state here - wait for full state sync
+            // Navigation state will be loaded after the canvas data is synced
             
             return result;
         };
+
+        // Listen for full state sync completion to load navigation state
+        if (this.app.networkLayer) {
+            this.app.networkLayer.on('full_state_sync', (data) => {
+                console.log('📍 Full state sync received, loading navigation state immediately...');
+                console.log('📍 Canvas state after sync:', {
+                    nodes: this.app.graph.nodes.length,
+                    viewport: {
+                        scale: this.canvas.viewport.scale,
+                        offset: [...this.canvas.viewport.offset]
+                    }
+                });
+                
+                // Store that we're restoring
+                this.pendingRestore = this.canvasNavigator?.currentCanvasId;
+                
+                // Load navigation state SYNCHRONOUSLY before canvas renders
+                // This prevents the flash of wrong viewport
+                const state = this.loadFromLocalCache() || null;
+                if (state && state.canvasId === this.canvasNavigator?.currentCanvasId) {
+                    console.log('📍 Applying navigation state before render');
+                    this.applyNavigationState(state);
+                } else {
+                    // Try server state synchronously if no local cache
+                    console.log('📍 No local navigation state, will load from server after render');
+                    // Schedule async load for server state
+                    setTimeout(async () => {
+                        if (this.pendingRestore === this.canvasNavigator?.currentCanvasId) {
+                            await this.loadNavigationState();
+                            this.pendingRestore = null;
+                        }
+                    }, 100);
+                }
+            });
+        }
+
+        // Also listen for project_joined in case there's no state to sync
+        if (this.app.networkLayer) {
+            this.app.networkLayer.on('project_joined', async (data) => {
+                console.log('📍 Project joined, checking if navigation restore needed...');
+                
+                // Store that we might need to restore navigation
+                this.pendingRestore = this.canvasNavigator?.currentCanvasId;
+                
+                // Wait to see if we get a full_state_sync
+                setTimeout(async () => {
+                    // Only restore if we haven't received a full_state_sync
+                    if (this.pendingRestore === this.canvasNavigator?.currentCanvasId && 
+                        this.app.graph.nodes.length === 0) {
+                        console.log('📍 Empty canvas confirmed, loading navigation state...');
+                        await this.loadNavigationState();
+                        this.pendingRestore = null;
+                    }
+                }, 1000);
+            });
+        }
 
         console.log('📍 Canvas switching listeners established');
     }
@@ -119,6 +195,21 @@ class NavigationStateManager {
      * Called when viewport changes (pan/zoom)
      */
     onViewportChange() {
+        // Don't save while we're restoring navigation state
+        if (this.isRestoring) {
+            console.log('📍 Ignoring viewport change during restore');
+            return;
+        }
+        
+        console.log('📍 NavigationStateManager: onViewportChange called');
+        const state = this.getCurrentNavigationState();
+        console.log('📍 Current viewport state:', state);
+        
+        // Log stack trace to see what triggered this change
+        if (state) {
+            console.log('📍 Viewport change triggered from:', new Error().stack.split('\n').slice(2, 5).join('\n'));
+        }
+        
         // Save to local cache immediately
         this.saveToLocalCache();
         
@@ -156,6 +247,14 @@ class NavigationStateManager {
             return false;
         }
 
+        console.log('📍 Before applying navigation state - current viewport:', {
+            scale: this.canvas.viewport.scale,
+            offset: [...this.canvas.viewport.offset]
+        });
+
+        // Set flag to prevent saving during restore
+        this.isRestoring = true;
+
         // Apply state
         this.canvas.viewport.scale = state.scale;
         this.canvas.viewport.offset = [...state.offset];
@@ -166,6 +265,12 @@ class NavigationStateManager {
         this.canvas.draw();
 
         console.log('📍 Applied navigation state:', state);
+        
+        // Clear flag after a short delay
+        setTimeout(() => {
+            this.isRestoring = false;
+        }, 100);
+        
         return true;
     }
 
@@ -197,8 +302,9 @@ class NavigationStateManager {
 
         try {
             const key = `navigation_state_${currentCanvasId}`;
-            sessionStorage.setItem(key, JSON.stringify(state));
-            console.log('📍 Saved to local cache:', key);
+            // Use localStorage instead of sessionStorage for persistence across reloads
+            localStorage.setItem(key, JSON.stringify(state));
+            console.log('📍 Saved to local cache:', key, state);
         } catch (error) {
             console.error('📍 Failed to save to local cache:', error);
         }
@@ -208,17 +314,21 @@ class NavigationStateManager {
      * Load navigation state from local cache
      */
     loadFromLocalCache() {
-        const currentCanvasId = this.canvasNavigator?.currentCanvasId;
+        // Try currentCanvasId first, fall back to lastCanvasId for startup
+        const currentCanvasId = this.canvasNavigator?.currentCanvasId || localStorage.getItem('lastCanvasId');
         if (!currentCanvasId) return null;
 
         try {
             const key = `navigation_state_${currentCanvasId}`;
-            const stored = sessionStorage.getItem(key);
+            // Use localStorage instead of sessionStorage
+            const stored = localStorage.getItem(key);
             if (!stored) return null;
 
             const state = JSON.parse(stored);
             if (this.isValidNavigationState(state)) {
-                console.log('📍 Loaded from local cache:', key);
+                console.log('📍 Loaded from local cache:', key, state);
+                // Add canvasId to state for validation
+                state.canvasId = currentCanvasId;
                 return state;
             }
         } catch (error) {
@@ -313,13 +423,24 @@ class NavigationStateManager {
      */
     async loadNavigationState() {
         console.log('📍 Loading navigation state...');
+        
+        // Don't load if we're already restoring
+        if (this.isRestoring) {
+            console.log('📍 Already restoring, skipping...');
+            return;
+        }
 
         // 1. Try local cache first
         let state = this.loadFromLocalCache();
         if (state) {
-            if (this.applyNavigationState(state)) {
-                console.log('📍 Used local cache navigation state');
-                return;
+            // Verify this is for the current canvas
+            if (state.canvasId === this.canvasNavigator?.currentCanvasId) {
+                if (this.applyNavigationState(state)) {
+                    console.log('📍 Used local cache navigation state');
+                    return;
+                }
+            } else {
+                console.log('📍 Local cache is for different canvas, ignoring');
             }
         }
 
@@ -332,9 +453,13 @@ class NavigationStateManager {
             }
         }
 
-        // 3. Fallback to fit-all-nodes
-        console.log('📍 No navigation state found, using fit-all fallback');
-        this.fitAllNodes();
+        // 3. Fallback to fit-all-nodes only if we have nodes
+        if (this.app.graph.nodes.length > 0) {
+            console.log('📍 No navigation state found, using fit-all fallback');
+            this.fitAllNodes();
+        } else {
+            console.log('📍 No nodes to fit, keeping default viewport');
+        }
     }
 
     /**
@@ -389,7 +514,8 @@ class NavigationStateManager {
         // Clear local cache
         try {
             const key = `navigation_state_${currentCanvasId}`;
-            sessionStorage.removeItem(key);
+            // Use localStorage
+            localStorage.removeItem(key);
             console.log('📍 Cleared local navigation state');
         } catch (error) {
             console.error('📍 Failed to clear local navigation state:', error);

@@ -358,11 +358,15 @@ class UndoStateSync {
             for (const nodeData of undoData.nodes) {
                 const node = state.nodes.find(n => n.id === nodeData.id);
                 if (node && nodeData.oldPosition) {
+                    console.log(`🔄 Restoring node ${nodeData.id} position from [${node.pos}] to [${nodeData.oldPosition}]`);
                     node.pos = [...nodeData.oldPosition];
                     changes.updated.push(node);
                 }
             }
-            return changes;
+            // Don't return early if we also have previousPositions
+            if (!undoData.previousPositions) {
+                return changes;
+            }
         }
         
         if (undoData.deletedNodes) {

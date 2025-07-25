@@ -186,7 +186,7 @@ class ThumbnailCache {
         // NEW: Try to load from server thumbnails first
         const serverThumbnails = await this._loadServerThumbnails(hash, sourceImage);
         if (serverThumbnails && serverThumbnails.size > 0) {
-            console.log(`✅ Loaded ${serverThumbnails.size} thumbnails from server for hash ${hash.substring(0, 8)}...`);
+            // Loaded thumbnails from server
             this.cache.set(hash, serverThumbnails);
             
             // Report completion to unified progress system
@@ -197,7 +197,7 @@ class ThumbnailCache {
             return serverThumbnails;
         }
         
-        console.log(`🔄 Generating thumbnails client-side for hash ${hash.substring(0, 8)}...`);
+        // Generating thumbnails client-side
         
         // Bundle tracking now handled by unified progress system
         const generationPromise = this._generateThumbnailsInternal(hash, sourceImage, progressCallback);
@@ -382,18 +382,18 @@ class ThumbnailCache {
                 if (imageNode.properties?.serverUrl) {
                     const urlParts = imageNode.properties.serverUrl.split('/');
                     serverFilename = urlParts[urlParts.length - 1]; // Get filename from URL
-                    console.log(`🔍 Extracted server filename from serverUrl: ${serverFilename}`);
+                    // Extracted server filename from serverUrl
                 }
                 // Fallback: check if we have serverFilename property directly
                 else if (imageNode.properties?.serverFilename) {
                     serverFilename = imageNode.properties.serverFilename;
-                    console.log(`🔍 Using stored serverFilename: ${serverFilename}`);
+                    // Using stored serverFilename
                 }
             }
         }
         
         if (!serverFilename) {
-            console.log(`⚠️ No server filename found for hash ${hash.substring(0, 8)}... - cannot load server thumbnails`);
+            // No server filename found - cannot load server thumbnails
             return null;
         }
         
@@ -402,7 +402,7 @@ class ThumbnailCache {
             ? serverFilename.substring(0, serverFilename.lastIndexOf('.'))
             : serverFilename;
         
-        console.log(`📷 Attempting to load server thumbnails for: ${nameWithoutExt}`);
+        // Attempting to load server thumbnails
         
         const thumbnails = new Map();
         const loadPromises = [];
@@ -413,12 +413,12 @@ class ThumbnailCache {
                 .then(canvas => {
                     if (canvas) {
                         thumbnails.set(size, canvas);
-                        console.log(`✅ Loaded ${size}px server thumbnail for ${nameWithoutExt}`);
+                        // Loaded server thumbnail
                     }
                 })
                 .catch(error => {
                     // Silently fail for individual thumbnails
-                    console.log(`📷 Server thumbnail ${size}px not available for ${nameWithoutExt}`);
+                    // Server thumbnail not available
                 });
             loadPromises.push(promise);
         }
@@ -426,7 +426,7 @@ class ThumbnailCache {
         // Wait for all thumbnail loads to complete
         await Promise.all(loadPromises);
         
-        console.log(`🎯 Server thumbnail loading complete: ${thumbnails.size}/${this.thumbnailSizes.length} sizes loaded for ${nameWithoutExt}`);
+        // Server thumbnail loading complete
         return thumbnails.size > 0 ? thumbnails : null;
     }
     

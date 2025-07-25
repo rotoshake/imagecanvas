@@ -78,7 +78,24 @@ class StateSyncManager {
         });
         
         try {
-            // 1. Apply optimistically if enabled
+            // 1. Special handling for move commands - prepare undo data BEFORE execution
+            if (command.type === 'node_move' && !command.undoData && command.prepareUndoData && command.origin === 'local') {
+                const context = {
+                    graph: this.app?.graph,
+                    canvas: this.app?.graphCanvas
+                };
+                
+                if (context.graph && context.canvas) {
+                    try {
+                        await command.prepareUndoData(context);
+                        // Pre-prepared undo data for node_move
+                    } catch (error) {
+                        console.error(`❌ Error preparing undo data for node_move:`, error);
+                    }
+                }
+            }
+            
+            // 2. Apply optimistically if enabled
             let localResult = null;
             let tempNodeIds = [];
             
@@ -108,8 +125,9 @@ class StateSyncManager {
                 }
             }
             
-            // 2. Ensure undo data exists for ALL operations (critical for server-authoritative undo)
-            if (!command.undoData) {
+            // 3. Ensure undo data exists for ALL operations (critical for server-authoritative undo)
+            // Skip node_move as it's already handled above
+            if (!command.undoData && command.type !== 'node_move') {
                 console.log(`📝 Generating undo data for ${command.type} before sending to server`);
                 
                 // Check if command has prepareUndoData method
@@ -135,7 +153,7 @@ class StateSyncManager {
                         if (context.graph && context.canvas) {
                             await command.prepareUndoData(context);
                             if (command.undoData) {
-                                console.log(`✅ Generated undo data for ${command.type}:`, command.undoData);
+                                console.log(`✅ Generated undo data for ${command.type}`);
                             } else {
                                 console.warn(`⚠️ prepareUndoData() did not generate undoData for ${command.type}`);
                             }
@@ -318,13 +336,22 @@ class StateSyncManager {
         const isLargeUpdate = (changes?.added?.length > 20 || changes?.updated?.length > 20 || changes?.removed?.length > 20);
         
         if (this.updating) {
-            if (isLargeUpdate) {
-                // console.log(`⏳ Large update in progress, queueing (${changes?.added?.length || 0} adds, ${changes?.updated?.length || 0} updates)...`);
+            // Add safety mechanism to prevent infinite loops
+            if (!data._retryCount) data._retryCount = 0;
+            data._retryCount++;
+            
+            if (data._retryCount > 10) {
+                console.error('❌ Too many retries for state update, forcing through');
+                this.updating = false; // Force reset
             } else {
-                // console.log('⏳ Update in progress, queueing...');
+                if (isLargeUpdate) {
+                    // console.log(`⏳ Large update in progress, queueing (${changes?.added?.length || 0} adds, ${changes?.updated?.length || 0} updates)...`);
+                } else {
+                    // console.log('⏳ Update in progress, queueing...');
+                }
+                setTimeout(() => this.handleServerStateUpdate(data), isLargeUpdate ? 500 : 100);
+                return;
             }
-            setTimeout(() => this.handleServerStateUpdate(data), isLargeUpdate ? 500 : 100);
-            return;
         }
         
         this.updating = true;
@@ -587,20 +614,16 @@ class StateSyncManager {
                 }
             }
             
-            // Force canvas redraw to show loading states
-            if (this.app.graph.canvas) {
-                this.app.graph.canvas.dirty_canvas = true;
-                requestAnimationFrame(() => this.app.graph.canvas.draw());
-            }
-            
             // Update version
             this.serverStateVersion = stateVersion;
             
             // Clear pending operations (they're invalid now)
             this.pendingOperations.clear();
             
-            // Update canvas
-            this.app.graphCanvas.dirty_canvas = true;
+            // Force canvas redraw to show loading states (only set once)
+            if (this.app.graphCanvas) {
+                this.app.graphCanvas.dirty_canvas = true;
+            }
             
             console.log('✅ Full state sync complete');
             

@@ -374,13 +374,16 @@ class ClientUndoManager {
             for (const nodeData of updated) {
                 const node = this.app.graph.getNodeById(nodeData.id);
                 if (node) {
-                    // Update position
+                    // Update position (modify in-place for LiteGraph)
                     if (nodeData.pos) {
-                        node.pos = [...nodeData.pos];
+                        console.log(`📍 Moving node ${nodeData.id} from [${node.pos[0]}, ${node.pos[1]}] to [${nodeData.pos[0]}, ${nodeData.pos[1]}]`);
+                        node.pos[0] = nodeData.pos[0];
+                        node.pos[1] = nodeData.pos[1];
                     }
-                    // Update size
+                    // Update size (modify in-place for LiteGraph)
                     if (nodeData.size) {
-                        node.size = [...nodeData.size];
+                        node.size[0] = nodeData.size[0];
+                        node.size[1] = nodeData.size[1];
                     }
                     // Update properties
                     if (nodeData.properties) {

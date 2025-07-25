@@ -14,7 +14,7 @@ class ImageUploadCoordinator {
         // Check for pending uploads periodically
         this.checkInterval = setInterval(() => this.checkPendingUploads(), 2000);
         
-        console.log('📤 ImageUploadCoordinator initialized');
+        // ImageUploadCoordinator initialized
     }
     
     /**
@@ -27,7 +27,7 @@ class ImageUploadCoordinator {
         
         // Skip if already has serverUrl
         if (serverUrl) {
-            console.log(`✅ Node ${node.id} already has serverUrl`);
+            // Node already has serverUrl
             return;
         }
         
@@ -37,11 +37,11 @@ class ImageUploadCoordinator {
             return;
         }
         
-        console.log(`🔍 Checking upload status for node ${node.id} (hash: ${hash.substring(0, 8)}...)`);
+        // Checking upload status for node
         
         // Check if upload is already pending
         if (this.pendingUploads.has(hash)) {
-            console.log(`⏳ Upload already pending for hash ${hash.substring(0, 8)}...`);
+            // Upload already pending
             this.observeUpload(hash, node);
             return;
         }
@@ -49,7 +49,7 @@ class ImageUploadCoordinator {
         // Check if we have the data to upload
         const cached = this.app.imageResourceCache?.get(hash);
         if (!cached?.url?.startsWith('data:')) {
-            console.log(`❌ No data URL cached for hash ${hash.substring(0, 8)}...`);
+            // No data URL cached
             return;
         }
         
@@ -63,7 +63,7 @@ class ImageUploadCoordinator {
     startUpload(node, cachedData) {
         const { hash, filename } = node.properties;
         
-        console.log(`📤 Starting upload for ${filename} (${hash.substring(0, 8)}...)`);
+        // Starting upload
         
         // Mark as pending
         this.pendingUploads.set(hash, {
@@ -78,7 +78,7 @@ class ImageUploadCoordinator {
             filename || cachedData.originalFilename,
             hash
         ).then(async (uploadResult) => {
-            console.log(`✅ Upload complete for ${hash.substring(0, 8)}...`);
+            // Upload complete
             
             // Remove from pending
             this.pendingUploads.delete(hash);
@@ -105,7 +105,7 @@ class ImageUploadCoordinator {
             n.type === 'media/image' && n.properties?.hash === hash
         );
         
-        console.log(`🔄 Updating ${nodes.length} nodes with hash ${hash.substring(0, 8)}...`);
+        // Updating nodes with hash
         
         const fullUrl = uploadResult.url.startsWith('http') 
             ? uploadResult.url 
@@ -130,7 +130,7 @@ class ImageUploadCoordinator {
                     serverUrl: uploadResult.url,
                     serverFilename: uploadResult.filename
                 });
-                console.log(`✅ Server notified of upload completion`);
+                // Server notified of upload completion
             } catch (error) {
                 console.error('❌ Failed to notify server:', error);
             }
@@ -145,7 +145,7 @@ class ImageUploadCoordinator {
                 thumbnail: nodes[0]?.thumbnail,
                 isLocal: false
             });
-            console.log(`💾 Cache updated with server URL`);
+            // Cache updated with server URL
         }
     }
     
@@ -199,7 +199,7 @@ class ImageUploadCoordinator {
         );
         
         if (needsUpload.length > 0) {
-            console.log(`🔍 Found ${needsUpload.length} nodes needing upload`);
+            // Found nodes needing upload
             needsUpload.forEach(node => this.onImageNodeCreated(node));
         }
     }
