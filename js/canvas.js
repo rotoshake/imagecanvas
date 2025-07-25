@@ -253,33 +253,11 @@ class LGraphCanvas {
         e.preventDefault();
         
         // Navigation zoom (intentionally NOT synced to other users)
-        const zoomFactor = e.deltaY < 0 ? 1.1 : 0.9;
-        
-        // Get current values safely
-        const currentScale = this.viewport.scale || 1;
-        const currentOffset = this.viewport.offset || [0, 0];
+        const delta = e.deltaY < 0 ? 1 : -1; // Positive for zoom in, negative for zoom out
         const mousePos = this.mouseState.canvas || [0, 0];
         
-        // Calculate new scale using config values
-        const newScale = Utils.clamp(
-            currentScale * zoomFactor,
-            CONFIG.CANVAS.MIN_SCALE,
-            CONFIG.CANVAS.MAX_SCALE
-        );
-        
-        // Calculate new offset to zoom towards mouse position
-        const scaleRatio = newScale / currentScale;
-        const newOffset = [
-            mousePos[0] - (mousePos[0] - currentOffset[0]) * scaleRatio,
-            mousePos[1] - (mousePos[1] - currentOffset[1]) * scaleRatio
-        ];
-        
-        // Set values directly, ensuring they're valid numbers
-        this.viewport.scale = newScale;
-        this.viewport.offset = [
-            isFinite(newOffset[0]) ? newOffset[0] : currentOffset[0],
-            isFinite(newOffset[1]) ? newOffset[1] : currentOffset[1]
-        ];
+        // Use the viewport.zoom method to ensure navigation state is saved
+        this.viewport.zoom(delta, mousePos[0], mousePos[1]);
         
         // Notify viewport of movement for LOD optimization
         this.viewport.notifyMovement();
@@ -1582,20 +1560,8 @@ class LGraphCanvas {
             return true;
         }
         
-        // Undo/Redo - Skip if ClientUndoManager is handling shortcuts
-        if (window.app?.undoManager?.keyboardShortcutsEnabled !== false) {
-            // ClientUndoManager is handling shortcuts, skip these
-        } else {
-            // Fallback for when ClientUndoManager is not available
-            if (ctrl && key === 'z' && !shift) {
-                this.undo();
-                return true;
-            }
-            if (ctrl && ((key === 'z' && shift) || key === 'y')) {
-                this.redo();
-                return true;
-            }
-        }
+        // Undo/Redo - Let ClientUndoManager handle these shortcuts
+        // The ClientUndoManager always handles keyboard shortcuts, so we skip these here
         
         // Copy/Cut/Paste
         if (ctrl && key === 'c') {
@@ -1685,6 +1651,50 @@ class LGraphCanvas {
         if (key === '2') {
             this.alignSelected('vertical');
             return true;
+        }
+        
+        // Arrow key navigation
+        if (CONFIG.NAVIGATION.ARROW_KEY_ENABLED && !ctrl && !alt) {
+            const directionMap = {
+                'arrowup': 'up',
+                'arrowdown': 'down',
+                'arrowleft': 'left',
+                'arrowright': 'right'
+            };
+            
+            const direction = directionMap[key];
+            if (direction) {
+                const selectedNodes = this.selection.getSelectedNodes();
+                let fromNode = null;
+                
+                if (selectedNodes.length > 0) {
+                    // Use the first selected node as reference
+                    fromNode = selectedNodes[0];
+                } else {
+                    // No nodes selected - start with the node closest to viewport center
+                    fromNode = this.findNodeClosestToViewportCenter();
+                    if (fromNode) {
+                        // Select this node first
+                        this.selection.selectNode(fromNode, true);
+                        this.navigateToNode(fromNode);
+                        return true;
+                    }
+                }
+                
+                if (fromNode) {
+                    const targetNode = this.findNodeInDirection(fromNode, direction);
+                    
+                    if (targetNode) {
+                        // Clear current selection
+                        this.selection.clear();
+                        // Select the target node
+                        this.selection.selectNode(targetNode, true);
+                        // Navigate to it with animation
+                        this.navigateToNode(targetNode);
+                    }
+                }
+                return true;
+            }
         }
         
         return false;
@@ -2132,7 +2142,7 @@ class LGraphCanvas {
     zoomToFitAll() {
         const bbox = this.graph.getBoundingBox();
         if (bbox) {
-            this.viewport.zoomToFit(bbox);
+            this.viewport.zoomToFit(bbox, 40, true); // Enable animation
             this.dirty_canvas = true;
         }
     }
@@ -2140,7 +2150,7 @@ class LGraphCanvas {
     zoomToFitSelection() {
         const bbox = this.selection.getBoundingBox();
         if (bbox) {
-            this.viewport.zoomToFit(bbox);
+            this.viewport.zoomToFit(bbox, 40, true); // Enable animation
             this.dirty_canvas = true;
         }
     }
@@ -2210,6 +2220,77 @@ class LGraphCanvas {
         
         this.dirty_canvas = true;
         this.debouncedSave();
+    }
+    
+    findNodeInDirection(fromNode, direction) {
+        const nodes = this.graph.nodes;
+        if (nodes.length <= 1) return null;
+        
+        const [fromX, fromY] = fromNode.getCenter();
+        let bestNode = null;
+        let bestScore = Infinity;
+        
+        // Define direction angles (in radians)
+        const directionAngles = {
+            'right': 0,
+            'down': Math.PI / 2,
+            'left': Math.PI,
+            'up': -Math.PI / 2
+        };
+        
+        const targetAngle = directionAngles[direction];
+        const angleTolerance = Utils.degToRad(CONFIG.NAVIGATION.DIRECTION_ANGLE_TOLERANCE);
+        
+        for (const node of nodes) {
+            if (node === fromNode) continue;
+            
+            const [toX, toY] = node.getCenter();
+            const angle = Utils.angleFromTo(fromX, fromY, toX, toY);
+            
+            // Calculate angular difference
+            let angleDiff = Math.abs(angle - targetAngle);
+            if (angleDiff > Math.PI) angleDiff = 2 * Math.PI - angleDiff;
+            
+            // Skip if outside direction quadrant
+            if (angleDiff > angleTolerance) continue;
+            
+            // Calculate distance
+            const distance = Utils.distance(fromX, fromY, toX, toY);
+            
+            // Score based on distance and angle alignment
+            // Prefer closer nodes and better angle alignment
+            const angleScore = angleDiff / angleTolerance; // 0 to 1
+            const score = distance * (1 + angleScore * 0.5);
+            
+            if (score < bestScore) {
+                bestScore = score;
+                bestNode = node;
+            }
+        }
+        
+        return bestNode;
+    }
+    
+    navigateToNode(direction) {
+        const selected = this.selection.getSelectedNodes();
+        if (selected.length !== 1) return;
+        
+        const currentNode = selected[0];
+        const nextNode = this.findNodeInDirection(currentNode, direction);
+        
+        if (nextNode) {
+            // Clear current selection
+            this.selection.clear();
+            
+            // Select the next node
+            this.selection.select(nextNode);
+            
+            // Zoom to fit the selected node with animation
+            this.zoomToFitSelection();
+            
+            // Mark dirty for redraw
+            this.dirty_canvas = true;
+        }
     }
     
     alignSelected(axis) {
@@ -2641,16 +2722,119 @@ class LGraphCanvas {
     
     canEditTitle(node, pos) {
         if (node.flags?.hide_title) return false;
-        if (!node.title) return false;
+        const displayTitle = node.getDisplayTitle();
+        if (!displayTitle) return false;
         
-        // Check if click is in title area
-        const titleHeight = 24;
-        return pos[1] >= node.pos[1] - titleHeight && pos[1] <= node.pos[1];
+        // Check if node is too small to show title (same as in drawNodeTitle)
+        const screenScale = this.viewport.scale;
+        const minScreenSize = 40;
+        const nodeScreenWidth = node.size[0] * screenScale;
+        const nodeScreenHeight = node.size[1] * screenScale;
+        
+        if (nodeScreenWidth < minScreenSize || nodeScreenHeight < minScreenSize) {
+            return false; // Title not visible
+        }
+        
+        // Get the actual draw position (accounting for animations)
+        let drawPos = node.pos;
+        if (node._gridAnimPos) {
+            drawPos = node._gridAnimPos;  // Grid-align animation
+        } else if (node._animPos) {
+            drawPos = node._animPos;      // Auto-align animation
+        }
+        
+        // Transform the click position into the node's local coordinate space
+        // This accounts for both translation and rotation
+        let localX = pos[0] - drawPos[0];
+        let localY = pos[1] - drawPos[1];
+        
+        // If the node is rotated, apply inverse rotation to get local coordinates
+        if (node.rotation) {
+            const angle = -node.rotation * Math.PI / 180; // Negative for inverse rotation
+            const cx = node.size[0] / 2;
+            const cy = node.size[1] / 2;
+            
+            // Translate to rotation center
+            const dx = localX - cx;
+            const dy = localY - cy;
+            
+            // Apply inverse rotation
+            const cos = Math.cos(angle);
+            const sin = Math.sin(angle);
+            localX = dx * cos - dy * sin + cx;
+            localY = dx * sin + dy * cos + cy;
+        }
+        
+        // Title is drawn at local position (0, -titlePadding) in node space
+        const titlePadding = 8 / screenScale; // Must match drawNodeTitle
+        const fontSize = 14 / screenScale; // Must match drawNodeTitle
+        const titleHeight = fontSize * 1.4; // Slightly increased for better hit area
+        
+        // Check if the local position is within title bounds
+        // Title spans from x=0 to x=node.size[0] in local space
+        // Title y position is from -titlePadding-titleHeight to -titlePadding+titleHeight*0.5
+        const inBounds = localX >= 0 && localX <= node.size[0] &&
+                        localY >= -titlePadding - titleHeight && 
+                        localY <= -titlePadding + titleHeight * 0.5;
+        
+        return inBounds;
     }
     
     startTitleEditing(node, e) {
-        // Implementation for title editing...
-        console.log('Start title editing for node:', node.id);
+        if (this._editingTitleInput) {
+            this.finishTitleEditing();
+        }
+
+        // Create input overlay for title editing
+        const input = document.createElement('input');
+        input.type = 'text';
+        input.value = node.title || '';
+        input.style.position = 'fixed';
+        input.style.zIndex = '10000';
+        input.style.border = '2px solid #4af';
+        input.style.outline = 'none';
+        input.style.background = 'rgba(0, 0, 0, 0.8)';
+        input.style.color = '#ffffff';
+        input.style.fontFamily = 'Arial';
+        input.style.padding = '4px 8px';
+        input.style.borderRadius = '4px';
+        input.style.minWidth = '150px';
+        
+        // Calculate position for input above the node
+        const titlePadding = 20 / this.viewport.scale;
+        const [screenX, screenY] = this.viewport.convertGraphToOffset(node.pos[0], node.pos[1] - titlePadding);
+        
+        // Account for device pixel ratio
+        const dpr = window.devicePixelRatio || 1;
+        
+        // Set font size that looks consistent at current zoom
+        const baseFontSize = 12;
+        input.style.fontSize = `${baseFontSize}px`;
+        
+        // Position the input
+        input.style.left = `${screenX / dpr}px`;
+        input.style.top = `${(screenY / dpr) - 20}px`; // Adjust for input height
+        
+        // Store references
+        this._editingTitleInput = input;
+        this._editingTitleNode = node;
+        this._originalTitle = node.title || '';
+        
+        // Event handlers
+        input.addEventListener('blur', () => this.finishTitleEditing());
+        input.addEventListener('keydown', (e) => {
+            e.stopPropagation();
+            if (e.key === 'Escape') {
+                this.cancelTitleEditing();
+            } else if (e.key === 'Enter') {
+                this.finishTitleEditing();
+            }
+        });
+        
+        // Add to DOM and focus
+        document.body.appendChild(input);
+        input.focus();
+        input.select();
     }
     
     startTextEditing(node, e) {
@@ -2796,6 +2980,55 @@ class LGraphCanvas {
         this.dirty_canvas = true;
     }
     
+    finishTitleEditing() {
+        if (!this._editingTitleInput || !this._editingTitleNode) return;
+
+        const node = this._editingTitleNode;
+        const input = this._editingTitleInput;
+        
+        // Update node title
+        const newTitle = input.value.trim();
+        if (newTitle !== node.title) {
+            // Use operation pipeline for collaborative support
+            if (window.app?.operationPipeline) {
+                window.app.operationPipeline.execute('node_update', {
+                    nodeId: node.id,
+                    property: 'title',
+                    value: newTitle
+                });
+            } else {
+                node.title = newTitle;
+            }
+            
+            // Mark canvas dirty to redraw
+            this.dirty_canvas = true;
+        }
+        
+        // Cleanup
+        document.body.removeChild(input);
+        this._editingTitleInput = null;
+        this._editingTitleNode = null;
+        this._originalTitle = null;
+    }
+
+    cancelTitleEditing() {
+        if (!this._editingTitleInput || !this._editingTitleNode) return;
+
+        const node = this._editingTitleNode;
+        const input = this._editingTitleInput;
+        
+        // Restore original title (no changes)
+        node.title = this._originalTitle;
+        
+        // Cleanup
+        document.body.removeChild(input);
+        this._editingTitleInput = null;
+        this._editingTitleNode = null;
+        this._originalTitle = null;
+        
+        this.dirty_canvas = true;
+    }
+    
     resetAspectRatio(resizeHandle) {
         if (resizeHandle.type === 'single-resize') {
             const node = resizeHandle.node;
@@ -2908,52 +3141,20 @@ class LGraphCanvas {
     }
     
     undo() {
-        // Use new hybrid undo/redo manager if available
-        if (window.app?.undoRedoManager) {
-            window.app.undoRedoManager.undo();
-        } 
-        // Fallback to state manager (which is disabled)
-        else if (this.stateManager && typeof this.stateManager.undo === 'function') {
-            const success = this.stateManager.undo(this.graph, this);
-            if (success) {
-                this.selection.clear();
-                this.dirty_canvas = true;
-                
-                // Broadcast undo state to collaborators
-                if (this.collaborativeManager && this.collaborativeManager.isConnected) {
-                    console.log('🔄 Undo performed, broadcasting to collaborators');
-                    this.collaborativeManager.broadcastFullState();
-                } else {
-                    console.log('⚠️ Undo performed but not broadcasting (not connected)');
-                }
-            }
+        // Use ClientUndoManager (single source of truth)
+        if (window.app?.undoManager) {
+            window.app.undoManager.undo();
         } else {
-            console.warn('Undo/redo manager not available');
+            console.warn('ClientUndoManager not available - undo disabled');
         }
     }
     
     redo() {
-        // Use new hybrid undo/redo manager if available
-        if (window.app?.undoRedoManager) {
-            window.app.undoRedoManager.redo();
-        }
-        // Fallback to state manager (which is disabled)
-        else if (this.stateManager && typeof this.stateManager.redo === 'function') {
-            const success = this.stateManager.redo(this.graph, this);
-            if (success) {
-                this.selection.clear();
-                this.dirty_canvas = true;
-                
-                // Broadcast redo state to collaborators
-                if (this.collaborativeManager && this.collaborativeManager.isConnected) {
-                    console.log('🔄 Redo performed, broadcasting to collaborators');
-                    this.collaborativeManager.broadcastFullState();
-                } else {
-                    console.log('⚠️ Redo performed but not broadcasting (not connected)');
-                }
-            }
+        // Use ClientUndoManager (single source of truth)
+        if (window.app?.undoManager) {
+            window.app.undoManager.redo();
         } else {
-            console.warn('Undo/redo manager not available');
+            console.warn('ClientUndoManager not available - redo disabled');
         }
     }
     
@@ -2996,8 +3197,9 @@ class LGraphCanvas {
             );
             
             const hasActiveAlignment = this.alignmentManager && this.alignmentManager.isAnimating();
+            const hasActiveViewportAnimation = this.viewport && this.viewport.isAnimating;
             
-            if (hasActiveVideos || hasActiveAlignment) {
+            if (hasActiveVideos || hasActiveAlignment || hasActiveViewportAnimation) {
                 this.dirty_canvas = true;
             }
             
@@ -3248,6 +3450,14 @@ class LGraphCanvas {
             node.onDrawForeground(ctx);
         }
         
+        // Draw title above the node (before selection, in node's coordinate space)
+        if (!node.flags?.hide_title) {
+            const displayTitle = node.getDisplayTitle();
+            if (displayTitle) {
+                this.drawNodeTitle(ctx, node);
+            }
+        }
+        
         // Draw selection and handles (hide during alignment)
         if (this.selection.isSelected(node) && 
             (!this.alignmentManager || !this.alignmentManager.isActive())) {
@@ -3331,6 +3541,70 @@ class LGraphCanvas {
         ctx.fillStyle = '#4af';
         ctx.globalAlpha = 0.5;
         ctx.fill();
+        ctx.restore();
+    }
+    
+    drawNodeTitle(ctx, node) {
+        // Skip if hidden
+        if (node.flags?.hide_title) {
+            return;
+        }
+        
+        // Get display title (with fallback)
+        const displayTitle = node.getDisplayTitle();
+        if (!displayTitle) {
+            return;
+        }
+        
+        // Calculate screen scale for consistent sizing
+        const screenScale = this.viewport.scale;
+        
+        // Only show title if node is large enough on screen
+        const minScreenSize = 40; // pixels
+        const nodeScreenWidth = node.size[0] * screenScale;
+        const nodeScreenHeight = node.size[1] * screenScale;
+        
+        if (nodeScreenWidth < minScreenSize || nodeScreenHeight < minScreenSize) {
+            return; // Node too small, don't show title
+        }
+        
+        ctx.save();
+        
+        // Move to title position (above the node, in node's coordinate space)
+        const titlePadding = 8 / screenScale; // Scale padding to maintain consistent appearance
+        ctx.translate(0, -titlePadding);
+        
+        // Set font size that scales with zoom but has reasonable limits
+        const baseFontSize = 14;
+        const fontSize = baseFontSize / screenScale;
+        ctx.font = `${fontSize}px Arial`;
+        ctx.textAlign = 'left';
+        ctx.textBaseline = 'bottom';
+        
+        // Calculate max width based on node width
+        const maxWidth = node.size[0] - (8 / screenScale);
+        
+        // Truncate text if too long
+        let truncatedTitle = displayTitle;
+        const textMetrics = ctx.measureText(truncatedTitle);
+        if (textMetrics.width > maxWidth) {
+            // Truncate with ellipsis
+            while (truncatedTitle.length > 0 && ctx.measureText(truncatedTitle + '...').width > maxWidth) {
+                truncatedTitle = truncatedTitle.slice(0, -1);
+            }
+            truncatedTitle += '...';
+        }
+        
+        
+        // Draw text with shadow for better visibility
+        ctx.shadowColor = 'rgba(0, 0, 0, 0.8)';
+        ctx.shadowBlur = 2 / screenScale;
+        ctx.shadowOffsetX = 1 / screenScale;
+        ctx.shadowOffsetY = 1 / screenScale;
+        
+        ctx.fillStyle = '#ffffff';
+        ctx.fillText(truncatedTitle, 4 / screenScale, 0);
+        
         ctx.restore();
     }
     
@@ -3628,5 +3902,101 @@ class LGraphCanvas {
     broadcastLayerOrderChange(nodes, direction) {
         // Now handled by OperationPipeline - this method is kept for compatibility
         // Layer order changes are sent through the pipeline
+    }
+    
+    // ===================================
+    // NAVIGATION METHODS
+    // ===================================
+    
+    findNodeClosestToViewportCenter() {
+        const nodes = this.graph.nodes;
+        if (nodes.length === 0) return null;
+        
+        // Get viewport center coordinates
+        const viewport = this.viewport.getViewport();
+        const centerX = viewport.x + viewport.width / 2;
+        const centerY = viewport.y + viewport.height / 2;
+        
+        let closestNode = null;
+        let closestDistance = Infinity;
+        
+        for (const node of nodes) {
+            const [nodeX, nodeY] = node.getCenter();
+            const distance = Utils.distance(centerX, centerY, nodeX, nodeY);
+            
+            if (distance < closestDistance) {
+                closestDistance = distance;
+                closestNode = node;
+            }
+        }
+        
+        return closestNode;
+    }
+
+    findNodeInDirection(fromNode, direction) {
+        const nodes = this.graph.nodes;
+        if (nodes.length <= 1) return null;
+        
+        const [fromX, fromY] = fromNode.getCenter();
+        let bestNode = null;
+        let bestScore = Infinity;
+        
+        // Define direction angles (in radians)
+        const directionAngles = {
+            'right': 0,
+            'down': Math.PI / 2,
+            'left': Math.PI,
+            'up': -Math.PI / 2
+        };
+        
+        const targetAngle = directionAngles[direction];
+        const angleTolerance = Utils.degToRad(CONFIG.NAVIGATION.DIRECTION_ANGLE_TOLERANCE);
+        
+        for (const node of nodes) {
+            // Skip the source node
+            if (node === fromNode) continue;
+            
+            const [toX, toY] = node.getCenter();
+            
+            // Calculate angle to this node
+            const angle = Utils.angleFromTo(fromX, fromY, toX, toY);
+            
+            // Calculate angular difference, normalized to [-π, π]
+            let angleDiff = angle - targetAngle;
+            while (angleDiff > Math.PI) angleDiff -= 2 * Math.PI;
+            while (angleDiff < -Math.PI) angleDiff += 2 * Math.PI;
+            
+            // Skip nodes that aren't in the general direction
+            if (Math.abs(angleDiff) > angleTolerance) continue;
+            
+            // Calculate distance
+            const distance = Utils.distance(fromX, fromY, toX, toY);
+            
+            // Score based on distance and angular deviation
+            // Prefer closer nodes and those more aligned with the direction
+            const angleWeight = 0.3;
+            const distanceWeight = 0.7;
+            const score = distance * distanceWeight + Math.abs(angleDiff) * 1000 * angleWeight;
+            
+            if (score < bestScore) {
+                bestScore = score;
+                bestNode = node;
+            }
+        }
+        
+        return bestNode;
+    }
+    
+    navigateToNode(node) {
+        if (!node) return;
+        
+        // Get the node's bounding box
+        const bbox = node.getBoundingBox();
+        
+        // Zoom to fit the node with animation
+        this.viewport.zoomToFit(bbox, 80, true);
+        
+        // Mark canvas as dirty
+        this.dirty_canvas = true;
     }
 }
