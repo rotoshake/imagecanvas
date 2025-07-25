@@ -451,7 +451,7 @@ class FloatingPropertiesInspector {
             
             if (this.canvas && this.canvas.selection) {
                 this.canvas.selection.addCallback((selectedNodes) => {
-                    console.log('🎯 Selection changed:', selectedNodes.size, 'nodes selected');
+                    // console.log('🎯 Selection changed:', selectedNodes.size, 'nodes selected');
                     this.updateSelection(selectedNodes);
                 });
                 console.log('✅ Properties inspector connected to selection system');

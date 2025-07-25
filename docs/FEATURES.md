@@ -1,180 +1,148 @@
 # ImageCanvas Features
 
-## Core Features
+## Core Functionality
 
-### 1. Real-Time Collaboration
-- **Multi-user editing**: Multiple users can work on the same canvas simultaneously
-- **Live cursors**: See other users' cursor positions in real-time
-- **Selection indicators**: Visual feedback showing what others are editing
-- **Presence awareness**: User list showing who's currently active
-- **Conflict resolution**: Automatic handling of concurrent edits
-- **Multi-tab support**: Same user can have multiple tabs open
+### Canvas Operations
+- **Pan & Zoom**: Navigate the infinite canvas with mouse or trackpad
+- **Node Selection**: Single and multi-select with rectangle selection
+- **Node Manipulation**: Move, resize, rotate, and transform nodes
+- **Clipboard Operations**: Cut, copy, paste with full undo support
+- **Grid Snapping**: Optional grid alignment for precise layouts
 
-### 2. Content Types
+### Real-Time Collaboration
+- **Multi-User Editing**: Multiple users can edit the same canvas simultaneously
+- **Presence Indicators**: See other users' cursors and selections
+- **Conflict Resolution**: Server-authoritative state prevents conflicts
+- **Multi-Tab Support**: Same user can have multiple tabs open
+- **Automatic Reconnection**: Seamless recovery from connection drops
 
-#### Image Support
-- **Formats**: JPEG, PNG, WebP
-- **Drag-and-drop**: Direct file dropping onto canvas
-- **URL import**: Load images from external URLs
-- **Resize**: Proportional and free-form resizing
-- **Rotation**: 360-degree rotation with visual feedback
-- **Quality preservation**: Original quality maintained
+### Media Support
 
-#### Video Support
-- **Formats**: MP4, MOV
-- **Playback controls**: Play, pause, seek
-- **Synchronized playback**: All users see same playback state
-- **Frame preview**: Thumbnail generation
-- **Volume control**: Individual video volume settings
+#### Images
+- **Format Support**: JPEG, PNG, WebP, GIF (static)
+- **HTTP Upload System**: Images uploaded via HTTP before node creation
+- **Progressive Loading**: Thumbnails load progressively based on zoom
+- **Server Thumbnails**: 6 sizes (64px to 2048px) generated server-side
+- **Hash-Based Deduplication**: Same image uploaded multiple times uses single file
+- **Batch Upload**: Upload multiple images simultaneously with progress tracking
 
-#### Text Editing
-- **WYSIWYG editor**: Rich text formatting
-- **Font selection**: Multiple font choices
-- **Text styling**: Bold, italic, underline
-- **Color selection**: Text and background colors
-- **Real-time sync**: Live text updates across clients
+#### Videos
+- **Format Support**: MP4, WebM, MOV
+- **Playback Controls**: Play/pause/seek directly on canvas
+- **Thumbnail Generation**: Automatic video poster frames
+- **Synchronized Playback**: Video state syncs across users
 
-### 3. Canvas Operations
+#### Text
+- **Rich Text Editing**: WYSIWYG text nodes
+- **Font Support**: System fonts and custom fonts
+- **Real-Time Sync**: Text changes sync character by character
 
-#### Selection Tools
-- **Click selection**: Single item selection
-- **Drag selection**: Rectangle selection for multiple items
-- **Multi-select**: Ctrl/Cmd+click for adding to selection
-- **Select all**: Keyboard shortcut support
-- **Deselect**: Click empty space or Escape key
+### Undo/Redo System
+- **Full History**: Complete undo/redo for all operations
+- **Server-Authoritative**: Undo history maintained server-side
+- **Multi-User Aware**: Conflict detection when undoing in collaborative sessions
+- **Transaction Support**: Group related operations for atomic undo
+- **Cross-Tab Sync**: Undo state synchronized across user's tabs
+- **Visual Feedback**: Shows what will be undone/redone
 
-#### Transformation Tools
-- **Move**: Drag items to new positions
-- **Resize**: Corner and edge handles
-- **Rotate**: Rotation handle with degree indicator
-- **Flip**: Horizontal and vertical flip
-- **Align**: Smart alignment guides
-- **Snap**: Snap to grid and other objects
+### User Interface
 
-#### Editing Operations
-- **Copy/Paste**: Standard clipboard operations
-- **Duplicate**: Quick duplication with offset
-- **Delete**: Remove selected items
-- **Undo/Redo**: Full operation history
-- **Group/Ungroup**: Combine items for easier manipulation
-
-### 4. User Interface
+#### Unified Notifications
+- **Consolidated System**: All notifications in one consistent UI
+- **Types**: Success, error, warning, info messages
+- **Progress Tracking**: Visual progress bars for operations
+- **Network Status**: Connection state integrated into notifications
+- **Persistent Messages**: Important notifications that don't auto-dismiss
 
 #### Canvas Navigator
-- **Project list**: View all available canvases
-- **Search**: Find canvases by name
-- **Create new**: Start fresh canvas
-- **Duplicate**: Copy existing canvas
-- **Delete**: Remove unwanted canvases
+- **Project Browser**: List and manage all projects
+- **Quick Access**: Recent projects and quick switching
+- **Project Management**: Create, rename, delete projects
+- **Database Maintenance**: Built-in cleanup tools
 
-#### Properties Inspector
-- **Floating window**: Context-sensitive property editor
-- **Multi-selection support**: Edit common properties across multiple nodes
-- **Grouped properties**: Transform, Content, Appearance, and Playback sections
-- **Live editing**: Real-time property updates with collaboration support
-- **Smart positioning**: Automatically positions near selected nodes
-- **Draggable interface**: Moveable window with close controls
+#### Floating Properties Inspector
+- **Context-Sensitive**: Shows properties for selected nodes
+- **Live Updates**: Changes apply immediately
+- **Multi-Select Support**: Edit common properties of multiple nodes
+- **Draggable UI**: Position anywhere on screen
+- **Auto-Hide**: Hides when no selection
 
-#### Viewport Controls
-- **Pan**: Click and drag to navigate
-- **Zoom**: Mouse wheel or pinch gestures
-- **Fit to screen**: Auto-zoom to show all content
-- **Reset view**: Return to default zoom/position
-- **Mini-map**: Overview navigation (planned)
+### Performance Features
 
-#### Keyboard Shortcuts
-- **Ctrl/Cmd+C**: Copy
-- **Ctrl/Cmd+V**: Paste
-- **Ctrl/Cmd+D**: Duplicate
-- **Ctrl/Cmd+Z**: Undo
-- **Ctrl/Cmd+Y**: Redo
-- **Delete**: Remove selected
-- **Ctrl/Cmd+A**: Select all
-- **Escape**: Clear selection
-- **Arrow keys**: Nudge selected items
+#### Image Loading Optimization
+- **Level of Detail (LOD)**: Load appropriate resolution based on zoom
+- **Lazy Loading**: Only load visible images
+- **Thumbnail Caching**: Client and server-side caching
+- **Progressive Enhancement**: Show low-res while loading high-res
 
-### 5. Performance Features
+#### Operation Optimization
+- **Optimistic Updates**: Immediate UI response with server reconciliation
+- **Operation Queuing**: Sequential execution prevents conflicts
+- **Batch Processing**: Group operations for efficiency
+- **Size Limits**: 100KB max operation size prevents timeouts
 
-#### Optimization
-- **Hardware acceleration**: GPU-accelerated rendering
-- **Image caching**: Smart memory management
-- **Lazy loading**: Load content as needed
-- **Thumbnail system**: Fast previews at multiple resolutions
-- **Operation batching**: Group rapid changes
+#### Bulk Operations
+- **Smart Chunking**: Large operations split into manageable pieces
+- **Progress Feedback**: Visual progress for long operations
+- **Background Sync**: Operations continue even if UI is closed
+- **Adaptive Performance**: Chunk size adjusts to network conditions
 
-#### Scalability
-- **10+ concurrent users**: Tested with multiple simultaneous editors
-- **1000+ objects**: Handle large canvases efficiently
-- **60 FPS**: Smooth interaction and animations
-- **< 100ms latency**: Near-instant operation sync
+### Data Management
 
-### 6. Persistence & Recovery
+#### Persistence
+- **Auto-Save**: Changes saved automatically
+- **SQLite Database**: Reliable local storage with WAL mode
+- **Navigation State**: Zoom and pan position saved per canvas
+- **File Management**: Automatic cleanup of orphaned files
 
-#### Auto-save
-- **Continuous saving**: Changes saved automatically
-- **Local storage**: Offline work capability
-- **Server sync**: Background synchronization
-- **Version history**: Access previous states
+#### Import/Export
+- **Drag & Drop**: Drop images/videos directly onto canvas
+- **Bulk Import**: Import multiple files at once
+- **State Export**: Export canvas state for backup
 
-#### Session Management
-- **Reconnection**: Automatic reconnect on network issues
-- **State recovery**: Resume where you left off
-- **Offline mode**: Continue working without connection
-- **Sync on reconnect**: Merge offline changes
+### Developer Features
 
-### 7. File Management
+#### Architecture
+- **Command Pattern**: All operations use consistent command interface
+- **Event System**: Comprehensive event hooks for extensions
+- **Module System**: Clean separation of concerns
+- **Type Definitions**: JSDoc types for better IDE support
 
-#### Upload System
-- **Drag-and-drop**: Drop files anywhere on canvas
-- **Batch upload**: Multiple files at once
-- **Progress indication**: Upload status feedback
-- **Size limits**: Configurable per deployment
-- **Format validation**: Supported file types only
+#### Debugging
+- **Debug Mode**: Verbose logging for development
+- **State Inspector**: Examine canvas state in console
+- **Network Monitor**: Track all WebSocket operations
+- **Performance Metrics**: Built-in performance monitoring
 
-#### Storage
-- **Server storage**: Centralized file repository
-- **Thumbnail generation**: Automatic preview creation
-- **Compression**: Optimized storage usage
-- **CDN-ready**: Static asset serving
+### Security Features
+- **CORS Protection**: Configured for specific origins
+- **File Validation**: Only allowed file types accepted
+- **Size Limits**: Prevent DoS through large uploads
+- **Operation Validation**: Server validates all operations
+- **Helmet.js**: Security headers for production
 
-### 8. Collaboration Tools
+## Planned Features
 
-#### Communication
-- **Cursor tracking**: See where others are working
-- **Selection highlights**: Visual collaboration cues
-- **User avatars**: Identify collaborators
-- **Activity indicators**: Show active users
+### Authentication & Permissions
+- User authentication system
+- Per-project permissions
+- Public/private projects
+- Guest access controls
 
-#### Coordination
-- **Locking**: Prevent conflicts on shared items
-- **Following**: Follow another user's viewport
-- **Annotations**: Leave notes for others (planned)
-- **Comments**: Contextual discussions (planned)
+### Advanced Editing
+- Layers and groups
+- Alignment tools
+- Transform handles
+- Blend modes
 
-### 9. Export & Sharing
+### Export Options
+- PDF export
+- Image sequence export
+- Project templates
+- Backup/restore
 
-#### Export Options (Planned)
-- **PNG/JPEG**: Static image export
-- **PDF**: Document generation
-- **SVG**: Vector format export
-- **Project bundle**: Complete project download
-
-#### Sharing (Planned)
-- **Public links**: Share read-only views
-- **Embed codes**: Integrate in websites
-- **Permissions**: Control edit access
-- **Guest access**: No login required viewing
-
-### 10. Responsive Design
-
-#### Multi-device Support
-- **Desktop**: Full feature set
-- **Tablet**: Touch-optimized controls
-- **Mobile**: View and basic edit capabilities
-- **Cross-platform**: Works on all modern browsers
-
-#### Adaptive UI
-- **Responsive layout**: Adjusts to screen size
-- **Touch gestures**: Pinch, pan, rotate
-- **Context menus**: Right-click alternatives
-- **Accessibility**: Keyboard navigation support
+### Performance
+- WebGL rendering
+- Virtual scrolling for huge canvases
+- Streaming for large media
+- CDN integration

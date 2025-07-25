@@ -255,9 +255,31 @@ class UnifiedNotifications {
         const notificationId = id || `notification-${++this.notificationIdCounter}`;
         
         
-        // Remove existing notification with same ID
-        if (id && this.notifications.has(id)) {
-            this.remove(id);
+        // Remove existing notifications with same ID (immediately for rapid updates)
+        if (id) {
+            // Remove from notifications map
+            if (this.notifications.has(id)) {
+                const existingData = this.notifications.get(id);
+                if (existingData) {
+                    // Clear any timeout
+                    if (existingData.timeout) {
+                        clearTimeout(existingData.timeout);
+                    }
+                    // Immediately remove from DOM without animation
+                    if (existingData.element && existingData.element.parentNode) {
+                        existingData.element.parentNode.removeChild(existingData.element);
+                    }
+                }
+                this.notifications.delete(id);
+            }
+            
+            // Also search DOM for any orphaned elements with same ID (fallback)
+            const existingElements = document.querySelectorAll(`[data-id="${CSS.escape(id)}"]`);
+            existingElements.forEach(element => {
+                if (element.parentNode) {
+                    element.parentNode.removeChild(element);
+                }
+            });
         }
         
         // Create notification element

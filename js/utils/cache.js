@@ -130,6 +130,8 @@ class ThumbnailCache {
         this.cache = new Map();
         this.generationQueues = new Map(); // Track ongoing generation to avoid duplication
         this.thumbnailSizes = [64, 128, 256, 512, 1024, 2048];
+        
+        // Bundled tracking removed - now handled by unified progress system
     }
     
     // Get thumbnails for a specific hash (returns Map of size -> canvas)
@@ -176,11 +178,28 @@ class ThumbnailCache {
             return this.generationQueues.get(hash);
         }
         
-        // Check if thumbnails already exist
+        // Check if thumbnails already exist in memory
         if (this.hasThumbnails(hash)) {
             return this.getThumbnails(hash);
         }
         
+        // NEW: Try to load from server thumbnails first
+        const serverThumbnails = await this._loadServerThumbnails(hash, sourceImage);
+        if (serverThumbnails && serverThumbnails.size > 0) {
+            console.log(`✅ Loaded ${serverThumbnails.size} thumbnails from server for hash ${hash.substring(0, 8)}...`);
+            this.cache.set(hash, serverThumbnails);
+            
+            // Report completion to unified progress system
+            if (window.imageProcessingProgress) {
+                window.imageProcessingProgress.updateThumbnailProgress(hash, 1);
+            }
+            
+            return serverThumbnails;
+        }
+        
+        console.log(`🔄 Generating thumbnails client-side for hash ${hash.substring(0, 8)}...`);
+        
+        // Bundle tracking now handled by unified progress system
         const generationPromise = this._generateThumbnailsInternal(hash, sourceImage, progressCallback);
         this.generationQueues.set(hash, generationPromise);
         
@@ -203,8 +222,13 @@ class ThumbnailCache {
             const canvas = this._generateSingleThumbnail(sourceImage, size);
             thumbnails.set(size, canvas);
             
+            const progress = 0.3 + (0.3 * (i + 1) / essentialSizes.length);
             if (progressCallback) {
-                progressCallback(0.3 + (0.3 * (i + 1) / essentialSizes.length)); // 30-60%
+                progressCallback(progress); // 30-60%
+            }
+            // Report to unified progress system
+            if (window.imageProcessingProgress) {
+                window.imageProcessingProgress.updateThumbnailProgress(hash, progress);
             }
         }
         
@@ -223,12 +247,22 @@ class ThumbnailCache {
                     const canvas = this._generateSingleThumbnail(sourceImage, size);
                     thumbnails.set(size, canvas);
                     
+                    const progress = 0.6 + (0.4 * (i + 1) / remainingSizes.length);
                     if (progressCallback) {
-                        progressCallback(0.6 + (0.4 * (i + 1) / remainingSizes.length)); // 60-100%
+                        progressCallback(progress); // 60-100%
+                    }
+                    // Report to unified progress system
+                    if (window.imageProcessingProgress) {
+                        window.imageProcessingProgress.updateThumbnailProgress(hash, progress);
                     }
                     resolve();
                 }, delay);
             });
+        }
+        
+        // Report completion to unified progress system
+        if (window.imageProcessingProgress) {
+            window.imageProcessingProgress.updateThumbnailProgress(hash, 1);
         }
         
         return thumbnails;
@@ -306,6 +340,7 @@ class ThumbnailCache {
     clear() {
         this.cache.clear();
         this.generationQueues.clear();
+        // Bundle tracking no longer needed - handled by unified progress system
     }
     
     // Get cache statistics
@@ -328,4 +363,111 @@ class ThumbnailCache {
             activeGenerations: this.generationQueues.size
         };
     }
+    
+    /**
+     * Try to load thumbnails from server first
+     */
+    async _loadServerThumbnails(hash, sourceImage) {
+        // Extract server filename from image node properties
+        let serverFilename = null;
+        
+        if (window.app && window.app.graph) {
+            // Find the image node with this hash
+            const imageNode = window.app.graph.nodes.find(node => 
+                node.type === 'media/image' && node.properties?.hash === hash
+            );
+            
+            if (imageNode) {
+                // Try to extract server filename from serverUrl
+                if (imageNode.properties?.serverUrl) {
+                    const urlParts = imageNode.properties.serverUrl.split('/');
+                    serverFilename = urlParts[urlParts.length - 1]; // Get filename from URL
+                    console.log(`🔍 Extracted server filename from serverUrl: ${serverFilename}`);
+                }
+                // Fallback: check if we have serverFilename property directly
+                else if (imageNode.properties?.serverFilename) {
+                    serverFilename = imageNode.properties.serverFilename;
+                    console.log(`🔍 Using stored serverFilename: ${serverFilename}`);
+                }
+            }
+        }
+        
+        if (!serverFilename) {
+            console.log(`⚠️ No server filename found for hash ${hash.substring(0, 8)}... - cannot load server thumbnails`);
+            return null;
+        }
+        
+        // Remove extension from server filename (e.g., "1753408409158-444qmr.jpg" -> "1753408409158-444qmr")
+        const nameWithoutExt = serverFilename.includes('.') 
+            ? serverFilename.substring(0, serverFilename.lastIndexOf('.'))
+            : serverFilename;
+        
+        console.log(`📷 Attempting to load server thumbnails for: ${nameWithoutExt}`);
+        
+        const thumbnails = new Map();
+        const loadPromises = [];
+        
+        // Try to load each thumbnail size from server
+        for (const size of this.thumbnailSizes) {
+            const promise = this._loadSingleServerThumbnail(size, nameWithoutExt)
+                .then(canvas => {
+                    if (canvas) {
+                        thumbnails.set(size, canvas);
+                        console.log(`✅ Loaded ${size}px server thumbnail for ${nameWithoutExt}`);
+                    }
+                })
+                .catch(error => {
+                    // Silently fail for individual thumbnails
+                    console.log(`📷 Server thumbnail ${size}px not available for ${nameWithoutExt}`);
+                });
+            loadPromises.push(promise);
+        }
+        
+        // Wait for all thumbnail loads to complete
+        await Promise.all(loadPromises);
+        
+        console.log(`🎯 Server thumbnail loading complete: ${thumbnails.size}/${this.thumbnailSizes.length} sizes loaded for ${nameWithoutExt}`);
+        return thumbnails.size > 0 ? thumbnails : null;
+    }
+    
+    /**
+     * Load a single thumbnail from server
+     */
+    async _loadSingleServerThumbnail(size, nameWithoutExt) {
+        const thumbnailUrl = `${CONFIG.SERVER.API_BASE}/thumbnails/${size}/${nameWithoutExt}.webp`;
+        
+        return new Promise((resolve) => {
+            const img = new Image();
+            img.crossOrigin = 'anonymous';
+            
+            img.onload = () => {
+                try {
+                    // Create canvas and draw the server thumbnail
+                    const canvas = Utils.createCanvas(img.width, img.height);
+                    const ctx = canvas.getContext('2d');
+                    ctx.drawImage(img, 0, 0);
+                    resolve(canvas);
+                } catch (error) {
+                    console.warn(`Failed to create canvas for ${size}px thumbnail:`, error);
+                    resolve(null);
+                }
+            };
+            
+            img.onerror = () => {
+                resolve(null);
+            };
+            
+            // Set a timeout to avoid hanging
+            setTimeout(() => {
+                if (!img.complete) {
+                    img.src = ''; // Cancel load
+                    resolve(null);
+                }
+            }, 2000); // 2 second timeout
+            
+            img.src = thumbnailUrl;
+        });
+    }
+    
+    // Legacy bundle methods removed - now handled by unified progress system
 }

@@ -113,10 +113,42 @@ class StateSyncManager {
                 operationId,
                 type: command.type,
                 params: command.params,
-                stateVersion: this.serverStateVersion
+                stateVersion: this.serverStateVersion,
+                undoData: command._generatedUndoData || command.undoData || null,  // Use undo data generated during execution
+                transactionId: this.app.transactionManager?.getCurrentTransaction()?.id || null
             };
             
-            console.log('📤 Sending operation to server:', serverRequest);
+            // Log payload size for debugging
+            const payloadSize = JSON.stringify(serverRequest).length;
+            console.log('📤 Sending operation to server:', {
+                type: serverRequest.type,
+                operationId: serverRequest.operationId,
+                hasUndoData: !!serverRequest.undoData,
+                undoDataPreview: serverRequest.undoData ? Object.keys(serverRequest.undoData) : null,
+                payloadSize: payloadSize,
+                payloadSizeMB: (payloadSize / 1024 / 1024).toFixed(2) + 'MB'
+            });
+            
+            // Check and warn about large payloads
+            const MAX_SAFE_SIZE = 50 * 1024; // 50KB warning threshold
+            
+            if (payloadSize > MAX_SAFE_SIZE) {
+                console.warn(`⚠️ Large operation payload: ${(payloadSize / 1024 / 1024).toFixed(2)}MB for ${command.type}`);
+                
+                // Check if it contains embedded image data
+                if (JSON.stringify(serverRequest).includes('data:image')) {
+                    console.error('❌ Operation contains embedded image data - this will likely fail');
+                    console.error('   Images should be uploaded via HTTP first, not sent through WebSocket');
+                    
+                    // Show user notification
+                    if (window.unifiedNotifications) {
+                        window.unifiedNotifications.error(
+                            'Operation too large',
+                            { detail: 'Images must be uploaded before creating nodes. This operation will likely fail.' }
+                        );
+                    }
+                }
+            }
             if (!this.network) {
                 throw new Error('Network layer not initialized');
             }
@@ -186,6 +218,12 @@ class StateSyncManager {
         
         const localResult = await command.execute(context);
         
+        // Capture undo data generated during execution
+        if (command.undoData) {
+            console.log(`📝 Command generated undo data:`, command.undoData);
+            command._generatedUndoData = command.undoData;
+        }
+        
         // Log optimistic operation result
         if (command.type === 'node_create' && localResult?.node) {
             console.log(`🔮 Optimistic node created: ${localResult.node.id}:${localResult.node.type} at [${localResult.node.pos[0]}, ${localResult.node.pos[1]}]`);
@@ -224,7 +262,7 @@ class StateSyncManager {
      * Handle server state update
      */
     async handleServerStateUpdate(data) {
-        const { stateVersion, changes, operationId } = data;
+        const { stateVersion, changes, operationId, isUndo, isRedo } = data;
         
         // Ignore if we're behind (full sync needed)
         if (stateVersion > this.serverStateVersion + 1) {
@@ -238,9 +276,9 @@ class StateSyncManager {
         
         if (this.updating) {
             if (isLargeUpdate) {
-                console.log(`⏳ Large update in progress, queueing (${changes?.added?.length || 0} adds, ${changes?.updated?.length || 0} updates)...`);
+                // console.log(`⏳ Large update in progress, queueing (${changes?.added?.length || 0} adds, ${changes?.updated?.length || 0} updates)...`);
             } else {
-                console.log('⏳ Update in progress, queueing...');
+                // console.log('⏳ Update in progress, queueing...');
             }
             setTimeout(() => this.handleServerStateUpdate(data), isLargeUpdate ? 500 : 100);
             return;
@@ -259,7 +297,7 @@ class StateSyncManager {
             }
             
             // Apply changes with better tracking
-            await this.applyServerChanges(changes, operationId);
+            await this.applyServerChanges(changes, operationId, isUndo || isRedo);
             
             // Update version
             this.serverStateVersion = stateVersion;
@@ -280,7 +318,7 @@ class StateSyncManager {
     /**
      * Apply changes from server
      */
-    async applyServerChanges(changes, operationId) {
+    async applyServerChanges(changes, operationId, forceUpdate = false) {
         const { added, updated, removed } = changes;
         
         // Remove nodes
@@ -360,6 +398,11 @@ class StateSyncManager {
                         this.app.graph.add(node);
                         console.log(`✅ Server node added successfully: ${node.id} (total nodes: ${this.app.graph.nodes.length})`);
                         
+                        // Notify upload coordinator for image nodes
+                        if (node.type === 'media/image' && this.app.imageUploadCoordinator) {
+                            this.app.imageUploadCoordinator.onImageNodeCreated(node);
+                        }
+                        
                         // Restore selection if it was selected
                         if (wasSelected && this.app.graphCanvas?.selection) {
                             this.app.graphCanvas.selection.selectNode(node, true);
@@ -378,6 +421,11 @@ class StateSyncManager {
                     if (node) {
                         this.app.graph.add(node);
                         console.log(`✅ Server node added successfully: ${node.id} (total nodes: ${this.app.graph.nodes.length})`);
+                        
+                        // Notify upload coordinator for image nodes
+                        if (node.type === 'media/image' && this.app.imageUploadCoordinator) {
+                            this.app.imageUploadCoordinator.onImageNodeCreated(node);
+                        }
                     } else {
                         console.error(`❌ Failed to create node from server data:`, nodeData);
                     }
@@ -417,11 +465,38 @@ class StateSyncManager {
                 if (node) {
                     // Check if this node was modified by a pending optimistic operation
                     const hasPendingOptimisticUpdate = this.isNodePendingOptimisticUpdate(nodeData.id);
-                    if (!hasPendingOptimisticUpdate) {
-                        // Only update if we don't have a pending optimistic update for this node
+                    if (!hasPendingOptimisticUpdate || forceUpdate) {
+                        // Update if we don't have a pending optimistic update OR if it's a forced update (undo/redo)
                         this.updateNodeFromData(node, nodeData);
+                        if (forceUpdate) {
+                            console.log(`🔄 Force updating node ${nodeData.id} for undo/redo`, {
+                                oldPos: [...node.pos],
+                                newPos: nodeData.pos ? [...nodeData.pos] : null,
+                                updated: nodeData.pos && (
+                                    Math.abs(node.pos[0] - nodeData.pos[0]) > 0.1 || 
+                                    Math.abs(node.pos[1] - nodeData.pos[1]) > 0.1
+                                )
+                            });
+                        }
                     }
                 }
+            }
+        }
+        
+        // Ensure canvas is marked dirty for undo/redo operations
+        if (forceUpdate && (updated?.length > 0 || added?.length > 0 || removed?.length > 0)) {
+            if (this.app?.graphCanvas) {
+                this.app.graphCanvas.dirty_canvas = true;
+                this.app.graphCanvas.dirty_bgcanvas = true;
+                console.log('🎨 Canvas marked dirty for undo/redo update');
+                
+                // Force immediate redraw for undo/redo to ensure visual update
+                requestAnimationFrame(() => {
+                    if (this.app?.graphCanvas?.draw) {
+                        this.app.graphCanvas.draw();
+                        console.log('🎨 Canvas redrawn for undo/redo');
+                    }
+                });
             }
         }
     }
@@ -530,24 +605,25 @@ class StateSyncManager {
         
         // Handle media nodes
         if (node.type === 'media/image') {
-            // For cached images, try to use serverUrl if available
-            const src = nodeData.properties.serverUrl || nodeData.properties.src;
+            // Set loading state immediately for visual feedback
+            node.loadingState = 'loading';
+            node.loadingProgress = 0;
             
-            if (src) {
-                console.log(`🖼️ Creating server image node ${node.id} with src:${src?.substring(0, 50)}...`);
-                // Set loading state immediately for visual feedback
-                node.loadingState = 'loading';
-                node.loadingProgress = 0;
-                
-                // Don't await so loading state is visible
-                node.setImage(
-                    src,
-                    nodeData.properties.filename,
-                    nodeData.properties.hash
-                );
-            } else {
-                console.warn(`⚠️ Server image node ${node.id} has no src or serverUrl`);
-            }
+            // For reference-based nodes, we don't pass src directly
+            // The node will resolve it from hash/serverUrl
+            node.setImage(
+                nodeData.properties.serverUrl || null, // Pass serverUrl if available
+                nodeData.properties.filename,
+                nodeData.properties.hash
+            );
+            
+            // Log what we're creating
+            console.log(`🖼️ Creating image node ${node.id} with references:`, {
+                hash: nodeData.properties.hash?.substring(0, 8),
+                hasServerUrl: !!nodeData.properties.serverUrl,
+                filename: nodeData.properties.filename
+            });
+            
         } else if (node.type === 'media/video' && nodeData.properties.src) {
             // Don't await so loading state is visible
             node.setVideo(
@@ -600,7 +676,24 @@ class StateSyncManager {
         
         // Update properties
         if (nodeData.properties) {
+            // Check if this is an image node getting a new serverUrl
+            const hadServerUrl = node.properties?.serverUrl;
+            const willHaveServerUrl = nodeData.properties?.serverUrl;
+            
             Object.assign(node.properties, nodeData.properties);
+            
+            // If image node just got a serverUrl (from upload in another tab), trigger loading
+            if (node.type === 'media/image' && !hadServerUrl && willHaveServerUrl) {
+                console.log(`🖼️ Image node ${node.id} received serverUrl from sync: ${willHaveServerUrl}`);
+                // Trigger image loading with the new serverUrl
+                if (node.setImage) {
+                    node.setImage(
+                        willHaveServerUrl,
+                        node.properties.filename,
+                        node.properties.hash
+                    );
+                }
+            }
         }
         
         // Update other attributes
@@ -629,17 +722,37 @@ class StateSyncManager {
         const states = [];
         
         for (const node of this.app.graph.nodes) {
-            states.push({
-                id: node.id,
-                type: node.type,
-                pos: [...node.pos],
-                size: [...node.size],
-                properties: { ...node.properties },
-                rotation: node.rotation,
-                flags: { ...node.flags },
-                title: node.title,
-                aspectRatio: node.aspectRatio
-            });
+            // Use UndoOptimization if available, otherwise optimize inline
+            if (window.UndoOptimization) {
+                states.push(window.UndoOptimization.optimizeNodeData(node));
+            } else {
+                // Inline optimization for image nodes
+                const nodeData = {
+                    id: node.id,
+                    type: node.type,
+                    pos: [...node.pos],
+                    size: [...node.size],
+                    properties: { ...node.properties },
+                    rotation: node.rotation,
+                    flags: { ...node.flags },
+                    title: node.title,
+                    aspectRatio: node.aspectRatio
+                };
+                
+                // Remove data URLs from image/video nodes
+                if ((node.type === 'media/image' || node.type === 'media/video') && 
+                    nodeData.properties.src?.startsWith('data:')) {
+                    // Keep only references
+                    nodeData.properties = {
+                        hash: node.properties.hash,
+                        serverUrl: node.properties.serverUrl,
+                        filename: node.properties.filename,
+                        scale: node.properties.scale || 1.0
+                    };
+                }
+                
+                states.push(nodeData);
+            }
         }
         
         return states;

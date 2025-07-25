@@ -1,5 +1,7 @@
 const { v4: uuidv4 } = require('uuid');
 const CanvasStateManager = require('./CanvasStateManager');
+const OperationHistory = require('../undo/OperationHistory');
+const UndoStateSync = require('../undo/UndoStateSync');
 
 /**
  * Fixed Collaboration Manager - Supports multiple tabs per user
@@ -8,6 +10,7 @@ const CanvasStateManager = require('./CanvasStateManager');
  * 2. Multiple tabs can share the same user account
  * 3. Operations sync across all tabs of the same user
  * 4. Server maintains authoritative state
+ * 5. Full undo/redo support with cross-tab synchronization
  */
 class CollaborationManager {
     constructor(io, db) {
@@ -17,6 +20,12 @@ class CollaborationManager {
         // State manager for authoritative canvas state
         this.stateManager = new CanvasStateManager(db);
         
+        // Operation history for undo/redo
+        this.operationHistory = new OperationHistory(db);
+        
+        // Undo state synchronization
+        this.undoStateSync = new UndoStateSync(this.operationHistory, this.stateManager, io);
+        
         // Track sessions by socket ID
         this.socketSessions = new Map(); // socketId -> session info
         
@@ -25,6 +34,9 @@ class CollaborationManager {
         
         // Track project rooms
         this.projectRooms = new Map(); // projectId -> room info
+        
+        // Track active transactions
+        this.activeTransactions = new Map(); // `${userId}-${projectId}` -> transaction info
         
         this.setupSocketHandlers();
     }
@@ -59,6 +71,36 @@ class CollaborationManager {
             // Sync operations
             socket.on('sync_check', async (data) => {
                 await this.handleSyncCheck(socket, data);
+            });
+            
+            // Undo/Redo operations
+            socket.on('undo_operation', async (data) => {
+                await this.handleUndoOperation(socket, data);
+            });
+            
+            socket.on('redo_operation', async (data) => {
+                await this.handleRedoOperation(socket, data);
+            });
+            
+            socket.on('request_undo_state', async (data) => {
+                await this.handleRequestUndoState(socket, data);
+            });
+            
+            socket.on('clear_undo_history', async (data) => {
+                await this.handleClearUndoHistory(socket, data);
+            });
+            
+            // Transaction management
+            socket.on('begin_transaction', async (data) => {
+                await this.handleBeginTransaction(socket, data);
+            });
+            
+            socket.on('commit_transaction', async (data) => {
+                await this.handleCommitTransaction(socket, data);
+            });
+            
+            socket.on('abort_transaction', async (data) => {
+                await this.handleAbortTransaction(socket, data);
             });
             
             // Disconnect
@@ -108,6 +150,13 @@ class CollaborationManager {
                 this.userSockets.set(user.id, new Set());
             }
             this.userSockets.get(user.id).add(socket.id);
+            
+            // Register with undo state sync
+            this.undoStateSync.registerUserSession(user.id, socket.id);
+            
+            // Initialize operation history for this project
+            await this.operationHistory.initializeProject(project.id);
+            console.log(`📚 Initialized operation history for project ${project.id}`);
             
             // Join socket room
             socket.join(`project_${project.id}`);
@@ -175,6 +224,14 @@ class CollaborationManager {
             console.log(`✅ ${username} (${session.tabId}) joined project ${project.name}`);
             console.log(`📊 Project ${project.id} now has ${room.sockets.size} connections`);
             
+            // Send initial undo state to the user
+            const undoState = this.operationHistory.getUserUndoState(user.id, project.id);
+            socket.emit('undo_state_update', {
+                undoState,
+                projectId: project.id
+            });
+            console.log(`📤 Sent initial undo state to ${username}:`, undoState);
+            
         } catch (error) {
             console.error('Error in handleJoinProject:', error);
             socket.emit('error', { message: 'Failed to join project' });
@@ -213,7 +270,9 @@ class CollaborationManager {
         operation.userId = session.userId;
         operation.tabId = session.tabId;
         
-        // Store operation
+        // Operation storage is now handled by OperationHistory in handleExecuteOperation
+        // Commenting out to prevent duplicate operations
+        /*
         await this.db.addOperation(
             projectId,
             session.userId,
@@ -221,6 +280,7 @@ class CollaborationManager {
             operation.data,
             operation.sequence
         );
+        */
         
         // Apply operation to state manager for persistence
         try {
@@ -237,7 +297,7 @@ class CollaborationManager {
             fromSocketId: socket.id
         });
         
-        console.log(`📤 Operation ${operation.type} from ${session.username} (${session.tabId})`);
+        // console.log(`📤 Operation ${operation.type} from ${session.username} (${session.tabId}`);
     }
     
     /**
@@ -350,6 +410,9 @@ class CollaborationManager {
         // Remove from session map
         this.socketSessions.delete(socket.id);
         
+        // Unregister from undo state sync
+        this.undoStateSync.unregisterUserSession(session.userId, socket.id);
+        
         // Remove from user's socket set
         const userSocketSet = this.userSockets.get(session.userId);
         if (userSocketSet) {
@@ -404,13 +467,34 @@ class CollaborationManager {
      * Handle state-based operation execution
      */
     async handleExecuteOperation(socket, data) {
-        const { operationId, type, params, stateVersion } = data;
+        const { operationId, type, params, stateVersion, undoData, transactionId } = data;
+        // console.log(`🎯 handleExecuteOperation called: ${type}, has undo data: ${!!undoData}`);
         const session = this.socketSessions.get(socket.id);
         
         if (!session) {
             socket.emit('operation_rejected', {
                 operationId,
                 error: 'Not authenticated'
+            });
+            return;
+        }
+        
+        // Check operation size to prevent server overload
+        const operationSize = JSON.stringify(data).length;
+        const MAX_OPERATION_SIZE = 100 * 1024; // 100KB limit
+        
+        if (operationSize > MAX_OPERATION_SIZE) {
+            console.error(`❌ Operation rejected - too large: ${operationSize} bytes (${(operationSize / 1024 / 1024).toFixed(2)}MB)`);
+            console.error(`   Type: ${type}, Has embedded data: ${JSON.stringify(params).includes('data:image')}`);
+            
+            socket.emit('operation_rejected', {
+                operationId,
+                error: `Operation too large (${(operationSize / 1024 / 1024).toFixed(2)}MB). Please upload images via HTTP first.`,
+                details: {
+                    size: operationSize,
+                    maxSize: MAX_OPERATION_SIZE,
+                    type: type
+                }
             });
             return;
         }
@@ -426,6 +510,29 @@ class CollaborationManager {
             );
             
             if (result.success) {
+                // Record operation in history for undo/redo
+                const operation = {
+                    id: operationId,
+                    type,
+                    params,
+                    undoData,
+                    sequenceNumber: result.stateVersion
+                };
+                
+                // console.log(`📝 About to record operation with undo data:`, !!undoData);
+                
+                // Get active transaction if any
+                const transactionKey = `${session.userId}-${projectId}`;
+                const activeTransaction = this.activeTransactions.get(transactionKey);
+                const txId = activeTransaction ? activeTransaction.id : transactionId;
+                
+                await this.operationHistory.recordOperation(
+                    operation,
+                    session.userId,
+                    projectId,
+                    txId
+                );
+                
                 // Send acknowledgment to originator
                 socket.emit('operation_ack', {
                     operationId,
@@ -441,7 +548,15 @@ class CollaborationManager {
                     fromTabId: session.tabId
                 });
                 
-                console.log(`✅ Operation ${type} executed, new version: ${result.stateVersion}`);
+                // Send updated undo state to all user's sessions
+                const undoState = this.operationHistory.getUserUndoState(session.userId, projectId);
+                console.log(`📤 Sending undo state update to user ${session.userId}:`, undoState);
+                this.undoStateSync.broadcastToUser(session.userId, 'undo_state_update', {
+                    projectId,
+                    undoState
+                });
+                
+                // console.log(`✅ Operation ${type} executed, new version: ${result.stateVersion}`);
             } else {
                 // Reject operation
                 socket.emit('operation_rejected', {
@@ -450,7 +565,7 @@ class CollaborationManager {
                     stateVersion: result.stateVersion
                 });
                 
-                console.log(`❌ Operation ${type} rejected: ${result.error}`);
+                // console.log(`❌ Operation ${type} rejected: ${result.error}`);
             }
         } catch (error) {
             console.error('Error executing operation:', error);
@@ -487,6 +602,276 @@ class CollaborationManager {
             console.error('Error sending full state sync:', error);
             socket.emit('error', { message: 'Failed to sync state' });
         }
+    }
+    
+    /**
+     * Handle undo operation request
+     */
+    async handleUndoOperation(socket, data) {
+        const session = this.socketSessions.get(socket.id);
+        if (!session) {
+            socket.emit('error', { message: 'Not authenticated' });
+            return;
+        }
+        
+        try {
+            const result = await this.undoStateSync.handleUndo(
+                session.userId,
+                session.projectId,
+                socket.id
+            );
+            
+            if (result.success) {
+                socket.emit('undo_success', result);
+                
+                // Broadcast state changes to all clients in the project
+                if (result.stateUpdate) {
+                    // Get current state version
+                    const currentVersion = this.stateManager.stateVersions.get(session.projectId) || 0;
+                    
+                    // Broadcast state update to all clients
+                    this.io.to(`project_${session.projectId}`).emit('state_update', {
+                        stateVersion: currentVersion,
+                        operationId: `undo_${Date.now()}`,
+                        fromUserId: session.userId,
+                        changes: result.stateUpdate,
+                        isUndo: true
+                    });
+                    
+                    console.log(`📡 Broadcast undo state changes to project ${session.projectId}`);
+                }
+            } else {
+                socket.emit('undo_failed', result);
+            }
+        } catch (error) {
+            console.error('Error handling undo:', error);
+            socket.emit('error', { message: 'Failed to undo operation' });
+        }
+    }
+    
+    /**
+     * Handle redo operation request
+     */
+    async handleRedoOperation(socket, data) {
+        const session = this.socketSessions.get(socket.id);
+        if (!session) {
+            socket.emit('error', { message: 'Not authenticated' });
+            return;
+        }
+        
+        try {
+            const result = await this.undoStateSync.handleRedo(
+                session.userId,
+                session.projectId,
+                socket.id
+            );
+            
+            if (result.success) {
+                socket.emit('redo_success', result);
+                
+                // Broadcast state changes to all clients in the project
+                if (result.stateUpdate) {
+                    // Get current state version
+                    const currentVersion = this.stateManager.stateVersions.get(session.projectId) || 0;
+                    
+                    // Broadcast state update to all clients
+                    this.io.to(`project_${session.projectId}`).emit('state_update', {
+                        stateVersion: currentVersion,
+                        operationId: `redo_${Date.now()}`,
+                        fromUserId: session.userId,
+                        changes: result.stateUpdate,
+                        isRedo: true
+                    });
+                    
+                    console.log(`📡 Broadcast redo state changes to project ${session.projectId}`);
+                }
+            } else {
+                socket.emit('redo_failed', result);
+            }
+        } catch (error) {
+            console.error('Error handling redo:', error);
+            socket.emit('error', { message: 'Failed to redo operation' });
+        }
+    }
+    
+    /**
+     * Handle request for current undo state
+     */
+    async handleRequestUndoState(socket, data) {
+        const session = this.socketSessions.get(socket.id);
+        if (!session) {
+            socket.emit('error', { message: 'Not authenticated' });
+            return;
+        }
+        
+        try {
+            const undoState = this.operationHistory.getUserUndoState(
+                session.userId,
+                session.projectId
+            );
+            
+            socket.emit('undo_state_update', {
+                projectId: session.projectId,
+                undoState
+            });
+        } catch (error) {
+            console.error('Error getting undo state:', error);
+            socket.emit('error', { message: 'Failed to get undo state' });
+        }
+    }
+    
+    /**
+     * Handle request to clear undo history for a project
+     */
+    async handleClearUndoHistory(socket, data) {
+        const session = this.socketSessions.get(socket.id);
+        if (!session) {
+            socket.emit('error', { message: 'Not authenticated' });
+            return;
+        }
+        
+        const { projectId } = data;
+        
+        // Verify user has access to this project
+        if (session.projectId !== projectId) {
+            socket.emit('error', { message: 'Not authorized for this project' });
+            return;
+        }
+        
+        try {
+            console.log(`🧹 Clearing undo history for project ${projectId} requested by user ${session.userId}`);
+            
+            // Clear the operation history for this project
+            if (this.operationHistory) {
+                // Clear project's operation history
+                const cleared = await this.operationHistory.clearProjectHistory(projectId);
+                console.log(`✅ Cleared ${cleared} operations for project ${projectId}`);
+            }
+            
+            // Clear from database
+            const deleteResult = await this.db.run(
+                'DELETE FROM operations WHERE project_id = ?',
+                [projectId]
+            );
+            console.log(`🗑️ Deleted ${deleteResult.changes} operations from database for project ${projectId}`);
+            
+            // Notify all users in the project that undo history was cleared
+            const undoState = {
+                canUndo: false,
+                canRedo: false,
+                undoCount: 0,
+                redoCount: 0,
+                nextUndo: null,
+                nextRedo: null
+            };
+            
+            this.io.to(`project_${projectId}`).emit('undo_state_update', {
+                projectId,
+                undoState,
+                cleared: true
+            });
+            
+            socket.emit('undo_history_cleared', {
+                projectId,
+                success: true,
+                deletedCount: deleteResult.changes
+            });
+            
+            console.log(`✅ Undo history cleared for project ${projectId}`);
+        } catch (error) {
+            console.error('Error clearing undo history:', error);
+            socket.emit('error', { message: 'Failed to clear undo history' });
+        }
+    }
+    
+    /**
+     * Handle beginning of transaction
+     */
+    async handleBeginTransaction(socket, data) {
+        const session = this.socketSessions.get(socket.id);
+        if (!session) {
+            socket.emit('error', { message: 'Not authenticated' });
+            return;
+        }
+        
+        const { source } = data;
+        const transactionKey = `${session.userId}-${session.projectId}`;
+        
+        // Create new transaction
+        const transaction = {
+            id: `txn_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+            userId: session.userId,
+            projectId: session.projectId,
+            source: source,
+            startedAt: Date.now(),
+            operations: []
+        };
+        
+        this.activeTransactions.set(transactionKey, transaction);
+        
+        socket.emit('transaction_started', {
+            transactionId: transaction.id
+        });
+        
+        console.log(`📝 Transaction started: ${transaction.id} (${source})`);
+    }
+    
+    /**
+     * Handle transaction commit
+     */
+    async handleCommitTransaction(socket, data) {
+        const session = this.socketSessions.get(socket.id);
+        if (!session) {
+            socket.emit('error', { message: 'Not authenticated' });
+            return;
+        }
+        
+        const transactionKey = `${session.userId}-${session.projectId}`;
+        const transaction = this.activeTransactions.get(transactionKey);
+        
+        if (!transaction) {
+            socket.emit('error', { message: 'No active transaction' });
+            return;
+        }
+        
+        // Remove from active transactions
+        this.activeTransactions.delete(transactionKey);
+        
+        socket.emit('transaction_committed', {
+            transactionId: transaction.id,
+            operationCount: transaction.operations.length
+        });
+        
+        console.log(`✅ Transaction committed: ${transaction.id} (${transaction.operations.length} operations)`);
+    }
+    
+    /**
+     * Handle transaction abort
+     */
+    async handleAbortTransaction(socket, data) {
+        const session = this.socketSessions.get(socket.id);
+        if (!session) {
+            socket.emit('error', { message: 'Not authenticated' });
+            return;
+        }
+        
+        const transactionKey = `${session.userId}-${session.projectId}`;
+        const transaction = this.activeTransactions.get(transactionKey);
+        
+        if (!transaction) {
+            socket.emit('error', { message: 'No active transaction' });
+            return;
+        }
+        
+        // TODO: Implement rollback of operations in aborted transaction
+        // For now, just remove the transaction
+        this.activeTransactions.delete(transactionKey);
+        
+        socket.emit('transaction_aborted', {
+            transactionId: transaction.id
+        });
+        
+        console.log(`❌ Transaction aborted: ${transaction.id}`);
     }
 }
 

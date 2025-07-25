@@ -98,14 +98,8 @@ class CanvasStateManager {
         // Save to database
         await this.saveCanvasState(projectId, state);
         
-        // Store operation history
-        await this.db.addOperation(
-            projectId,
-            userId,
-            operation.type,
-            operation.params,
-            newVersion
-        );
+        // Operation history is now handled by OperationHistory class in collaboration.js
+        // This prevents duplicate operations (one with undo data, one without)
         
         return {
             success: true,
@@ -170,6 +164,9 @@ class CanvasStateManager {
             case 'node_paste':
                 return this.applyNodePaste(operation.params, state, changes);
                 
+            case 'image_upload_complete':
+                return this.applyImageUploadComplete(operation.params, state, changes);
+                
             default:
                 console.warn('Unhandled operation type:', operation.type);
                 return null;
@@ -187,25 +184,61 @@ class CanvasStateManager {
             type: params.type,
             pos: [...params.pos],
             size: params.size ? [...params.size] : [150, 100],
-            properties: { ...params.properties },
+            properties: this.optimizeNodeProperties(params.properties, params.type),
             rotation: params.rotation || 0,
             flags: { ...params.flags },
             title: params.title || '',
             aspectRatio: params.aspectRatio
         };
         
-        // Add media data if provided
+        // Add media data if provided (but optimize it)
         if (params.imageData) {
-            node.properties = { ...node.properties, ...params.imageData };
+            // Only keep references, not data URLs
+            const optimizedImageData = this.optimizeNodeProperties(params.imageData, 'media/image');
+            node.properties = { ...node.properties, ...optimizedImageData };
         }
         if (params.videoData) {
-            node.properties = { ...node.properties, ...params.videoData };
+            // Only keep references, not data URLs  
+            const optimizedVideoData = this.optimizeNodeProperties(params.videoData, 'media/video');
+            node.properties = { ...node.properties, ...optimizedVideoData };
         }
         
         state.nodes.push(node);
         changes.added.push(node);
         
         return changes;
+    }
+    
+    /**
+     * Optimize node properties for server storage and broadcast
+     * Removes large data URLs while preserving references
+     */
+    optimizeNodeProperties(properties, nodeType) {
+        if (!properties) return {};
+        
+        // For non-media nodes, return as-is
+        if (nodeType !== 'media/image' && nodeType !== 'media/video') {
+            return { ...properties };
+        }
+        
+        // For media nodes, optimize
+        const optimized = { ...properties };
+        
+        // If we have a data URL, don't store it on the server
+        if (optimized.src && optimized.src.startsWith('data:')) {
+            const originalSize = optimized.src.length;
+            console.log(`🗜️ Server optimizing ${nodeType}: removing ${(originalSize/1024/1024).toFixed(2)}MB data URL`);
+            
+            // Remove the data URL - clients should get it from cache or upload
+            delete optimized.src;
+            
+            // Ensure we have the essential references
+            if (!optimized.hash) {
+                console.warn('⚠️ Media node created without hash - clients may not find image');
+            }
+        }
+        
+        return optimized;
     }
     
     /**
@@ -535,6 +568,58 @@ class CanvasStateManager {
     }
     
     /**
+     * Apply image upload complete - update all nodes with matching hash
+     */
+    applyImageUploadComplete(params, state, changes) {
+        const { hash, serverUrl, serverFilename } = params;
+        
+        console.log(`🔍 Processing image_upload_complete:`, {
+            hash: hash?.substring(0, 8),
+            serverUrl,
+            totalNodes: state.nodes.length,
+            imageNodes: state.nodes.filter(n => n.type === 'media/image').length
+        });
+        
+        // Debug: Show all image nodes
+        state.nodes.filter(n => n.type === 'media/image').forEach(node => {
+            console.log(`  Image node ${node.id}:`, {
+                hash: node.properties.hash?.substring(0, 8),
+                hasServerUrl: !!node.properties.serverUrl,
+                matchesHash: node.properties.hash === hash
+            });
+        });
+        
+        // Find all image nodes with this hash
+        let updatedCount = 0;
+        for (const node of state.nodes) {
+            if (node.type === 'media/image' && 
+                node.properties.hash === hash && 
+                !node.properties.serverUrl) {
+                
+                // Update node with server URL
+                node.properties.serverUrl = serverUrl;
+                if (serverFilename) {
+                    node.properties.serverFilename = serverFilename;
+                }
+                
+                changes.updated.push(node);
+                updatedCount++;
+                
+                console.log(`✅ Updated node ${node.id} with serverUrl after upload`);
+            }
+        }
+        
+        if (updatedCount > 0) {
+            console.log(`📝 Image upload complete: Updated ${updatedCount} nodes with hash ${hash.substring(0, 8)}...`);
+        } else {
+            console.log(`⚠️ No nodes updated for hash ${hash?.substring(0, 8)} - all already have serverUrl or hash mismatch`);
+        }
+        
+        // Always return changes, even if empty - operation still succeeded
+        return changes;
+    }
+    
+    /**
      * Save canvas state to database
      */
     async saveCanvasState(projectId, state) {
@@ -689,6 +774,13 @@ class CanvasStateManager {
             }
             if (!op.params.targetPosition || !Array.isArray(op.params.targetPosition) || op.params.targetPosition.length !== 2) {
                 return { valid: false, error: 'Invalid target position' };
+            }
+            return { valid: true };
+        });
+        
+        validators.set('image_upload_complete', (op, state) => {
+            if (!op.params.hash || !op.params.serverUrl) {
+                return { valid: false, error: 'Missing hash or serverUrl' };
             }
             return { valid: true };
         });

@@ -117,58 +117,128 @@ class DragDropManager {
         const newNodes = [];
         const cascadeOffset = 40; // Offset for multiple files
         
-        // Show initial loading message using unified notifications
-        const progressId = 'file-upload-progress';
-        if (window.unifiedNotifications) {
-            window.unifiedNotifications.show({
-                id: progressId,
-                type: 'info',
-                message: `Loading images: 0/${files.length}`,
-                detail: 'Preparing...',
-                progress: { current: 0, total: files.length, showBar: true },
-                duration: 0, // Don't auto-dismiss
-                persistent: true,
-                closeable: false
-            });
+        // Start unified progress tracking
+        const fileInfos = files.map(file => ({
+            name: file.name,
+            size: file.size,
+            hash: null // Will be set during processing
+        }));
+        const batchId = window.imageProcessingProgress?.startBatch(fileInfos) || null;
+        
+        // First, process and upload all image files
+        const imageFiles = [];
+        const videoFiles = [];
+        
+        for (const file of files) {
+            if (file.type.startsWith('video/') || file.type === 'image/gif') {
+                videoFiles.push(file);
+            } else if (file.type.startsWith('image/')) {
+                imageFiles.push(file);
+            }
         }
         
-        // Process files one by one to maintain UI responsiveness
-        for (let i = 0; i < files.length; i++) {
-            const file = files[i];
+        // Upload images first via HTTP (videos will use the old flow for now)
+        const uploadedImages = new Map(); // hash -> upload result
+        
+        if (imageFiles.length > 0 && window.imageUploadManager) {
+            console.log(`📤 Uploading ${imageFiles.length} images via HTTP first...`);
             
-            try {
-                // Update progress
-                if (window.unifiedNotifications) {
-                    window.unifiedNotifications.update(progressId, {
-                        message: `Loading images: ${i}/${files.length}`,
-                        detail: file.name,
-                        progress: { current: i, total: files.length, showBar: true }
-                    });
+            // Show upload notification
+            if (window.unifiedNotifications) {
+                window.unifiedNotifications.info(
+                    `Uploading ${imageFiles.length} images...`,
+                    { detail: 'Please wait while images are uploaded' }
+                );
+            }
+            
+            // Process images in batches to avoid overwhelming the server
+            const BATCH_SIZE = 5; // Upload 5 at a time
+            for (let i = 0; i < imageFiles.length; i += BATCH_SIZE) {
+                const batch = imageFiles.slice(i, i + BATCH_SIZE);
+                const uploadPromises = [];
+                
+                for (const file of batch) {
+                    // Get data URL and hash
+                    const dataURL = await this.fileToDataURL(file);
+                    const hash = await HashUtils.hashImageData(dataURL);
+                    
+                    // Update progress tracking
+                    if (batchId && window.imageProcessingProgress) {
+                        window.imageProcessingProgress.updateFileHash(file.name, hash);
+                    }
+                    
+                    // Start upload
+                    const uploadPromise = window.imageUploadManager.uploadImage(dataURL, file.name, hash)
+                        .then(result => {
+                            uploadedImages.set(hash, {
+                                ...result,
+                                file,
+                                dataURL,
+                                hash
+                            });
+                            console.log(`✅ Uploaded ${file.name}`);
+                        })
+                        .catch(error => {
+                            console.error(`❌ Failed to upload ${file.name}:`, error);
+                            // Store failure so we can fall back to old method
+                            uploadedImages.set(hash, { error, file, dataURL, hash });
+                        });
+                    
+                    uploadPromises.push(uploadPromise);
                 }
                 
-                // Yield control to keep UI responsive - use requestAnimationFrame for better timing
+                // Wait for batch to complete
+                await Promise.all(uploadPromises);
+            }
+        }
+        
+        // Now create nodes for all files
+        const allFiles = [...imageFiles, ...videoFiles];
+        for (let i = 0; i < allFiles.length; i++) {
+            const file = allFiles[i];
+            
+            try {
+                // Yield control to keep UI responsive
                 await new Promise(resolve => requestAnimationFrame(resolve));
                 
-                const nodeData = await this.createNodeFromFile(file, dropPos, i * cascadeOffset);
+                const nodeData = await this.createNodeFromFile(file, dropPos, i * cascadeOffset, batchId, uploadedImages);
                 if (nodeData) {
+                    // Update the batch with the actual hash
+                    if (batchId && nodeData.properties.hash) {
+                        window.imageProcessingProgress?.updateLoadProgress(nodeData.properties.hash, 1);
+                    }
                     if (window.app?.operationPipeline) {
                         try {
-                            // Use operation pipeline from the start for proper undo tracking
-                            const result = await window.app.operationPipeline.execute('node_create', {
+                            // Create node params based on whether we have a pre-uploaded image
+                            const nodeParams = {
                                 type: nodeData.type,
                                 pos: [...nodeData.pos],
                                 size: [...nodeData.size],
                                 properties: {
-                                    ...nodeData.properties,
-                                    src: nodeData.dataURL  // Include the data URL for immediate display
-                                },
-                                // For videos, include video data
-                                videoData: nodeData.type === 'media/video' ? {
+                                    ...nodeData.properties
+                                }
+                            };
+                            
+                            // For pre-uploaded images, don't include the data URL
+                            if (nodeData.properties.serverUrl) {
+                                // Already uploaded - just use server URL
+                                console.log(`📎 Creating node with pre-uploaded image: ${nodeData.properties.serverUrl}`);
+                            } else if (nodeData.type === 'media/image') {
+                                // Fallback for failed uploads - include data URL
+                                nodeParams.properties.src = nodeData.dataURL;
+                            }
+                            
+                            // For videos, include video data (keep old flow for now)
+                            if (nodeData.type === 'media/video') {
+                                nodeParams.videoData = {
                                     src: nodeData.dataURL,
                                     filename: nodeData.properties.filename,
                                     hash: nodeData.properties.hash
-                                } : undefined
-                            });
+                                };
+                            }
+                            
+                            // Use operation pipeline from the start for proper undo tracking
+                            const result = await window.app.operationPipeline.execute('node_create', nodeParams);
                             
                             if (result.success && result.result?.node) {
                                 const createdNode = result.result.node;
@@ -272,19 +342,7 @@ class DragDropManager {
             }
         }
         
-        // Update final progress
-        if (window.unifiedNotifications) {
-            window.unifiedNotifications.update(progressId, {
-                message: `Loading images: ${files.length}/${files.length}`,
-                detail: 'Complete!',
-                progress: { current: files.length, total: files.length, showBar: true }
-            });
-            
-            // Remove progress notification after a short delay
-            setTimeout(() => {
-                window.unifiedNotifications.remove(progressId);
-            }, 1000);
-        }
+        // Batch completion is handled by ImageProcessingProgressManager
         
         // Select all new nodes
         if (newNodes.length > 0) {
@@ -297,18 +355,37 @@ class DragDropManager {
         }
     }
     
-    async createNodeFromFile(file, basePos, offset) {
+    async createNodeFromFile(file, basePos, offset, batchId, uploadedImages) {
         // Determine node type
         const isVideo = file.type.startsWith('video/') || file.type === 'image/gif';
         const nodeType = isVideo ? 'media/video' : 'media/image';
         
-        // Process file to get data URL and hash
-        console.log('📱 Processing file for state sync:', file.name);
-        const dataURL = await this.fileToDataURL(file);
-        const hash = await HashUtils.hashImageData(dataURL);
+        let dataURL, hash, uploadResult;
         
-        // Cache the media locally
-        window.imageCache.set(hash, dataURL);
+        // Check if this image was pre-uploaded
+        if (uploadedImages && !isVideo) {
+            // For images, check if we already have the upload result
+            // First we need to get the hash to look it up
+            dataURL = await this.fileToDataURL(file);
+            hash = await HashUtils.hashImageData(dataURL);
+            uploadResult = uploadedImages.get(hash);
+            
+            if (uploadResult && !uploadResult.error) {
+                console.log(`✅ Using pre-uploaded image: ${uploadResult.url}`);
+                // Don't need to cache locally since it's already on server
+            } else {
+                // Cache locally as fallback
+                window.imageCache.set(hash, dataURL);
+            }
+        } else {
+            // For videos or if no pre-upload, process normally
+            console.log('📱 Processing file for state sync:', file.name);
+            dataURL = await this.fileToDataURL(file);
+            hash = await HashUtils.hashImageData(dataURL);
+            
+            // Cache the media locally
+            window.imageCache.set(hash, dataURL);
+        }
         
         // Pre-load media to get correct dimensions
         let size = [200, 200]; // Default fallback
@@ -329,6 +406,25 @@ class DragDropManager {
         }
         // For videos, we'll let the video node handle dimensions after loading
         
+        // Update progress manager with actual hash (replace placeholder)
+        if (batchId && window.imageProcessingProgress) {
+            window.imageProcessingProgress.updateFileHash(file.name, hash);
+        }
+        
+        // Prepare properties based on whether we have a pre-upload
+        const properties = {
+            filename: file.name,
+            hash: hash,
+            fileSize: file.size,
+            mimeType: file.type
+        };
+        
+        // Add server URL if we have a successful pre-upload
+        if (uploadResult && !uploadResult.error) {
+            properties.serverUrl = uploadResult.url;
+            properties.serverFilename = uploadResult.filename;
+        }
+        
         // Return node data for OperationPipeline, not an actual node
         return {
             type: nodeType,
@@ -337,11 +433,7 @@ class DragDropManager {
                 basePos[1] - (size[1] / 2) + offset
             ],
             size: size,
-            properties: {
-                filename: file.name,
-                hash: hash,
-                src: dataURL
-            },
+            properties: properties,
             dataURL: dataURL // Pass this for loading after node creation
         };
     }

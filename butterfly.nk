@@ -1,0 +1,17 @@
+set cut_paste_input [stack 0]
+version 13.2 v8
+push $cut_paste_input
+Transform {
+ translate {{"noise(frame*speed, 1) * amplitude + noise(frame*speed*0.7, 2) * amplitude*0.5"} {"noise(frame*speed, 3) * amplitude + noise(frame*speed*0.8, 4) * amplitude*0.6"}}
+ rotate {{"atan2(noise((frame+1)*speed, 3) * amplitude + noise((frame+1)*speed*0.8, 4) * amplitude*0.6 - translate.y, noise((frame+1)*speed, 1) * amplitude + noise((frame+1)*speed*0.7, 2) * amplitude*0.5 - translate.x) * 180/pi"}}
+ center {960 540}
+ addUserKnob {20 Butterfly_Controls l "Butterfly Controls"}
+ addUserKnob {7 speed l Speed R 0.001 0.1}
+ speed 0.02
+ addUserKnob {7 amplitude l Amplitude R 10 200}
+ amplitude 50
+ name Transform_Butterfly
+ selected true
+ xpos 0
+ ypos 100
+}

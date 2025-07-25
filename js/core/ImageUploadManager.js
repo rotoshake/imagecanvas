@@ -7,6 +7,8 @@ class ImageUploadManager {
         this.uploadQueue = new Map(); // hash -> upload promise
         // Use the configured server URL, not the current page host
         this.uploadUrl = CONFIG.SERVER.API_BASE + '/api/upload';
+        
+        // Bundled tracking removed - now handled by unified progress system
     }
 
     /**
@@ -19,6 +21,8 @@ class ImageUploadManager {
             console.log(`⏳ Upload already in progress for ${hash}`);
             return this.uploadQueue.get(hash);
         }
+
+        // Bundle tracking is now handled by unified progress system
 
         // Create upload promise
         const uploadPromise = this._performUpload(imageData, filename, hash);
@@ -37,19 +41,7 @@ class ImageUploadManager {
     async _performUpload(imageData, filename, hash) {
         console.log(`📤 Uploading image ${filename} (${hash})`);
         
-        // Show upload notification
-        const notificationId = 'upload-' + hash;
-        if (window.unifiedNotifications) {
-            window.unifiedNotifications.show({
-                id: notificationId,
-                type: 'info',
-                message: `Uploading ${filename}`,
-                progress: { current: 0, total: 100, showBar: true },
-                duration: 0, // Don't auto-dismiss
-                persistent: true,
-                closeable: false
-            });
-        }
+        // Progress is now handled by unified progress system
 
         try {
             // Convert base64 to blob
@@ -70,24 +62,23 @@ class ImageUploadManager {
             const result = await response.json();
             console.log(`✅ Upload complete for ${filename}:`, result);
             
-            // Show success notification
-            if (window.unifiedNotifications) {
-                window.unifiedNotifications.remove(notificationId);
-                window.unifiedNotifications.success(`${filename} uploaded successfully`);
+            // Notify unified progress system of completion
+            if (window.imageProcessingProgress) {
+                window.imageProcessingProgress.updateUploadProgress(hash, 1);
             }
 
             return {
                 url: result.url,
                 hash: hash,
-                size: blob.size
+                size: blob.size,
+                filename: result.filename || filename
             };
         } catch (error) {
             console.error(`❌ Upload failed for ${filename}:`, error);
             
-            // Show error notification
-            if (window.unifiedNotifications) {
-                window.unifiedNotifications.remove(notificationId);
-                window.unifiedNotifications.error(`Failed to upload ${filename}`, { detail: error.message });
+            // Notify unified progress system of failure
+            if (window.imageProcessingProgress) {
+                window.imageProcessingProgress.markFailed(hash, 'upload');
             }
             
             throw error;
@@ -133,13 +124,9 @@ class ImageUploadManager {
     }
 
     _updateProgress(filename, percent, hash) {
-        // Update progress in unified notifications if available
-        if (window.unifiedNotifications) {
-            const notificationId = 'upload-' + (hash || filename);
-            window.unifiedNotifications.update(notificationId, {
-                message: `Uploading ${filename}`,
-                progress: { current: percent, total: 100, showBar: true }
-            });
+        // Report progress to unified system
+        if (window.imageProcessingProgress) {
+            window.imageProcessingProgress.updateUploadProgress(hash, percent / 100);
         }
     }
 
@@ -161,6 +148,8 @@ class ImageUploadManager {
     getUploadPromise(hash) {
         return this.uploadQueue.get(hash);
     }
+    
+    // Legacy bundle methods removed - now handled by unified progress system
 }
 
 // Create global instance

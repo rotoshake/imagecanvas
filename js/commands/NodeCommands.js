@@ -35,6 +35,7 @@ class MoveNodeCommand extends Command {
         
         // Store undo data
         this.undoData = { nodes: [] };
+        console.log(`📝 MoveNodeCommand: Initializing undo data for ${this.id}`);
         
         // Single node move
         if (this.params.nodeId) {
@@ -108,6 +109,7 @@ class MoveNodeCommand extends Command {
         }
         
         this.executed = true;
+        console.log(`✅ MoveNodeCommand ${this.id}: Undo data populated with ${this.undoData.nodes.length} nodes`);
         return { nodes: movedNodes };
     }
     
@@ -245,8 +247,13 @@ class CreateNodeCommand extends Command {
                     this.params.properties.filename,
                     this.params.properties.hash
                 );
+                
+                // Mark as already loaded since it's from server
+                node.loadingState = 'loaded';
+                node.loadingProgress = 100;
             } else if (this.params.imageData) {
-                // Legacy: embedded image data
+                // Legacy: embedded image data (should be avoided)
+                console.warn('⚠️ Using legacy embedded image data - this should be avoided');
                 node.setImage(
                     this.params.imageData.src,
                     this.params.imageData.filename,
@@ -254,6 +261,8 @@ class CreateNodeCommand extends Command {
                 );
             } else if (this.params.properties?.src) {
                 // New: local data URL that will be uploaded later
+                // This should only happen as a fallback
+                console.warn('⚠️ Creating image node with local data URL - upload failed?');
                 node.setImage(
                     this.params.properties.src,
                     this.params.properties.filename,
@@ -276,6 +285,12 @@ class CreateNodeCommand extends Command {
             
             // Handle background upload if needed
             if (needsUpload && window.imageUploadManager) {
+                console.log(`🔍 Upload needed for node ${node.id}:`, {
+                    hash: this.params.properties.hash,
+                    filename: this.params.properties.filename,
+                    srcLength: this.params.properties.src?.length || 0
+                });
+                
                 // Pre-populate cache with local data URL so duplicates can use it immediately
                 if (window.app?.imageResourceCache && this.params.properties.hash) {
                     console.log('📋 Pre-caching image with local data URL for immediate duplicates');
@@ -289,28 +304,61 @@ class CreateNodeCommand extends Command {
                 }
                 
                 // Start background upload
+                console.log(`📤 Starting background upload for ${this.params.properties.filename}`);
                 const uploadPromise = window.imageUploadManager.uploadImage(
                     this.params.properties.src,
                     this.params.properties.filename,
                     this.params.properties.hash
                 );
                 
+                console.log('📎 Upload promise created, attaching handlers...');
+                
                 // Update node when upload completes
                 uploadPromise.then(async (uploadResult) => {
                     console.log('✅ Image uploaded, updating node with server URL');
                     
+                    // Check if node still exists (might have been deleted during upload)
+                    // Use window.app.graph instead of context.graph as context might not be available in promise
+                    const currentNode = window.app?.graph?.getNodeById(node.id);
+                    if (!currentNode) {
+                        console.warn('Node was deleted during upload');
+                        return;
+                    }
+                    
                     // Update the node's properties with server URL
-                    node.properties.serverUrl = uploadResult.url;
-                    node.properties.serverFilename = uploadResult.filename;
+                    currentNode.properties.serverUrl = uploadResult.url;
+                    currentNode.properties.serverFilename = uploadResult.filename;
                     
                     // Update the image source to use server URL
                     const fullUrl = CONFIG.SERVER.API_BASE + uploadResult.url;
-                    if (node.img) {
-                        node.img.src = fullUrl;
+                    if (currentNode.img) {
+                        currentNode.img.src = fullUrl;
                     }
                     
                     // Store upload result for future syncs
-                    node._uploadResult = uploadResult;
+                    currentNode._uploadResult = uploadResult;
+                    
+                    // Send image_upload_complete operation to sync serverUrl across all clients
+                    if (window.app?.operationPipeline && currentNode.properties.hash) {
+                        console.log(`📤 Sending image_upload_complete for hash ${currentNode.properties.hash.substring(0, 8)}...`);
+                        
+                        try {
+                            const completeResult = await window.app.operationPipeline.execute('image_upload_complete', {
+                                hash: currentNode.properties.hash,
+                                serverUrl: uploadResult.url,
+                                serverFilename: uploadResult.filename
+                            });
+                            console.log(`✅ Server notified of upload completion:`, completeResult);
+                        } catch (error) {
+                            console.error('❌ Failed to notify server of upload completion:', error);
+                            console.error('Error details:', error.stack);
+                        }
+                    } else {
+                        console.warn('Cannot send image_upload_complete:', {
+                            hasOperationPipeline: !!window.app?.operationPipeline,
+                            hasHash: !!currentNode.properties.hash
+                        });
+                    }
                     
                     // Debug cache state
                     console.log('🔍 Cache debug after upload:', {
@@ -340,7 +388,7 @@ class CreateNodeCommand extends Command {
                         
                         // Also populate any existing nodes with the same hash that don't have server URLs
                         // This handles cases where duplicates were created before upload completed
-                        const allNodes = context.graph?.nodes || [];
+                        const allNodes = window.app?.graph?.nodes || [];
                         let updatedNodes = 0;
                         allNodes.forEach(existingNode => {
                             if (existingNode.type === 'media/image' && 
@@ -371,7 +419,23 @@ class CreateNodeCommand extends Command {
                     }
                 }).catch(error => {
                     console.error('❌ Failed to upload image:', error);
+                    console.error('Upload error details:', {
+                        nodeId: node.id,
+                        hash: this.params.properties.hash,
+                        errorMessage: error.message,
+                        errorStack: error.stack
+                    });
                     // Node remains with local data URL
+                });
+                
+                console.log('✅ Upload handlers attached successfully');
+            } else {
+                console.log('🔍 No upload needed:', {
+                    needsUpload,
+                    hasImageUploadManager: !!window.imageUploadManager,
+                    hasSrc: !!this.params.properties?.src,
+                    srcStartsWithData: this.params.properties?.src?.startsWith('data:'),
+                    hasServerUrl: !!this.params.properties?.serverUrl
                 });
             }
         } else if (node.type === 'media/video' && this.params.videoData) {
@@ -437,11 +501,13 @@ class DeleteNodeCommand extends Command {
         // Store nodes for undo
         this.undoData = { nodes: [] };
         
+        console.log(`🗑️ DeleteNodeCommand: Deleting ${this.params.nodeIds.length} nodes`);
+        
         this.params.nodeIds.forEach(nodeId => {
             const node = graph.getNodeById(nodeId);
             if (node) {
                 // Store complete node data for restoration
-                this.undoData.nodes.push({
+                const nodeData = {
                     id: node.id,
                     type: node.type,
                     pos: [...node.pos],
@@ -450,7 +516,67 @@ class DeleteNodeCommand extends Command {
                     rotation: node.rotation,
                     flags: { ...node.flags },
                     title: node.title
-                });
+                };
+                
+                // Debug logging
+                if (node.type === 'media/image' || node.type === 'media/video') {
+                    console.log(`🖼️ Deleting ${node.type} node ${node.id}:`, {
+                        hasServerUrl: !!nodeData.properties.serverUrl,
+                        hasSrc: !!nodeData.properties.src,
+                        srcIsDataUrl: nodeData.properties.src?.startsWith('data:'),
+                        srcLength: nodeData.properties.src?.length || 0,
+                        hash: nodeData.properties.hash?.substring(0, 8)
+                    });
+                }
+                
+                // Optimize media node data for network transmission
+                if ((node.type === 'media/image' || node.type === 'media/video') && 
+                    nodeData.properties.src && 
+                    nodeData.properties.src.startsWith('data:')) {
+                    
+                    const originalSize = JSON.stringify(nodeData.properties).length;
+                    
+                    // Case 1: We have a serverUrl - use it
+                    if (nodeData.properties.serverUrl) {
+                        nodeData.properties = {
+                            serverUrl: nodeData.properties.serverUrl,
+                            hash: nodeData.properties.hash,
+                            filename: nodeData.properties.filename,
+                            _hadDataUrl: true
+                        };
+                        const optimizedSize = JSON.stringify(nodeData.properties).length;
+                        console.log(`🗜️ Optimized deletion undo data for ${node.id}: ${(originalSize/1024/1024).toFixed(2)}MB → ${(optimizedSize/1024).toFixed(2)}KB (using serverUrl)`);
+                    } 
+                    // Case 2: No serverUrl but we have a hash - check cache
+                    else if (nodeData.properties.hash && window.app?.imageResourceCache?.has(nodeData.properties.hash)) {
+                        const cached = window.app.imageResourceCache.get(nodeData.properties.hash);
+                        nodeData.properties = {
+                            hash: nodeData.properties.hash,
+                            filename: nodeData.properties.filename || cached.filename,
+                            _hadDataUrl: true,
+                            _fromCache: true
+                        };
+                        // If cache has serverUrl, include it
+                        if (cached.serverUrl) {
+                            nodeData.properties.serverUrl = cached.serverUrl;
+                        }
+                        const optimizedSize = JSON.stringify(nodeData.properties).length;
+                        console.log(`🗜️ Optimized deletion undo data for ${node.id}: ${(originalSize/1024/1024).toFixed(2)}MB → ${(optimizedSize/1024).toFixed(2)}KB (using cache)`);
+                    }
+                    // Case 3: Large data URL with no optimization available - strip it anyway
+                    else if (originalSize > 100 * 1024) { // > 100KB
+                        console.warn(`⚠️ Large unoptimized image in deletion: ${(originalSize/1024/1024).toFixed(2)}MB. Stripping data URL to prevent disconnection.`);
+                        nodeData.properties = {
+                            hash: nodeData.properties.hash,
+                            filename: nodeData.properties.filename,
+                            _hadDataUrl: true,
+                            _stripped: true,
+                            _originalSize: originalSize
+                        };
+                    }
+                }
+                
+                this.undoData.nodes.push(nodeData);
                 
                 // Clear from selection if selected
                 if (canvas?.selection) {
@@ -461,6 +587,10 @@ class DeleteNodeCommand extends Command {
                 graph.remove(node);
             }
         });
+        
+        // Log total undo data size
+        const totalUndoSize = JSON.stringify(this.undoData).length;
+        console.log(`📊 Total deletion undo data size: ${(totalUndoSize/1024/1024).toFixed(2)}MB for ${this.undoData.nodes.length} nodes`);
         
         this.executed = true;
         return { deletedCount: this.undoData.nodes.length };
@@ -487,15 +617,43 @@ class DeleteNodeCommand extends Command {
                 node.title = nodeData.title;
                 
                 // Restore media if needed
-                if (node.type === 'media/image' && nodeData.properties.src) {
-                    node.setImage(
-                        nodeData.properties.src,
-                        nodeData.properties.filename,
-                        nodeData.properties.hash
-                    );
-                } else if (node.type === 'media/video' && nodeData.properties.src) {
+                if (node.type === 'media/image') {
+                    // Check if we have a cached version first
+                    if (nodeData.properties.hash && window.app?.imageResourceCache) {
+                        const cached = window.app.imageResourceCache.get(nodeData.properties.hash);
+                        if (cached?.dataUrl || cached?.serverUrl) {
+                            // Use cached data
+                            node.setImage(
+                                cached.serverUrl || cached.dataUrl,
+                                nodeData.properties.filename || cached.filename,
+                                nodeData.properties.hash
+                            );
+                        } else if (nodeData.properties.serverUrl) {
+                            // Use server URL if available
+                            node.setImage(
+                                nodeData.properties.serverUrl,
+                                nodeData.properties.filename,
+                                nodeData.properties.hash
+                            );
+                        }
+                    } else if (nodeData.properties.src) {
+                        // Fallback to src if available
+                        node.setImage(
+                            nodeData.properties.src,
+                            nodeData.properties.filename,
+                            nodeData.properties.hash
+                        );
+                    } else if (nodeData.properties.serverUrl) {
+                        // Last resort - use serverUrl
+                        node.setImage(
+                            nodeData.properties.serverUrl,
+                            nodeData.properties.filename,
+                            nodeData.properties.hash
+                        );
+                    }
+                } else if (node.type === 'media/video' && (nodeData.properties.src || nodeData.properties.serverUrl)) {
                     await node.setVideo(
-                        nodeData.properties.src,
+                        nodeData.properties.serverUrl || nodeData.properties.src,
                         nodeData.properties.filename,
                         nodeData.properties.hash
                     );

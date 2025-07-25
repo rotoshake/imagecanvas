@@ -3,9 +3,10 @@
 ## Getting Started
 
 ### Prerequisites
-- Node.js 14+ and npm
+- Node.js 16+ and npm
 - Modern web browser (Chrome, Firefox, Safari, Edge)
 - Git for version control
+- Python 3 (for local development server)
 
 ### Installation
 
@@ -18,45 +19,35 @@ cd ImageCanvas
 2. Install dependencies:
 ```bash
 # Install server dependencies
-cd server
 npm install
-
-# Return to root
-cd ..
 ```
 
-3. Set up the database:
+3. Database setup:
 ```bash
-# Database is auto-created on first run
+# SQLite database is auto-created on first run
 # Location: server/database/canvas.db
-```
-
-4. Configure environment:
-```bash
-# Copy example config (if available)
-cp .env.example .env
-
-# Or create manually with:
-# PORT=3001
-# NODE_ENV=development
 ```
 
 ### Running the Application
 
 #### Development Mode
-```bash
-# From project root
-cd server
-npm run dev
 
-# Server runs on http://localhost:3001
-# Frontend served from http://localhost:3001
+1. Start the backend server:
+```bash
+npm run server:dev
+# Server runs on http://localhost:3000
+```
+
+2. In a separate terminal, start the frontend:
+```bash
+npm run dev
+# Frontend served from http://localhost:8000
 ```
 
 #### Production Mode
 ```bash
-cd server
 npm start
+# Serves both frontend and backend from http://localhost:3000
 ```
 
 ## Project Structure
@@ -66,25 +57,49 @@ ImageCanvas/
 ├── index.html              # Main HTML entry point
 ├── css/                    # Stylesheets
 │   ├── styles.css         # Main styles
-│   └── components/        # Component-specific styles
-├── js/                     # Frontend JavaScript
-│   ├── app.js             # Application entry point
-│   ├── canvas.js          # Core canvas functionality
-│   ├── core/              # New architecture components
-│   ├── nodes/             # Node type implementations
-│   ├── ui/                # UI components
-│   ├── utils/             # Utility functions
-│   └── actions/           # Canvas actions
-├── server/                 # Backend application
+│   └── properties.css     # Property inspector styles
+├── js/                    # Frontend JavaScript
+│   ├── app.js            # LiteGraph application wrapper
+│   ├── canvas.js         # Core canvas functionality
+│   ├── config.js         # Configuration constants
+│   ├── core/             # Collaborative architecture
+│   │   ├── CollaborativeArchitecture.js
+│   │   ├── NetworkLayer.js
+│   │   ├── OperationPipeline.js
+│   │   ├── StateSyncManager.js
+│   │   ├── ClientUndoManager.js
+│   │   ├── TransactionManager.js
+│   │   ├── ImageUploadCoordinator.js
+│   │   └── ImageProcessingProgressManager.js
+│   ├── nodes/            # Node implementations
+│   │   ├── base-node.js
+│   │   ├── image-node.js
+│   │   ├── video-node.js
+│   │   └── text-node.js
+│   ├── commands/         # Command pattern operations
+│   │   ├── Command.js
+│   │   └── NodeCommands.js
+│   ├── ui/              # UI components
+│   │   ├── unified-notifications.js
+│   │   ├── canvas-navigator.js
+│   │   └── floating-properties-inspector.js
+│   ├── utils/           # Utilities
+│   │   ├── cache.js     # Image and thumbnail caching
+│   │   ├── hash.js      # Image hashing
+│   │   └── node-factory.js
+│   └── managers/        # Feature managers
+│       └── ImageUploadManager.js
+├── server/              # Backend application
+│   ├── index.js        # Express server entry
 │   ├── src/
-│   │   ├── server.js      # Express server
-│   │   ├── database/      # Database layer
-│   │   └── realtime/      # WebSocket handlers
-│   ├── uploads/           # User uploaded files
-│   ├── thumbnails/        # Generated thumbnails
-│   └── database/          # SQLite database files
-├── docs/                   # Documentation
-└── tests/                  # Test files
+│   │   ├── database/   # SQLite database layer
+│   │   ├── realtime/   # WebSocket collaboration
+│   │   └── undo/       # Server-side undo system
+│   ├── uploads/        # User uploaded files
+│   ├── thumbnails/     # Generated thumbnails
+│   └── database/       # SQLite database files
+├── docs/               # Documentation
+└── tests/             # Test files
 ```
 
 ## Core Development Concepts
@@ -95,177 +110,229 @@ Creating a new node type:
 
 ```javascript
 // js/nodes/custom-node.js
-class CustomNode extends BaseNode {
-  constructor(data) {
-    super(data);
-    this.type = 'custom';
-    // Initialize custom properties
-  }
+import { BaseNode } from './base-node.js';
+import { NodeFactory } from '../utils/node-factory.js';
 
-  render(ctx, viewport) {
-    // Save context state
-    ctx.save();
-    
-    // Apply transformations
-    this.applyTransform(ctx);
-    
-    // Custom rendering logic
-    ctx.fillStyle = this.color;
-    ctx.fillRect(0, 0, this.width, this.height);
-    
-    // Restore context
-    ctx.restore();
-  }
+export class CustomNode extends BaseNode {
+    constructor() {
+        super();
+        this.type = 'custom';
+        this.title = 'Custom Node';
+        this.size = [200, 100];
+        
+        // Add custom properties
+        this.properties = {
+            customValue: '',
+            ...this.properties
+        };
+    }
 
-  serialize() {
-    return {
-      ...super.serialize(),
-      // Add custom properties
-      customProp: this.customProp
-    };
-  }
+    onExecute() {
+        // Called each frame during execution
+        // Process inputs and generate outputs
+    }
 
-  static deserialize(data) {
-    return new CustomNode(data);
-  }
+    onDrawForeground(ctx) {
+        // Custom rendering on top of base node
+        ctx.fillStyle = '#fff';
+        ctx.font = '14px Arial';
+        ctx.fillText(this.properties.customValue, 10, 30);
+    }
+
+    onPropertyChanged(property, value) {
+        super.onPropertyChanged(property, value);
+        
+        if (property === 'customValue') {
+            // Handle custom property changes
+            this.setDirtyCanvas(true);
+        }
+    }
+
+    serialize() {
+        const data = super.serialize();
+        // Add custom serialization if needed
+        return data;
+    }
+
+    configure(data) {
+        super.configure(data);
+        // Custom deserialization if needed
+    }
 }
 
 // Register the node type
-nodeRegistry.register('custom', CustomNode);
+NodeFactory.registerNodeType('custom', CustomNode);
 ```
 
-### 2. Operations
+### 2. Commands (Operations)
 
-Implementing a new operation:
+Implementing a new command:
 
 ```javascript
-// js/operations/custom-operation.js
-class CustomOperation {
-  constructor(nodeId, data) {
-    this.type = 'custom';
-    this.nodeId = nodeId;
-    this.data = data;
-    this.timestamp = Date.now();
-  }
+// js/commands/CustomCommand.js
+import { Command } from './Command.js';
 
-  execute(canvas) {
-    const node = canvas.getNode(this.nodeId);
-    if (node) {
-      // Store previous state for undo
-      this.prevData = {
-        customProp: node.customProp
-      };
-      
-      // Apply changes
-      node.customProp = this.data.customProp;
-      canvas.markDirty();
+export class CustomCommand extends Command {
+    constructor(params) {
+        super('custom_operation');
+        this.params = params;
     }
-  }
 
-  undo(canvas) {
-    const node = canvas.getNode(this.nodeId);
-    if (node && this.prevData) {
-      node.customProp = this.prevData.customProp;
-      canvas.markDirty();
+    async execute(context) {
+        const { graph } = context;
+        const node = graph.getNodeById(this.params.nodeId);
+        
+        if (!node) {
+            throw new Error('Node not found');
+        }
+
+        // Store previous state for undo
+        this.previousValue = node.properties.customValue;
+        
+        // Apply the change
+        node.properties.customValue = this.params.newValue;
+        node.setDirtyCanvas(true);
+        
+        // Generate undo data
+        this.undoData = {
+            nodeId: this.params.nodeId,
+            oldValue: this.previousValue,
+            newValue: this.params.newValue
+        };
+        
+        return { success: true, node };
     }
-  }
 
-  serialize() {
-    return {
-      type: this.type,
-      nodeId: this.nodeId,
-      data: this.data,
-      timestamp: this.timestamp
-    };
-  }
+    async undo(context) {
+        const { graph } = context;
+        const node = graph.getNodeById(this.undoData.nodeId);
+        
+        if (node) {
+            node.properties.customValue = this.undoData.oldValue;
+            node.setDirtyCanvas(true);
+        }
+    }
 }
 
-// Register with operation pipeline
-operationPipeline.registerOperation('custom', CustomOperation);
+// Register with command system
+import { CommandRegistry } from '../core/CommandRegistry.js';
+CommandRegistry.register('custom_operation', CustomCommand);
 ```
 
-### 3. UI Components
-
-Adding UI controls:
+### 3. Server-Side Operation Handler
 
 ```javascript
-// js/ui/custom-control.js
-class CustomControl {
-  constructor(container) {
-    this.container = container;
-    this.init();
-  }
-
-  init() {
-    this.element = document.createElement('div');
-    this.element.className = 'custom-control';
-    this.element.innerHTML = `
-      <button id="custom-action">Custom Action</button>
-    `;
-    
-    this.container.appendChild(this.element);
-    this.attachEvents();
-  }
-
-  attachEvents() {
-    this.element.querySelector('#custom-action')
-      .addEventListener('click', () => {
-        this.handleAction();
-      });
-  }
-
-  handleAction() {
-    // Get selected nodes
-    const selection = canvas.selection.getNodes();
-    
-    // Create and execute operation
-    const operation = new CustomOperation(
-      selection[0].id,
-      { customProp: 'new-value' }
-    );
-    
-    operationPipeline.execute(operation);
-  }
+// server/src/operations/custom-handler.js
+class CustomOperationHandler {
+    static async execute(state, operation, userId) {
+        const { nodeId, newValue } = operation.params;
+        
+        // Validate operation
+        const node = state.nodes.find(n => n.id === nodeId);
+        if (!node) {
+            throw new Error('Node not found');
+        }
+        
+        // Store previous value for undo
+        const previousValue = node.properties.customValue;
+        
+        // Apply operation to state
+        node.properties.customValue = newValue;
+        
+        return {
+            changes: {
+                updated: [{
+                    id: nodeId,
+                    properties: { customValue: newValue }
+                }]
+            },
+            undoData: {
+                nodeId,
+                previousValue,
+                newValue
+            }
+        };
+    }
 }
+
+module.exports = CustomOperationHandler;
+```
+
+## Image Handling
+
+### Upload Flow
+1. Images are uploaded via HTTP first (not through WebSocket)
+2. Server generates thumbnails (64, 128, 256, 512, 1024, 2048px)
+3. Node is created with serverUrl reference only
+4. This prevents WebSocket timeouts with large files
+
+```javascript
+// Example: Handling image drops
+const imageFiles = Array.from(files).filter(f => f.type.startsWith('image/'));
+
+// Upload first
+const uploads = await Promise.all(
+    imageFiles.map(file => 
+        window.imageUploadManager.uploadImage(dataUrl, file.name, hash)
+    )
+);
+
+// Then create nodes with server URLs
+uploads.forEach(upload => {
+    window.app.operationPipeline.execute('node_create', {
+        type: 'media/image',
+        properties: {
+            serverUrl: upload.url,
+            filename: upload.filename,
+            hash: upload.hash
+        }
+    });
+});
 ```
 
 ## Testing
 
 ### Running Tests
 ```bash
-# Run test suite
+# Run all tests
 npm test
 
-# Run specific test
-node tests/test-state-sync.js
+# Run specific test file
+node tests/integration/test-state-sync.js
+
+# Run with debug output
+DEBUG=imagecanvas:* npm test
 ```
 
 ### Writing Tests
 ```javascript
-// tests/test-custom-feature.js
-const assert = require('assert');
+// tests/integration/test-custom-feature.js
+import { describe, it, beforeEach } from 'node:test';
+import assert from 'node:assert';
 
 describe('Custom Feature', () => {
-  let canvas;
-  
-  beforeEach(() => {
-    canvas = new Canvas();
-  });
-
-  it('should handle custom operation', () => {
-    const node = new CustomNode({ x: 0, y: 0 });
-    canvas.addNode(node);
+    let app, graph;
     
-    const operation = new CustomOperation(node.id, {
-      customProp: 'test-value'
+    beforeEach(() => {
+        // Setup test environment
+        app = createTestApp();
+        graph = app.graph;
     });
-    
-    operation.execute(canvas);
-    assert.equal(node.customProp, 'test-value');
-    
-    operation.undo(canvas);
-    assert.equal(node.customProp, undefined);
-  });
+
+    it('should execute custom command', async () => {
+        // Create test node
+        const node = new CustomNode();
+        graph.add(node);
+        
+        // Execute command
+        const result = await app.operationPipeline.execute('custom_operation', {
+            nodeId: node.id,
+            newValue: 'test'
+        });
+        
+        assert.strictEqual(result.success, true);
+        assert.strictEqual(node.properties.customValue, 'test');
+    });
 });
 ```
 
@@ -273,190 +340,140 @@ describe('Custom Feature', () => {
 
 ### Client-Side Debugging
 
-1. Enable debug mode:
+1. Enable verbose logging:
 ```javascript
 // In browser console
-localStorage.setItem('debug', 'imagecanvas:*');
+localStorage.setItem('DEBUG', 'imagecanvas:*');
 ```
 
-2. View network operations:
+2. Monitor state changes:
 ```javascript
-// Monitor WebSocket traffic
-window.networkLayer.on('operation', (op) => {
-  console.log('Operation:', op);
+// Watch state sync
+window.app.stateSyncManager.on('stateUpdate', (data) => {
+    console.log('State update:', data);
+});
+
+// Track operations
+window.app.operationPipeline.on('execute', (op) => {
+    console.log('Operation:', op);
 });
 ```
 
-3. Inspect canvas state:
+3. Inspect current state:
 ```javascript
-// Get current canvas state
-const state = canvas.exportState();
-console.log('Canvas state:', state);
+// Get canvas state
+const nodes = window.app.graph.serialize().nodes;
+console.log('Nodes:', nodes);
 
-// Get selected nodes
-const selection = canvas.selection.getNodes();
-console.log('Selected:', selection);
+// Check connection status
+console.log('Connected:', window.app.networkLayer.connected);
 ```
 
 ### Server-Side Debugging
 
-1. Enable verbose logging:
+1. Enable debug logging:
 ```bash
-DEBUG=imagecanvas:* npm run dev
+DEBUG=imagecanvas:* npm run server:dev
 ```
 
 2. Monitor WebSocket events:
 ```javascript
-// In server code
-io.on('connection', (socket) => {
-  console.log('Client connected:', socket.id);
-  
-  socket.onAny((event, ...args) => {
-    console.log(`Event: ${event}`, args);
-  });
+// Add to collaboration.js
+socket.onAny((event, ...args) => {
+    console.log(`[${socket.id}] ${event}:`, args);
 });
 ```
 
-## Performance Optimization
-
-### Client-Side
-
-1. **Batch Operations**:
-```javascript
-// Batch multiple operations
-operationPipeline.batch(() => {
-  nodes.forEach(node => {
-    operationPipeline.execute(new MoveOperation(node.id, x, y));
-  });
-});
-```
-
-2. **Throttle Expensive Operations**:
-```javascript
-// Throttle cursor updates
-const throttledCursorUpdate = throttle((x, y) => {
-  networkLayer.emit('cursor-move', { x, y });
-}, 50);
-```
-
-3. **Use RequestAnimationFrame**:
-```javascript
-// Optimize rendering
-let renderRequested = false;
-
-function requestRender() {
-  if (!renderRequested) {
-    renderRequested = true;
-    requestAnimationFrame(() => {
-      canvas.render();
-      renderRequested = false;
-    });
-  }
-}
-```
-
-### Server-Side
-
-1. **Operation Compression**:
-```javascript
-// Enable compression for large operations
-io.use((socket, next) => {
-  socket.compress(true);
-  next();
-});
-```
-
-2. **Database Optimization**:
-```javascript
-// Use transactions for bulk operations
-db.transaction(() => {
-  operations.forEach(op => {
-    db.prepare('INSERT INTO operations...').run(op);
-  });
-})();
-```
-
-## Deployment
-
-### Production Build
+3. Database inspection:
 ```bash
-# Minify and optimize assets
-npm run build
+# Open SQLite CLI
+sqlite3 server/database/canvas.db
 
-# Set production environment
-export NODE_ENV=production
+# Common queries
+.tables
+SELECT * FROM projects;
+SELECT COUNT(*) FROM operations WHERE project_id = 1;
+SELECT * FROM users;
 ```
 
-### Environment Variables
-```bash
-# Required for production
-PORT=3001
-NODE_ENV=production
-DATABASE_PATH=/path/to/database
-UPLOAD_PATH=/path/to/uploads
-MAX_FILE_SIZE=10485760  # 10MB
-```
+## Performance Guidelines
 
-### Security Checklist
-- [ ] Enable HTTPS
-- [ ] Set secure headers
-- [ ] Configure CORS properly
-- [ ] Validate all inputs
-- [ ] Sanitize user content
-- [ ] Set upload limits
-- [ ] Enable rate limiting
-- [ ] Use environment variables for secrets
+### Client-Side Optimization
 
-## Common Issues
+1. **Image Loading**:
+   - Always upload images before creating nodes
+   - Use progressive thumbnails for rendering
+   - Cache images by hash to avoid duplicates
 
-### WebSocket Connection Failed
-```javascript
-// Check CORS settings
-const corsOptions = {
-  origin: process.env.CLIENT_URL || 'http://localhost:3001',
-  credentials: true
-};
-```
+2. **Rendering**:
+   - Implement dirty rectangle tracking
+   - Use LOD (Level of Detail) based on zoom
+   - Batch render updates with requestAnimationFrame
 
-### State Sync Issues
-```javascript
-// Force full state sync
-socket.emit('state-sync-request', {
-  canvasId: currentCanvasId,
-  force: true
-});
-```
+3. **Operations**:
+   - Keep operations under 100KB
+   - Use transactions for bulk operations
+   - Implement operation queuing
 
-### Memory Leaks
-```javascript
-// Ensure proper cleanup
-window.addEventListener('beforeunload', () => {
-  collaborativeArchitecture.shutdown();
-});
-```
+### Server-Side Optimization
 
-## Contributing
+1. **Database**:
+   - Use WAL mode for concurrent access
+   - Run periodic cleanup to remove old operations
+   - Never store base64 data in operations table
 
-### Code Style
-- Use ES6+ features
-- Follow existing patterns
-- Comment complex logic
-- Keep functions focused
-- Use meaningful variable names
+2. **WebSocket**:
+   - Set appropriate timeouts (5 min for large ops)
+   - Compress messages over 1KB
+   - Reject operations over 100KB
 
-### Pull Request Process
-1. Create feature branch
-2. Make changes
-3. Add tests
-4. Update documentation
-5. Submit PR with description
+3. **File Handling**:
+   - Generate thumbnails asynchronously
+   - Use WebP format for smaller file sizes
+   - Implement file deduplication by hash
 
-### Commit Messages
-Follow conventional commits:
-- `feat:` New feature
-- `fix:` Bug fix
-- `docs:` Documentation
-- `style:` Code style
-- `refactor:` Refactoring
-- `test:` Tests
-- `chore:` Maintenance
+## Common Issues & Solutions
+
+### WebSocket Timeout on Image Drop
+**Problem**: Server times out when dropping many large images
+**Solution**: Images are now uploaded via HTTP first, then nodes are created
+
+### Images Not Loading After Refresh
+**Problem**: Thumbnails regenerating on every page load
+**Solution**: Server thumbnails are now properly loaded using server filename
+
+### Database Growing Too Large
+**Problem**: Operations table storing base64 image data
+**Solution**: Use the cleanup endpoint: `POST /database/cleanup`
+
+### Undo Not Working Across Tabs
+**Problem**: Undo state not synchronized
+**Solution**: Server now broadcasts undo state updates to all user sessions
+
+## Deployment Checklist
+
+### Production Configuration
+- [ ] Set NODE_ENV=production
+- [ ] Configure proper CORS origins
+- [ ] Enable HTTPS with valid certificates
+- [ ] Set up proper logging (Winston/Morgan)
+- [ ] Configure rate limiting
+- [ ] Set appropriate file upload limits
+- [ ] Enable gzip compression
+- [ ] Set up database backups
+
+### Security
+- [ ] Validate all file uploads
+- [ ] Sanitize user input (especially text nodes)
+- [ ] Implement proper authentication
+- [ ] Add CSRF protection
+- [ ] Set secure HTTP headers
+- [ ] Limit operation sizes
+- [ ] Implement user quotas
+
+### Monitoring
+- [ ] Set up error tracking (Sentry)
+- [ ] Monitor server performance
+- [ ] Track WebSocket connections
+- [ ] Monitor database size
+- [ ] Set up uptime monitoring

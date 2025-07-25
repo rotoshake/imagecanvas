@@ -68,7 +68,8 @@ class LGraphCanvas {
                 node: null,
                 nodes: new Map(),
                 offsets: new Map(),
-                isDuplication: false  // Track if this drag is from duplication
+                isDuplication: false,  // Track if this drag is from duplication
+                hasMoved: false       // Track if actual movement occurred
             },
             resizing: {
                 active: false,
@@ -231,9 +232,15 @@ class LGraphCanvas {
         // Regular interaction cleanup
         this.finishInteractions();
         
-        // Safety: ensure duplication undo state is created even if something went wrong
+        // DISABLED: Undo state is now handled by the OperationPipeline through node_duplicate operations
+        // This prevents duplicate undo entries for duplication operations
+        // if (this.interactionState.dragging.isDuplication) {
+        //     this.pushUndoState();
+        //     this.interactionState.dragging.isDuplication = false;
+        // }
+        
+        // Still reset the duplication flag
         if (this.interactionState.dragging.isDuplication) {
-            this.pushUndoState();
             this.interactionState.dragging.isDuplication = false;
         }
         
@@ -574,6 +581,9 @@ class LGraphCanvas {
             this.interactionState.dragging.node = node;
         }
         
+        // Reset movement tracking
+        this.interactionState.dragging.hasMoved = false;
+        
         // Calculate offsets for all selected nodes
         const selectedNodes = this.selection.getSelectedNodes();
         for (const selectedNode of selectedNodes) {
@@ -750,13 +760,28 @@ class LGraphCanvas {
     }
     
     updateNodeDrag() {
+        let moved = false;
         for (const [nodeId, offset] of this.interactionState.dragging.offsets) {
             const node = this.graph.getNodeById(nodeId);
             if (node) {
-                node.pos[0] = this.mouseState.graph[0] + offset[0];
-                node.pos[1] = this.mouseState.graph[1] + offset[1];
+                const newX = this.mouseState.graph[0] + offset[0];
+                const newY = this.mouseState.graph[1] + offset[1];
+                
+                // Check if position actually changed (with small threshold to avoid floating point issues)
+                if (Math.abs(node.pos[0] - newX) > 0.01 || Math.abs(node.pos[1] - newY) > 0.01) {
+                    moved = true;
+                }
+                
+                node.pos[0] = newX;
+                node.pos[1] = newY;
             }
         }
+        
+        // Track if any movement occurred
+        if (moved) {
+            this.interactionState.dragging.hasMoved = true;
+        }
+        
         // Invalidate selection bounding box cache when nodes move
         this.selection.invalidateBoundingBox();
     }
@@ -1156,10 +1181,11 @@ class LGraphCanvas {
         // Node drag
         if (this.interactionState.dragging.node) {
             const wasDuplication = this.interactionState.dragging.isDuplication;
+            const hasMoved = this.interactionState.dragging.hasMoved;
             
             // Broadcast move operation for collaboration
-            // Skip move operations for duplicated or temporary nodes
-            if (window.app?.operationPipeline && wasInteracting && !wasDuplication) {
+            // Skip move operations for duplicated nodes, temporary nodes, or if no movement occurred
+            if (window.app?.operationPipeline && wasInteracting && !wasDuplication && hasMoved) {
                 const selectedNodes = this.selection.getSelectedNodes();
                 // Filter out temporary nodes that don't exist on server yet
                 const collaborativeNodes = selectedNodes.filter(n => {
@@ -1242,6 +1268,7 @@ class LGraphCanvas {
             
             this.interactionState.dragging.node = null;
             this.interactionState.dragging.offsets.clear();
+            this.interactionState.dragging.hasMoved = false;
             
             // For Alt+drag duplication, sync the nodes through collaborative system
             // but keep the local nodes visible for seamless transition
@@ -1413,9 +1440,11 @@ class LGraphCanvas {
             
             // For duplication: always create undo state (even without movement)
             // For regular drag: only create undo state if there was interaction
-            if (wasDuplication || wasInteracting) {
-                this.pushUndoState();
-            }
+            // DISABLED: Undo state is now handled by the OperationPipeline through node_move operations
+            // This prevents duplicate undo entries for drag operations
+            // if (wasDuplication || wasInteracting) {
+            //     this.pushUndoState();
+            // }
         }
         
         // Resize
@@ -1456,7 +1485,8 @@ class LGraphCanvas {
             this.interactionState.resizing.nodes.clear();
             this.interactionState.resizing.initial.clear();
             this.interactionState.resizing.initialBBox = null; // Clear initial bbox on finish
-            if (wasInteracting) this.pushUndoState();
+            // DISABLED: Undo state is now handled by the OperationPipeline through node_resize operations
+            // if (wasInteracting) this.pushUndoState();
         }
         
         // Rotation
@@ -1502,7 +1532,8 @@ class LGraphCanvas {
             this.interactionState.rotating.node = null;
             this.interactionState.rotating.nodes.clear();
             this.interactionState.rotating.initial.clear();
-            if (wasInteracting) this.pushUndoState();
+            // DISABLED: Undo state is now handled by the OperationPipeline through node_rotate operations
+            // if (wasInteracting) this.pushUndoState();
         }
         
         // Selection
@@ -1551,14 +1582,19 @@ class LGraphCanvas {
             return true;
         }
         
-        // Undo/Redo
-        if (ctrl && key === 'z' && !shift) {
-            this.undo();
-            return true;
-        }
-        if (ctrl && ((key === 'z' && shift) || key === 'y')) {
-            this.redo();
-            return true;
+        // Undo/Redo - Skip if ClientUndoManager is handling shortcuts
+        if (window.app?.undoManager?.keyboardShortcutsEnabled !== false) {
+            // ClientUndoManager is handling shortcuts, skip these
+        } else {
+            // Fallback for when ClientUndoManager is not available
+            if (ctrl && key === 'z' && !shift) {
+                this.undo();
+                return true;
+            }
+            if (ctrl && ((key === 'z' && shift) || key === 'y')) {
+                this.redo();
+                return true;
+            }
         }
         
         // Copy/Cut/Paste
@@ -2441,10 +2477,33 @@ class LGraphCanvas {
     
     duplicateNode(originalNode) {
         const nodeData = this.serializeNode(originalNode);
-        return this.deserializeNode(nodeData);
+        const duplicate = this.deserializeNode(nodeData);
+        
+        // For media nodes, copy the actual media element reference if available
+        if (duplicate && (originalNode.type === 'media/image' || originalNode.type === 'media/video')) {
+            if (originalNode.img && duplicate.setImage) {
+                // Copy image reference directly to avoid grey error box
+                duplicate.img = originalNode.img;
+                duplicate.loadingState = 'loaded';
+                duplicate.loadingProgress = 1.0;
+            } else if (originalNode.video && duplicate.setVideo) {
+                // Copy video reference for video nodes
+                duplicate.video = originalNode.video;
+                duplicate.loadingState = 'loaded';
+                duplicate.loadingProgress = 1.0;
+            }
+        }
+        
+        return duplicate;
     }
     
     serializeNode(node) {
+        // Use UndoOptimization utility if available
+        if (window.UndoOptimization) {
+            return window.UndoOptimization.optimizeNodeData(node);
+        }
+        
+        // Fallback to inline optimization
         const serialized = {
             type: node.type,
             pos: [...node.pos],
@@ -2456,9 +2515,17 @@ class LGraphCanvas {
             rotation: node.rotation
         };
         
-        // Preserve original source for media nodes to enable proper duplication
-        if ((node.type === 'media/image' || node.type === 'media/video') && node.properties.src) {
-            serialized.properties.originalSrc = node.properties.src;
+        // For media nodes, ensure we never include data URLs
+        if (node.type === 'media/image' || node.type === 'media/video') {
+            // Keep only reference properties
+            serialized.properties = {
+                hash: node.properties.hash,
+                serverUrl: node.properties.serverUrl,
+                filename: node.properties.filename,
+                scale: node.properties.scale || 1.0
+            };
+            // Remove any accidental src field
+            delete serialized.properties.src;
         }
         
         return serialized;
@@ -3066,9 +3133,9 @@ class LGraphCanvas {
         const totalTime = uiTime - startTime;
         
         // Log performance if frame takes longer than 16ms (below 60fps)
-        if (totalTime > 16) {
-            console.log(`🐌 Slow frame: ${totalTime.toFixed(1)}ms total (grid: ${(gridTime-startTime).toFixed(1)}ms, cull: ${(cullTime-gridTime).toFixed(1)}ms, nodes: ${(nodesTime-cullTime).toFixed(1)}ms, ui: ${(uiTime-nodesTime).toFixed(1)}ms)`);
-        }
+        // if (totalTime > 16) {
+        //     console.log(`🐌 Slow frame: ${totalTime.toFixed(1)}ms total (grid: ${(gridTime-startTime).toFixed(1)}ms, cull: ${(cullTime-gridTime).toFixed(1)}ms, nodes: ${(nodesTime-cullTime).toFixed(1)}ms, ui: ${(uiTime-nodesTime).toFixed(1)}ms)`);
+        // }
     }
     
     drawGrid(ctx) {

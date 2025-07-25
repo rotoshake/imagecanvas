@@ -99,7 +99,11 @@ CONFIG.ENDPOINTS = {
     
     // Health
     HEALTH: `${CONFIG.SERVER.API_BASE}/health`,
-    WS_TEST: `${CONFIG.SERVER.API_BASE}/test-websocket`
+    WS_TEST: `${CONFIG.SERVER.API_BASE}/test-websocket`,
+    
+    // Database maintenance
+    DATABASE_SIZE: `${CONFIG.SERVER.API_BASE}/database/size`,
+    DATABASE_CLEANUP: `${CONFIG.SERVER.API_BASE}/database/cleanup`
 };
 
 // Helper to get user color

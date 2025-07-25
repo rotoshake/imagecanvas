@@ -1,0 +1,1213 @@
+
+> imagecanvas-collaborative@2.0.0 dev
+> nodemon server/index.js
+
+[33m[nodemon] 3.1.10[39m
+[33m[nodemon] to restart at any time, enter `rs`[39m
+[33m[nodemon] watching path(s): *.*[39m
+[33m[nodemon] watching extensions: js,mjs,cjs,json[39m
+[32m[nodemon] starting `node server/index.js`[39m
+✅ Database schema created/updated
+✅ Database configured with WAL mode and optimizations
+✅ Database initialized
+🎨 CanvasStateManager initialized
+✅ Real-time collaboration initialized
+node:events:496
+      throw er; // Unhandled 'error' event
+      ^
+
+Error: listen EADDRINUSE: address already in use :::3000
+    at Server.setupListenHandle [as _listen2] (node:net:1937:16)
+    at listenInCluster (node:net:1994:12)
+    at Server.listen (node:net:2099:7)
+    at ImageCanvasServer.start (/Users/marcsteinberg/Documents/Projects/ImageCanvas/server/index.js:669:25)
+Emitted 'error' event on Server instance at:
+    at emitErrorNT (node:net:1973:8)
+    at process.processTicksAndRejections (node:internal/process/task_queues:90:21) {
+  code: 'EADDRINUSE',
+  errno: -48,
+  syscall: 'listen',
+  address: '::',
+  port: 3000
+}
+
+Node.js v22.14.0
+[31m[nodemon] app crashed - waiting for file changes before starting...[39m
+[32m[nodemon] restarting due to changes...[39m
+[32m[nodemon] starting `node server/index.js`[39m
+✅ Database schema created/updated
+✅ Database configured with WAL mode and optimizations
+✅ Database initialized
+🎨 CanvasStateManager initialized
+✅ Real-time collaboration initialized
+🚀 ImageCanvas Collaborative Server running on port 3000
+📊 Health check: http://localhost:3000/health
+🔌 WebSocket test: http://localhost:3000/test-websocket
+📁 File uploads: http://localhost:3000/uploads
+📋 Projects: http://localhost:3000/projects
+🔌 New socket connection: ECDGY0_CBefgHrDCAAAB
+🔌 New socket connection: DUlirFRS90KD_qtGAAAD
+GET /projects/user/1 - 2025-07-24T02:07:40.719Z
+GET /projects/11/canvas - 2025-07-24T02:07:40.729Z
+📥 Join request from user-eez2mkkn (tab: 1753322860256-geez2mkkn) for project 11
+👤 Created new user: user-eez2mkkn (ID: 630)
+✅ user-eez2mkkn (1753322860256-geez2mkkn) joined project Dogs 2000
+📊 Project 11 now has 1 connections
+📤 Sent full state sync to user-eez2mkkn, version: 46
+🔌 New socket connection: S-Fr8lAz8buKdP6mAAAF
+GET /projects/user/1 - 2025-07-24T02:07:41.804Z
+GET /projects/11/canvas - 2025-07-24T02:07:41.810Z
+📥 Join request from user-tqheu2gz (tab: 1753322861356-0tqheu2gz) for project 11
+👤 Created new user: user-tqheu2gz (ID: 631)
+✅ user-tqheu2gz (1753322861356-0tqheu2gz) joined project Dogs 2000
+📊 Project 11 now has 2 connections
+📤 Sent full state sync to user-tqheu2gz, version: 46
+📝 Transaction started: txn_1753322864405_21dggl579 (multi_node_operation)
+📝 Recording operation 1753322861356-0tqheu2gz-1753322864404-oeveq9aax: {
+  type: 'node_move',
+  userId: 631,
+  hasUndoData: true,
+  transactionId: 'txn_1753322864405_21dggl579'
+}
+✅ Operation node_move executed, new version: 47
+✅ Transaction committed: txn_1753322864405_21dggl579 (0 operations)
+📝 Transaction started: txn_1753322866364_t9gvvoeht (multi_node_operation)
+📝 Recording operation 1753322861356-0tqheu2gz-1753322866362-g5h6ko3nw: {
+  type: 'node_delete',
+  userId: 631,
+  hasUndoData: true,
+  transactionId: 'txn_1753322866364_t9gvvoeht'
+}
+✅ Operation node_delete executed, new version: 48
+✅ Transaction committed: txn_1753322866364_t9gvvoeht (0 operations)
+📝 Transaction started: txn_1753322867298_2xflh16jy (multi_node_operation)
+📝 Recording operation 1753322860256-geez2mkkn-1753322867297-jqm479y4e: {
+  type: 'node_delete',
+  userId: 630,
+  hasUndoData: true,
+  transactionId: 'txn_1753322867298_2xflh16jy'
+}
+✅ Operation node_delete executed, new version: 49
+✅ Transaction committed: txn_1753322867298_2xflh16jy (0 operations)
+POST /api/upload - 2025-07-24T02:07:51.557Z
+📝 Recording operation 1753322861356-0tqheu2gz-1753322871547-ikygx2rqr: {
+  type: 'node_create',
+  userId: 631,
+  hasUndoData: true,
+  transactionId: null
+}
+✅ Operation node_create executed, new version: 50
+✅ Image uploaded via API: istockphoto-513133900-612x612.jpg -> 1753322871562-c1667.jpg
+📝 Recording operation 1753322861356-0tqheu2gz-1753322872003-p2vxd4qqd: {
+  type: 'node_move',
+  userId: 631,
+  hasUndoData: true,
+  transactionId: null
+}
+✅ Operation node_move executed, new version: 51
+📝 Recording operation 1753322861356-0tqheu2gz-1753322872921-bcc4qbpsj: {
+  type: 'node_paste',
+  userId: 631,
+  hasUndoData: true,
+  transactionId: null
+}
+✅ Operation node_paste executed, new version: 52
+📝 Recording operation 1753322861356-0tqheu2gz-1753322873089-q06sj264h: {
+  type: 'node_paste',
+  userId: 631,
+  hasUndoData: true,
+  transactionId: null
+}
+✅ Operation node_paste executed, new version: 53
+📝 Recording operation 1753322861356-0tqheu2gz-1753322873257-mbixsk5xr: {
+  type: 'node_paste',
+  userId: 631,
+  hasUndoData: true,
+  transactionId: null
+}
+✅ Operation node_paste executed, new version: 54
+📝 Recording operation 1753322861356-0tqheu2gz-1753322873391-ben7vppix: {
+  type: 'node_paste',
+  userId: 631,
+  hasUndoData: true,
+  transactionId: null
+}
+✅ Operation node_paste executed, new version: 55
+📝 Recording operation 1753322861356-0tqheu2gz-1753322873540-qrjfb1uhx: {
+  type: 'node_paste',
+  userId: 631,
+  hasUndoData: true,
+  transactionId: null
+}
+✅ Operation node_paste executed, new version: 56
+📝 Recording operation 1753322861356-0tqheu2gz-1753322873689-wxm9n1usn: {
+  type: 'node_paste',
+  userId: 631,
+  hasUndoData: true,
+  transactionId: null
+}
+✅ Operation node_paste executed, new version: 57
+📝 Recording operation 1753322861356-0tqheu2gz-1753322873843-yqk0rhu92: {
+  type: 'node_paste',
+  userId: 631,
+  hasUndoData: true,
+  transactionId: null
+}
+✅ Operation node_paste executed, new version: 58
+📝 Recording operation 1753322861356-0tqheu2gz-1753322874007-3c00deadj: {
+  type: 'node_paste',
+  userId: 631,
+  hasUndoData: true,
+  transactionId: null
+}
+✅ Operation node_paste executed, new version: 59
+📝 Recording operation 1753322861356-0tqheu2gz-1753322874173-3skrtof0o: {
+  type: 'node_paste',
+  userId: 631,
+  hasUndoData: true,
+  transactionId: null
+}
+✅ Operation node_paste executed, new version: 60
+📝 Recording operation 1753322861356-0tqheu2gz-1753322874327-znktxgrup: {
+  type: 'node_paste',
+  userId: 631,
+  hasUndoData: true,
+  transactionId: null
+}
+✅ Operation node_paste executed, new version: 61
+📝 Recording operation 1753322861356-0tqheu2gz-1753322874464-ef7fy9ius: {
+  type: 'node_paste',
+  userId: 631,
+  hasUndoData: true,
+  transactionId: null
+}
+✅ Operation node_paste executed, new version: 62
+📝 Recording operation 1753322861356-0tqheu2gz-1753322874615-g0asapikv: {
+  type: 'node_paste',
+  userId: 631,
+  hasUndoData: true,
+  transactionId: null
+}
+✅ Operation node_paste executed, new version: 63
+📝 Recording operation 1753322861356-0tqheu2gz-1753322874797-m6fiapt9w: {
+  type: 'node_paste',
+  userId: 631,
+  hasUndoData: true,
+  transactionId: null
+}
+✅ Operation node_paste executed, new version: 64
+📝 Recording operation 1753322861356-0tqheu2gz-1753322874964-2iirlffjk: {
+  type: 'node_paste',
+  userId: 631,
+  hasUndoData: true,
+  transactionId: null
+}
+✅ Operation node_paste executed, new version: 65
+📝 Recording operation 1753322861356-0tqheu2gz-1753322875132-mxauyfq0u: {
+  type: 'node_paste',
+  userId: 631,
+  hasUndoData: true,
+  transactionId: null
+}
+✅ Operation node_paste executed, new version: 66
+📝 Recording operation 1753322861356-0tqheu2gz-1753322875315-4kuhflqhq: {
+  type: 'node_paste',
+  userId: 631,
+  hasUndoData: true,
+  transactionId: null
+}
+✅ Operation node_paste executed, new version: 67
+📝 Recording operation 1753322861356-0tqheu2gz-1753322875451-bnrj7kbna: {
+  type: 'node_paste',
+  userId: 631,
+  hasUndoData: true,
+  transactionId: null
+}
+✅ Operation node_paste executed, new version: 68
+📝 Transaction started: txn_1753322877339_f7a2k7u4m (multi_node_operation)
+📝 Recording operation 1753322861356-0tqheu2gz-1753322877338-59f77rhz0: {
+  type: 'node_move',
+  userId: 631,
+  hasUndoData: true,
+  transactionId: 'txn_1753322877339_f7a2k7u4m'
+}
+✅ Operation node_move executed, new version: 69
+✅ Transaction committed: txn_1753322877339_f7a2k7u4m (0 operations)
+📝 Recording operation 1753322861356-0tqheu2gz-1753322878444-m358001jk: {
+  type: 'node_paste',
+  userId: 631,
+  hasUndoData: true,
+  transactionId: null
+}
+✅ Operation node_paste executed, new version: 70
+📝 Recording operation 1753322861356-0tqheu2gz-1753322878644-7gv2zicnq: {
+  type: 'node_paste',
+  userId: 631,
+  hasUndoData: true,
+  transactionId: null
+}
+✅ Operation node_paste executed, new version: 71
+📝 Recording operation 1753322861356-0tqheu2gz-1753322878787-mj83rzcqa: {
+  type: 'node_paste',
+  userId: 631,
+  hasUndoData: true,
+  transactionId: null
+}
+✅ Operation node_paste executed, new version: 72
+📝 Recording operation 1753322861356-0tqheu2gz-1753322878929-tazktbnci: {
+  type: 'node_paste',
+  userId: 631,
+  hasUndoData: true,
+  transactionId: null
+}
+✅ Operation node_paste executed, new version: 73
+📝 Recording operation 1753322861356-0tqheu2gz-1753322879103-zeo3j6yn9: {
+  type: 'node_paste',
+  userId: 631,
+  hasUndoData: true,
+  transactionId: null
+}
+✅ Operation node_paste executed, new version: 74
+📝 Transaction started: txn_1753322881570_2nyyr35w3 (multi_node_operation)
+📝 Recording operation 1753322861356-0tqheu2gz-1753322881570-qkyj0q7jy: {
+  type: 'node_move',
+  userId: 631,
+  hasUndoData: true,
+  transactionId: 'txn_1753322881570_2nyyr35w3'
+}
+✅ Operation node_move executed, new version: 75
+✅ Transaction committed: txn_1753322881570_2nyyr35w3 (0 operations)
+📝 Recording operation 1753322861356-0tqheu2gz-1753322886537-7uxihzlhm: {
+  type: 'node_move',
+  userId: 631,
+  hasUndoData: true,
+  transactionId: null
+}
+✅ Operation node_move executed, new version: 76
+📝 Recording operation 1753322860256-geez2mkkn-1753322911313-j2edptt0e: {
+  type: 'node_move',
+  userId: 630,
+  hasUndoData: true,
+  transactionId: null
+}
+✅ Operation node_move executed, new version: 77
+📝 Transaction started: txn_1753322916076_yqpz20tjk (multi_node_operation)
+📝 Recording operation 1753322860256-geez2mkkn-1753322916075-h3ui4w8dn: {
+  type: 'node_move',
+  userId: 630,
+  hasUndoData: true,
+  transactionId: 'txn_1753322916076_yqpz20tjk'
+}
+✅ Operation node_move executed, new version: 78
+✅ Transaction committed: txn_1753322916076_yqpz20tjk (0 operations)
+📝 Transaction started: txn_1753322918354_par0xqypa (multi_node_operation)
+📝 Recording operation 1753322860256-geez2mkkn-1753322918353-k1ou6ytjm: {
+  type: 'node_move',
+  userId: 630,
+  hasUndoData: true,
+  transactionId: 'txn_1753322918354_par0xqypa'
+}
+✅ Operation node_move executed, new version: 79
+✅ Transaction committed: txn_1753322918354_par0xqypa (0 operations)
+📝 Transaction started: txn_1753322919604_x6qaiaf35 (multi_node_operation)
+📝 Recording operation 1753322860256-geez2mkkn-1753322919603-h8tx9oesz: {
+  type: 'node_move',
+  userId: 630,
+  hasUndoData: true,
+  transactionId: 'txn_1753322919604_x6qaiaf35'
+}
+✅ Operation node_move executed, new version: 80
+✅ Transaction committed: txn_1753322919604_x6qaiaf35 (0 operations)
+📝 Transaction started: txn_1753322921237_lgmh4815k (multi_node_operation)
+📝 Recording operation 1753322860256-geez2mkkn-1753322921236-ss2dtjmxy: {
+  type: 'node_move',
+  userId: 630,
+  hasUndoData: true,
+  transactionId: 'txn_1753322921237_lgmh4815k'
+}
+✅ Operation node_move executed, new version: 81
+✅ Transaction committed: txn_1753322921237_lgmh4815k (0 operations)
+📝 Transaction started: txn_1753322921395_r1li9wexw (multi_node_operation)
+📝 Recording operation 1753322860256-geez2mkkn-1753322921394-tapg1ddkx: {
+  type: 'node_move',
+  userId: 630,
+  hasUndoData: true,
+  transactionId: 'txn_1753322921395_r1li9wexw'
+}
+✅ Operation node_move executed, new version: 82
+✅ Transaction committed: txn_1753322921395_r1li9wexw (0 operations)
+📝 Transaction started: txn_1753322921869_hocn0299h (multi_node_operation)
+📝 Recording operation 1753322860256-geez2mkkn-1753322921868-aw6la0opn: {
+  type: 'node_move',
+  userId: 630,
+  hasUndoData: true,
+  transactionId: 'txn_1753322921869_hocn0299h'
+}
+✅ Operation node_move executed, new version: 83
+✅ Transaction committed: txn_1753322921869_hocn0299h (0 operations)
+📝 Transaction started: txn_1753322922654_f0z1ivir7 (multi_node_operation)
+📝 Recording operation 1753322860256-geez2mkkn-1753322922653-qnha934a4: {
+  type: 'node_move',
+  userId: 630,
+  hasUndoData: true,
+  transactionId: 'txn_1753322922654_f0z1ivir7'
+}
+✅ Operation node_move executed, new version: 84
+✅ Transaction committed: txn_1753322922654_f0z1ivir7 (0 operations)
+📝 Recording operation 1753322860256-geez2mkkn-1753322937592-d9pksimij: {
+  type: 'node_move',
+  userId: 630,
+  hasUndoData: true,
+  transactionId: null
+}
+✅ Operation node_move executed, new version: 85
+[32m[nodemon] restarting due to changes...[39m
+[32m[nodemon] starting `node server/index.js`[39m
+✅ Database schema created/updated
+✅ Database configured with WAL mode and optimizations
+✅ Database initialized
+🎨 CanvasStateManager initialized
+✅ Real-time collaboration initialized
+node:events:496
+      throw er; // Unhandled 'error' event
+      ^
+
+Error: listen EADDRINUSE: address already in use :::3000
+    at Server.setupListenHandle [as _listen2] (node:net:1937:16)
+    at listenInCluster (node:net:1994:12)
+    at Server.listen (node:net:2099:7)
+    at ImageCanvasServer.start (/Users/marcsteinberg/Documents/Projects/ImageCanvas/server/index.js:669:25)
+Emitted 'error' event on Server instance at:
+    at emitErrorNT (node:net:1973:8)
+    at process.processTicksAndRejections (node:internal/process/task_queues:90:21) {
+  code: 'EADDRINUSE',
+  errno: -48,
+  syscall: 'listen',
+  address: '::',
+  port: 3000
+}
+
+Node.js v22.14.0
+[31m[nodemon] app crashed - waiting for file changes before starting...[39m
+[32m[nodemon] restarting due to changes...[39m
+[32m[nodemon] starting `node server/index.js`[39m
+✅ Database schema created/updated
+✅ Database configured with WAL mode and optimizations
+✅ Database initialized
+🎨 CanvasStateManager initialized
+✅ Real-time collaboration initialized
+🚀 ImageCanvas Collaborative Server running on port 3000
+📊 Health check: http://localhost:3000/health
+🔌 WebSocket test: http://localhost:3000/test-websocket
+📁 File uploads: http://localhost:3000/uploads
+📋 Projects: http://localhost:3000/projects
+🔌 New socket connection: 2Ci7dFB7r79amARxAAAB
+🔌 New socket connection: OYKR3SYkn5TUIRGJAAAD
+🔌 New socket connection: I4ALEbWZ2c5oItchAAAF
+GET /projects/user/1 - 2025-07-24T02:09:58.489Z
+GET /projects/11/canvas - 2025-07-24T02:09:58.496Z
+📥 Join request from user-66kqlbz0 (tab: 1753322998031-e66kqlbz0) for project 11
+👤 Created new user: user-66kqlbz0 (ID: 632)
+✅ user-66kqlbz0 (1753322998031-e66kqlbz0) joined project Dogs 2000
+📊 Project 11 now has 1 connections
+📤 Sent full state sync to user-66kqlbz0, version: 85
+📝 Transaction started: txn_1753323000840_prcm6t32h (multi_node_operation)
+📚 Loading history for project 11: found 171 operations
+📝 Recording operation 1753322998031-e66kqlbz0-1753323000840-89zpjtur2: {
+  type: 'node_move',
+  userId: 632,
+  hasUndoData: true,
+  transactionId: 'txn_1753323000840_prcm6t32h'
+}
+🔍 Getting undoable operations for user 632 in project 11: { timelineLength: 172, userId: 632, limit: 10 }
+✅ Operation node_move executed, new version: 86
+✅ Transaction committed: txn_1753323000840_prcm6t32h (0 operations)
+🔌 New socket connection: i65Qp6yQlQi0z0gGAAAH
+GET /projects/user/1 - 2025-07-24T02:10:02.652Z
+GET /projects/11/canvas - 2025-07-24T02:10:02.655Z
+📥 Join request from user-nzqx49ar (tab: 1753323002197-qnzqx49ar) for project 11
+👤 Created new user: user-nzqx49ar (ID: 633)
+✅ user-nzqx49ar (1753323002197-qnzqx49ar) joined project Dogs 2000
+📊 Project 11 now has 2 connections
+📤 Sent full state sync to user-nzqx49ar, version: 86
+📝 Transaction started: txn_1753323005232_mgu1hkaaz (multi_node_operation)
+📝 Recording operation 1753322998031-e66kqlbz0-1753323005231-157ivjs5o: {
+  type: 'node_move',
+  userId: 632,
+  hasUndoData: true,
+  transactionId: 'txn_1753323005232_mgu1hkaaz'
+}
+🔍 Getting undoable operations for user 632 in project 11: { timelineLength: 173, userId: 632, limit: 10 }
+✅ Operation node_move executed, new version: 87
+✅ Transaction committed: txn_1753323005232_mgu1hkaaz (0 operations)
+📝 Transaction started: txn_1753323007992_urro8v3jt (multi_node_operation)
+📝 Recording operation 1753322998031-e66kqlbz0-1753323007991-lrluekegi: {
+  type: 'node_move',
+  userId: 632,
+  hasUndoData: true,
+  transactionId: 'txn_1753323007992_urro8v3jt'
+}
+🔍 Getting undoable operations for user 632 in project 11: { timelineLength: 174, userId: 632, limit: 10 }
+✅ Operation node_move executed, new version: 88
+✅ Transaction committed: txn_1753323007992_urro8v3jt (0 operations)
+📝 Recording operation 1753323002197-qnzqx49ar-1753323010639-svxxda9ma: {
+  type: 'node_move',
+  userId: 633,
+  hasUndoData: true,
+  transactionId: null
+}
+🔍 Getting undoable operations for user 633 in project 11: { timelineLength: 175, userId: 633, limit: 10 }
+✅ Operation node_move executed, new version: 89
+📝 Transaction started: txn_1753323012950_rdmk82zsz (multi_node_operation)
+📝 Recording operation 1753323002197-qnzqx49ar-1753323012949-amn2q0079: {
+  type: 'node_move',
+  userId: 633,
+  hasUndoData: true,
+  transactionId: 'txn_1753323012950_rdmk82zsz'
+}
+🔍 Getting undoable operations for user 633 in project 11: { timelineLength: 176, userId: 633, limit: 10 }
+✅ Operation node_move executed, new version: 90
+✅ Transaction committed: txn_1753323012950_rdmk82zsz (0 operations)
+📝 Transaction started: txn_1753323015669_kpvz70hjw (multi_node_operation)
+📝 Recording operation 1753322998031-e66kqlbz0-1753323015668-qt1zuv9cb: {
+  type: 'node_move',
+  userId: 632,
+  hasUndoData: true,
+  transactionId: 'txn_1753323015669_kpvz70hjw'
+}
+🔍 Getting undoable operations for user 632 in project 11: { timelineLength: 177, userId: 632, limit: 10 }
+✅ Operation node_move executed, new version: 91
+✅ Transaction committed: txn_1753323015669_kpvz70hjw (0 operations)
+[32m[nodemon] restarting due to changes...[39m
+[32m[nodemon] starting `node server/index.js`[39m
+✅ Database schema created/updated
+✅ Database configured with WAL mode and optimizations
+✅ Database initialized
+🎨 CanvasStateManager initialized
+✅ Real-time collaboration initialized
+node:events:496
+      throw er; // Unhandled 'error' event
+      ^
+
+Error: listen EADDRINUSE: address already in use :::3000
+    at Server.setupListenHandle [as _listen2] (node:net:1937:16)
+    at listenInCluster (node:net:1994:12)
+    at Server.listen (node:net:2099:7)
+    at ImageCanvasServer.start (/Users/marcsteinberg/Documents/Projects/ImageCanvas/server/index.js:669:25)
+Emitted 'error' event on Server instance at:
+    at emitErrorNT (node:net:1973:8)
+    at process.processTicksAndRejections (node:internal/process/task_queues:90:21) {
+  code: 'EADDRINUSE',
+  errno: -48,
+  syscall: 'listen',
+  address: '::',
+  port: 3000
+}
+
+Node.js v22.14.0
+[31m[nodemon] app crashed - waiting for file changes before starting...[39m
+[32m[nodemon] restarting due to changes...[39m
+[32m[nodemon] starting `node server/index.js`[39m
+✅ Database schema created/updated
+✅ Database configured with WAL mode and optimizations
+✅ Database initialized
+🎨 CanvasStateManager initialized
+✅ Real-time collaboration initialized
+🚀 ImageCanvas Collaborative Server running on port 3000
+📊 Health check: http://localhost:3000/health
+🔌 WebSocket test: http://localhost:3000/test-websocket
+📁 File uploads: http://localhost:3000/uploads
+📋 Projects: http://localhost:3000/projects
+🔌 New socket connection: KhS6SVfrte9HEKkkAAAB
+🔌 New socket connection: N1-wRmdo4Hgg4ODQAAAD
+[32m[nodemon] restarting due to changes...[39m
+[32m[nodemon] starting `node server/index.js`[39m
+✅ Database schema created/updated
+✅ Database configured with WAL mode and optimizations
+✅ Database initialized
+🎨 CanvasStateManager initialized
+✅ Real-time collaboration initialized
+node:events:496
+      throw er; // Unhandled 'error' event
+      ^
+
+Error: listen EADDRINUSE: address already in use :::3000
+    at Server.setupListenHandle [as _listen2] (node:net:1937:16)
+    at listenInCluster (node:net:1994:12)
+    at Server.listen (node:net:2099:7)
+    at ImageCanvasServer.start (/Users/marcsteinberg/Documents/Projects/ImageCanvas/server/index.js:669:25)
+Emitted 'error' event on Server instance at:
+    at emitErrorNT (node:net:1973:8)
+    at process.processTicksAndRejections (node:internal/process/task_queues:90:21) {
+  code: 'EADDRINUSE',
+  errno: -48,
+  syscall: 'listen',
+  address: '::',
+  port: 3000
+}
+
+Node.js v22.14.0
+[31m[nodemon] app crashed - waiting for file changes before starting...[39m
+[32m[nodemon] restarting due to changes...[39m
+[32m[nodemon] starting `node server/index.js`[39m
+✅ Database schema created/updated
+✅ Database configured with WAL mode and optimizations
+✅ Database initialized
+🎨 CanvasStateManager initialized
+✅ Real-time collaboration initialized
+🚀 ImageCanvas Collaborative Server running on port 3000
+📊 Health check: http://localhost:3000/health
+🔌 WebSocket test: http://localhost:3000/test-websocket
+📁 File uploads: http://localhost:3000/uploads
+📋 Projects: http://localhost:3000/projects
+🔌 New socket connection: tIWgXFgo0wBsY_a2AAAB
+🔌 New socket connection: ktfIKYEu5m2Xc-xXAAAD
+PATCH /projects/11/canvas - 2025-07-24T02:13:54.629Z
+🔌 New socket connection: YdjOqxOZWtGE8FBCAAAF
+GET /projects/user/1 - 2025-07-24T02:14:28.446Z
+GET /projects/11/canvas - 2025-07-24T02:14:28.453Z
+📥 Join request from user-9fhrv80r (tab: 1753323267984-f9fhrv80r) for project 11
+👤 Created new user: user-9fhrv80r (ID: 634)
+✅ user-9fhrv80r (1753323267984-f9fhrv80r) joined project Dogs 2000
+📊 Project 11 now has 1 connections
+📤 Sent full state sync to user-9fhrv80r, version: 91
+📝 Transaction started: txn_1753323272431_u88q7gnp7 (multi_node_operation)
+📚 Loading history for project 11: found 183 operations
+📝 Recording operation 1753323267984-f9fhrv80r-1753323272429-megyf901y: {
+  type: 'node_delete',
+  userId: 634,
+  hasUndoData: true,
+  transactionId: 'txn_1753323272431_u88q7gnp7'
+}
+🔍 Getting undoable operations for user 634 in project 11: { timelineLength: 184, userId: 634, limit: 10 }
+✅ Operation node_delete executed, new version: 92
+✅ Transaction committed: txn_1753323272431_u88q7gnp7 (0 operations)
+📝 Transaction started: txn_1753323275109_zqs3lge23 (multi_node_operation)
+📝 Recording operation 1753323267984-f9fhrv80r-1753323275108-z7tj9uzhn: {
+  type: 'node_move',
+  userId: 634,
+  hasUndoData: true,
+  transactionId: 'txn_1753323275109_zqs3lge23'
+}
+🔍 Getting undoable operations for user 634 in project 11: { timelineLength: 185, userId: 634, limit: 10 }
+✅ Operation node_move executed, new version: 93
+✅ Transaction committed: txn_1753323275109_zqs3lge23 (0 operations)
+🔌 New socket connection: sX9PnbIOGauWnRiSAAAH
+GET /projects/user/1 - 2025-07-24T02:14:36.750Z
+GET /projects/11/canvas - 2025-07-24T02:14:36.755Z
+📥 Join request from user-rziwf0n4 (tab: 1753323276289-9rziwf0n4) for project 11
+👤 Created new user: user-rziwf0n4 (ID: 635)
+✅ user-rziwf0n4 (1753323276289-9rziwf0n4) joined project Dogs 2000
+📊 Project 11 now has 2 connections
+📤 Sent full state sync to user-rziwf0n4, version: 93
+PATCH /projects/11/canvas - 2025-07-24T02:14:37.332Z
+PATCH /projects/11/canvas - 2025-07-24T02:14:39.463Z
+PATCH /projects/11/canvas - 2025-07-24T02:14:39.934Z
+📝 Recording operation 1753323267984-f9fhrv80r-1753323283468-l8pq8uqmz: {
+  type: 'node_move',
+  userId: 634,
+  hasUndoData: true,
+  transactionId: null
+}
+🔍 Getting undoable operations for user 634 in project 11: { timelineLength: 186, userId: 634, limit: 10 }
+✅ Operation node_move executed, new version: 94
+📝 Recording operation 1753323267984-f9fhrv80r-1753323293266-ij8yjb7mj: {
+  type: 'node_move',
+  userId: 634,
+  hasUndoData: true,
+  transactionId: null
+}
+🔍 Getting undoable operations for user 634 in project 11: { timelineLength: 187, userId: 634, limit: 10 }
+✅ Operation node_move executed, new version: 95
+📝 Recording operation 1753323267984-f9fhrv80r-1753323325373-v62s9nyqa: {
+  type: 'node_resize',
+  userId: 634,
+  hasUndoData: true,
+  transactionId: null
+}
+🔍 Getting undoable operations for user 634 in project 11: { timelineLength: 188, userId: 634, limit: 10 }
+✅ Operation node_resize executed, new version: 96
+📝 Recording operation 1753323267984-f9fhrv80r-1753323330168-vc8enx23j: {
+  type: 'node_move',
+  userId: 634,
+  hasUndoData: true,
+  transactionId: null
+}
+🔍 Getting undoable operations for user 634 in project 11: { timelineLength: 189, userId: 634, limit: 10 }
+✅ Operation node_move executed, new version: 97
+🔌 Disconnecting user-9fhrv80r (1753323267984-f9fhrv80r)
+🔌 Disconnecting user-rziwf0n4 (1753323276289-9rziwf0n4)
+🧹 Cleaned up empty room for project 11
+🔌 New socket connection: uA2XFozZ-rwET5BAAAAJ
+🔌 New socket connection: 72NUDudaUfXu8T33AAAL
+🔌 New socket connection: bJ2RoseLw6GZVfqEAAAN
+🔌 New socket connection: GDVYTfesOWFVjrhkAAAP
+[32m[nodemon] restarting due to changes...[39m
+[32m[nodemon] starting `node server/index.js`[39m
+✅ Database schema created/updated
+✅ Database configured with WAL mode and optimizations
+✅ Database initialized
+🎨 CanvasStateManager initialized
+✅ Real-time collaboration initialized
+🚀 ImageCanvas Collaborative Server running on port 3000
+📊 Health check: http://localhost:3000/health
+🔌 WebSocket test: http://localhost:3000/test-websocket
+📁 File uploads: http://localhost:3000/uploads
+📋 Projects: http://localhost:3000/projects
+🔌 New socket connection: 5ZY1nZqXSVJ4VDy6AAAB
+🔌 New socket connection: LxTvi0XgqvoUaD01AAAD
+[32m[nodemon] restarting due to changes...[39m
+[32m[nodemon] starting `node server/index.js`[39m
+✅ Database schema created/updated
+✅ Database configured with WAL mode and optimizations
+✅ Database initialized
+🎨 CanvasStateManager initialized
+✅ Real-time collaboration initialized
+🚀 ImageCanvas Collaborative Server running on port 3000
+📊 Health check: http://localhost:3000/health
+🔌 WebSocket test: http://localhost:3000/test-websocket
+📁 File uploads: http://localhost:3000/uploads
+📋 Projects: http://localhost:3000/projects
+🔌 New socket connection: qR9RKZDUSYa4L4I3AAAB
+🔌 New socket connection: uMzl7E6HtiN92BJ_AAAD
+🔌 New socket connection: HRFQLMBZvwpVfgKsAAAF
+GET /projects/user/1 - 2025-07-24T05:56:58.878Z
+GET /projects/11/canvas - 2025-07-24T05:56:58.890Z
+📥 Join request from user-mtqo8nsy (tab: 1753336618416-amtqo8nsy) for project 11
+👤 Created new user: user-mtqo8nsy (ID: 636)
+✅ user-mtqo8nsy (1753336618416-amtqo8nsy) joined project Dogs 2000
+📊 Project 11 now has 1 connections
+📤 Sent full state sync to user-mtqo8nsy, version: 97
+🔌 Disconnecting user-mtqo8nsy (1753336618416-amtqo8nsy)
+🧹 Cleaned up empty room for project 11
+🔌 New socket connection: GhZbKQ2hNI9aLlubAAAH
+GET /projects/user/1 - 2025-07-24T05:57:01.157Z
+GET /projects/11/canvas - 2025-07-24T05:57:01.161Z
+📥 Join request from user-qho58u3b (tab: 1753336620704-qqho58u3b) for project 11
+👤 Created new user: user-qho58u3b (ID: 637)
+✅ user-qho58u3b (1753336620704-qqho58u3b) joined project Dogs 2000
+📊 Project 11 now has 1 connections
+📤 Sent full state sync to user-qho58u3b, version: 97
+🔌 Disconnecting user-qho58u3b (1753336620704-qqho58u3b)
+🧹 Cleaned up empty room for project 11
+🔌 New socket connection: AkeYgGS-ddHSXvD0AAAJ
+GET /projects/user/1 - 2025-07-24T05:57:02.508Z
+GET /projects/11/canvas - 2025-07-24T05:57:02.513Z
+📥 Join request from user-sdqakriy (tab: 1753336622041-lsdqakriy) for project 11
+👤 Created new user: user-sdqakriy (ID: 638)
+✅ user-sdqakriy (1753336622041-lsdqakriy) joined project Dogs 2000
+📊 Project 11 now has 1 connections
+📤 Sent full state sync to user-sdqakriy, version: 97
+📝 Transaction started: txn_1753336624433_l2h6egdmr (multi_node_operation)
+📚 Loading history for project 11: found 195 operations
+📝 Recording operation 1753336622041-lsdqakriy-1753336624432-4cu6zxlmj: {
+  type: 'node_move',
+  userId: 638,
+  hasUndoData: true,
+  transactionId: 'txn_1753336624433_l2h6egdmr'
+}
+🔍 Getting undoable operations for user 638 in project 11: { timelineLength: 196, userId: 638, limit: 10 }
+📤 Sending undo state update to user 638: {
+  canUndo: true,
+  canRedo: false,
+  undoCount: 2,
+  redoCount: 0,
+  nextUndo: {
+    type: 'transaction',
+    operationIds: [ '1753336622041-lsdqakriy-1753336624432-4cu6zxlmj' ],
+    transactionId: 'txn_1753336624433_l2h6egdmr',
+    timestamp: 1753336624455
+  },
+  nextRedo: null
+}
+✅ Operation node_move executed, new version: 98
+✅ Transaction committed: txn_1753336624433_l2h6egdmr (0 operations)
+🔌 Disconnecting user-sdqakriy (1753336622041-lsdqakriy)
+🧹 Cleaned up empty room for project 11
+🔌 New socket connection: _WsFrA3HbioIkdMDAAAL
+GET /projects/user/1 - 2025-07-24T05:57:05.810Z
+GET /projects/11/canvas - 2025-07-24T05:57:05.817Z
+📥 Join request from user-mixsd6kq (tab: 1753336625347-1mixsd6kq) for project 11
+👤 Created new user: user-mixsd6kq (ID: 639)
+✅ user-mixsd6kq (1753336625347-1mixsd6kq) joined project Dogs 2000
+📊 Project 11 now has 1 connections
+📤 Sent full state sync to user-mixsd6kq, version: 98
+🔌 New socket connection: xKRC-3CRDcG_SHSFAAAN
+GET /projects/user/1 - 2025-07-24T05:57:11.666Z
+GET /projects/11/canvas - 2025-07-24T05:57:11.670Z
+📥 Join request from user-8ghafqzc (tab: 1753336631204-s8ghafqzc) for project 11
+👤 Created new user: user-8ghafqzc (ID: 640)
+✅ user-8ghafqzc (1753336631204-s8ghafqzc) joined project Dogs 2000
+📊 Project 11 now has 2 connections
+📤 Sent full state sync to user-8ghafqzc, version: 98
+📝 Recording operation 1753336631204-s8ghafqzc-1753336633523-89ww6aaab: {
+  type: 'node_move',
+  userId: 640,
+  hasUndoData: true,
+  transactionId: null
+}
+🔍 Getting undoable operations for user 640 in project 11: { timelineLength: 197, userId: 640, limit: 10 }
+📤 Sending undo state update to user 640: {
+  canUndo: true,
+  canRedo: false,
+  undoCount: 1,
+  redoCount: 0,
+  nextUndo: {
+    type: 'single',
+    operationId: '1753336631204-s8ghafqzc-1753336633523-89ww6aaab',
+    timestamp: 1753336633528
+  },
+  nextRedo: null
+}
+✅ Operation node_move executed, new version: 99
+📝 Recording operation 1753336631204-s8ghafqzc-1753336635297-vsw0g9y6f: {
+  type: 'node_move',
+  userId: 640,
+  hasUndoData: true,
+  transactionId: null
+}
+🔍 Getting undoable operations for user 640 in project 11: { timelineLength: 198, userId: 640, limit: 10 }
+📤 Sending undo state update to user 640: {
+  canUndo: true,
+  canRedo: false,
+  undoCount: 2,
+  redoCount: 0,
+  nextUndo: {
+    type: 'single',
+    operationId: '1753336631204-s8ghafqzc-1753336635297-vsw0g9y6f',
+    timestamp: 1753336635300
+  },
+  nextRedo: null
+}
+✅ Operation node_move executed, new version: 100
+📝 Recording operation 1753336631204-s8ghafqzc-1753336636397-qtf8uajob: {
+  type: 'node_move',
+  userId: 640,
+  hasUndoData: true,
+  transactionId: null
+}
+🔍 Getting undoable operations for user 640 in project 11: { timelineLength: 199, userId: 640, limit: 10 }
+📤 Sending undo state update to user 640: {
+  canUndo: true,
+  canRedo: false,
+  undoCount: 3,
+  redoCount: 0,
+  nextUndo: {
+    type: 'single',
+    operationId: '1753336631204-s8ghafqzc-1753336636397-qtf8uajob',
+    timestamp: 1753336636401
+  },
+  nextRedo: null
+}
+✅ Operation node_move executed, new version: 101
+📝 Recording operation 1753336631204-s8ghafqzc-1753336637507-7yza86v0l: {
+  type: 'node_move',
+  userId: 640,
+  hasUndoData: true,
+  transactionId: null
+}
+🔍 Getting undoable operations for user 640 in project 11: { timelineLength: 200, userId: 640, limit: 10 }
+📤 Sending undo state update to user 640: {
+  canUndo: true,
+  canRedo: false,
+  undoCount: 4,
+  redoCount: 0,
+  nextUndo: {
+    type: 'single',
+    operationId: '1753336631204-s8ghafqzc-1753336637507-7yza86v0l',
+    timestamp: 1753336637511
+  },
+  nextRedo: null
+}
+✅ Operation node_move executed, new version: 102
+📝 Transaction started: txn_1753336640035_jji7vdgru (multi_node_operation)
+📝 Recording operation 1753336631204-s8ghafqzc-1753336640034-0doe7s6ta: {
+  type: 'node_move',
+  userId: 640,
+  hasUndoData: true,
+  transactionId: 'txn_1753336640035_jji7vdgru'
+}
+🔍 Getting undoable operations for user 640 in project 11: { timelineLength: 201, userId: 640, limit: 10 }
+📤 Sending undo state update to user 640: {
+  canUndo: true,
+  canRedo: false,
+  undoCount: 5,
+  redoCount: 0,
+  nextUndo: {
+    type: 'transaction',
+    operationIds: [ '1753336631204-s8ghafqzc-1753336640034-0doe7s6ta' ],
+    transactionId: 'txn_1753336640035_jji7vdgru',
+    timestamp: 1753336640038
+  },
+  nextRedo: null
+}
+✅ Operation node_move executed, new version: 103
+✅ Transaction committed: txn_1753336640035_jji7vdgru (0 operations)
+📝 Transaction started: txn_1753336640625_721mkw17n (multi_node_operation)
+📝 Recording operation 1753336631204-s8ghafqzc-1753336640621-j1378ph2d: {
+  type: 'node_move',
+  userId: 640,
+  hasUndoData: true,
+  transactionId: 'txn_1753336640625_721mkw17n'
+}
+🔍 Getting undoable operations for user 640 in project 11: { timelineLength: 202, userId: 640, limit: 10 }
+📤 Sending undo state update to user 640: {
+  canUndo: true,
+  canRedo: false,
+  undoCount: 6,
+  redoCount: 0,
+  nextUndo: {
+    type: 'transaction',
+    operationIds: [ '1753336631204-s8ghafqzc-1753336640621-j1378ph2d' ],
+    transactionId: 'txn_1753336640625_721mkw17n',
+    timestamp: 1753336640628
+  },
+  nextRedo: null
+}
+✅ Operation node_move executed, new version: 104
+✅ Transaction committed: txn_1753336640625_721mkw17n (0 operations)
+📝 Transaction started: txn_1753336641966_0fdpfg85m (multi_node_operation)
+📝 Recording operation 1753336631204-s8ghafqzc-1753336641966-05unaam9w: {
+  type: 'node_move',
+  userId: 640,
+  hasUndoData: true,
+  transactionId: 'txn_1753336641966_0fdpfg85m'
+}
+🔍 Getting undoable operations for user 640 in project 11: { timelineLength: 203, userId: 640, limit: 10 }
+📤 Sending undo state update to user 640: {
+  canUndo: true,
+  canRedo: false,
+  undoCount: 7,
+  redoCount: 0,
+  nextUndo: {
+    type: 'transaction',
+    operationIds: [ '1753336631204-s8ghafqzc-1753336641966-05unaam9w' ],
+    transactionId: 'txn_1753336641966_0fdpfg85m',
+    timestamp: 1753336641968
+  },
+  nextRedo: null
+}
+✅ Operation node_move executed, new version: 105
+✅ Transaction committed: txn_1753336641966_0fdpfg85m (0 operations)
+📝 Recording operation 1753336631204-s8ghafqzc-1753336647033-4ie2ek6w0: {
+  type: 'node_move',
+  userId: 640,
+  hasUndoData: true,
+  transactionId: null
+}
+🔍 Getting undoable operations for user 640 in project 11: { timelineLength: 204, userId: 640, limit: 10 }
+📤 Sending undo state update to user 640: {
+  canUndo: true,
+  canRedo: false,
+  undoCount: 8,
+  redoCount: 0,
+  nextUndo: {
+    type: 'single',
+    operationId: '1753336631204-s8ghafqzc-1753336647033-4ie2ek6w0',
+    timestamp: 1753336647036
+  },
+  nextRedo: null
+}
+✅ Operation node_move executed, new version: 106
+📝 Recording operation 1753336631204-s8ghafqzc-1753336648896-ud9pdxyej: {
+  type: 'node_move',
+  userId: 640,
+  hasUndoData: true,
+  transactionId: null
+}
+🔍 Getting undoable operations for user 640 in project 11: { timelineLength: 205, userId: 640, limit: 10 }
+📤 Sending undo state update to user 640: {
+  canUndo: true,
+  canRedo: false,
+  undoCount: 9,
+  redoCount: 0,
+  nextUndo: {
+    type: 'single',
+    operationId: '1753336631204-s8ghafqzc-1753336648896-ud9pdxyej',
+    timestamp: 1753336648898
+  },
+  nextRedo: null
+}
+✅ Operation node_move executed, new version: 107
+📝 Recording operation 1753336631204-s8ghafqzc-1753336649329-ygsnhn6my: {
+  type: 'node_rotate',
+  userId: 640,
+  hasUndoData: true,
+  transactionId: null
+}
+🔍 Getting undoable operations for user 640 in project 11: { timelineLength: 206, userId: 640, limit: 10 }
+📤 Sending undo state update to user 640: {
+  canUndo: true,
+  canRedo: false,
+  undoCount: 10,
+  redoCount: 0,
+  nextUndo: {
+    type: 'single',
+    operationId: '1753336631204-s8ghafqzc-1753336649329-ygsnhn6my',
+    timestamp: 1753336649333
+  },
+  nextRedo: null
+}
+✅ Operation node_rotate executed, new version: 108
+📝 Recording operation 1753336631204-s8ghafqzc-1753336650106-x87vwfqw0: {
+  type: 'node_move',
+  userId: 640,
+  hasUndoData: true,
+  transactionId: null
+}
+🔍 Getting undoable operations for user 640 in project 11: { timelineLength: 207, userId: 640, limit: 10 }
+📤 Sending undo state update to user 640: {
+  canUndo: true,
+  canRedo: false,
+  undoCount: 10,
+  redoCount: 0,
+  nextUndo: {
+    type: 'single',
+    operationId: '1753336631204-s8ghafqzc-1753336650106-x87vwfqw0',
+    timestamp: 1753336650109
+  },
+  nextRedo: null
+}
+✅ Operation node_move executed, new version: 109
+📝 Recording operation 1753336631204-s8ghafqzc-1753336650962-ar7h43h3t: {
+  type: 'node_move',
+  userId: 640,
+  hasUndoData: true,
+  transactionId: null
+}
+🔍 Getting undoable operations for user 640 in project 11: { timelineLength: 208, userId: 640, limit: 10 }
+📤 Sending undo state update to user 640: {
+  canUndo: true,
+  canRedo: false,
+  undoCount: 10,
+  redoCount: 0,
+  nextUndo: {
+    type: 'single',
+    operationId: '1753336631204-s8ghafqzc-1753336650962-ar7h43h3t',
+    timestamp: 1753336650965
+  },
+  nextRedo: null
+}
+✅ Operation node_move executed, new version: 110
+📝 Recording operation 1753336631204-s8ghafqzc-1753336651529-o4zf0m03w: {
+  type: 'node_move',
+  userId: 640,
+  hasUndoData: true,
+  transactionId: null
+}
+🔍 Getting undoable operations for user 640 in project 11: { timelineLength: 209, userId: 640, limit: 10 }
+📤 Sending undo state update to user 640: {
+  canUndo: true,
+  canRedo: false,
+  undoCount: 10,
+  redoCount: 0,
+  nextUndo: {
+    type: 'single',
+    operationId: '1753336631204-s8ghafqzc-1753336651529-o4zf0m03w',
+    timestamp: 1753336651532
+  },
+  nextRedo: null
+}
+✅ Operation node_move executed, new version: 111
+📝 Recording operation 1753336631204-s8ghafqzc-1753336652012-0kr91xd2q: {
+  type: 'node_move',
+  userId: 640,
+  hasUndoData: true,
+  transactionId: null
+}
+🔍 Getting undoable operations for user 640 in project 11: { timelineLength: 210, userId: 640, limit: 10 }
+📤 Sending undo state update to user 640: {
+  canUndo: true,
+  canRedo: false,
+  undoCount: 10,
+  redoCount: 0,
+  nextUndo: {
+    type: 'single',
+    operationId: '1753336631204-s8ghafqzc-1753336652012-0kr91xd2q',
+    timestamp: 1753336652015
+  },
+  nextRedo: null
+}
+✅ Operation node_move executed, new version: 112
+📝 Recording operation 1753336631204-s8ghafqzc-1753336652629-v37ik3x3a: {
+  type: 'node_move',
+  userId: 640,
+  hasUndoData: true,
+  transactionId: null
+}
+🔍 Getting undoable operations for user 640 in project 11: { timelineLength: 211, userId: 640, limit: 10 }
+📤 Sending undo state update to user 640: {
+  canUndo: true,
+  canRedo: false,
+  undoCount: 10,
+  redoCount: 0,
+  nextUndo: {
+    type: 'single',
+    operationId: '1753336631204-s8ghafqzc-1753336652629-v37ik3x3a',
+    timestamp: 1753336652631
+  },
+  nextRedo: null
+}
+✅ Operation node_move executed, new version: 113
+📝 Recording operation 1753336631204-s8ghafqzc-1753336653279-d5u70tgcn: {
+  type: 'node_move',
+  userId: 640,
+  hasUndoData: true,
+  transactionId: null
+}
+🔍 Getting undoable operations for user 640 in project 11: { timelineLength: 212, userId: 640, limit: 10 }
+📤 Sending undo state update to user 640: {
+  canUndo: true,
+  canRedo: false,
+  undoCount: 10,
+  redoCount: 0,
+  nextUndo: {
+    type: 'single',
+    operationId: '1753336631204-s8ghafqzc-1753336653279-d5u70tgcn',
+    timestamp: 1753336653283
+  },
+  nextRedo: null
+}
+✅ Operation node_move executed, new version: 114
+📝 Recording operation 1753336631204-s8ghafqzc-1753336653821-n4ukvjzqf: {
+  type: 'node_move',
+  userId: 640,
+  hasUndoData: true,
+  transactionId: null
+}
+🔍 Getting undoable operations for user 640 in project 11: { timelineLength: 213, userId: 640, limit: 10 }
+📤 Sending undo state update to user 640: {
+  canUndo: true,
+  canRedo: false,
+  undoCount: 10,
+  redoCount: 0,
+  nextUndo: {
+    type: 'single',
+    operationId: '1753336631204-s8ghafqzc-1753336653821-n4ukvjzqf',
+    timestamp: 1753336653824
+  },
+  nextRedo: null
+}
+✅ Operation node_move executed, new version: 115
+📝 Recording operation 1753336631204-s8ghafqzc-1753336654610-sb36tji0r: {
+  type: 'node_move',
+  userId: 640,
+  hasUndoData: true,
+  transactionId: null
+}
+🔍 Getting undoable operations for user 640 in project 11: { timelineLength: 214, userId: 640, limit: 10 }
+📤 Sending undo state update to user 640: {
+  canUndo: true,
+  canRedo: false,
+  undoCount: 10,
+  redoCount: 0,
+  nextUndo: {
+    type: 'single',
+    operationId: '1753336631204-s8ghafqzc-1753336654610-sb36tji0r',
+    timestamp: 1753336654613
+  },
+  nextRedo: null
+}
+✅ Operation node_move executed, new version: 116
+[32m[nodemon] restarting due to changes...[39m
+[32m[nodemon] starting `node server/index.js`[39m
+✅ Database schema created/updated
+✅ Database configured with WAL mode and optimizations
+✅ Database initialized
+🎨 CanvasStateManager initialized
+✅ Real-time collaboration initialized
+🚀 ImageCanvas Collaborative Server running on port 3000
+📊 Health check: http://localhost:3000/health
+🔌 WebSocket test: http://localhost:3000/test-websocket
+📁 File uploads: http://localhost:3000/uploads
+📋 Projects: http://localhost:3000/projects
+🔌 New socket connection: n-N4pjlWriyND-sCAAAB
+🔌 New socket connection: Ja5JvcH5FEF4eul8AAAD
+[32m[nodemon] restarting due to changes...[39m
+[32m[nodemon] starting `node server/index.js`[39m
+✅ Database schema created/updated
+✅ Database configured with WAL mode and optimizations
+✅ Database initialized
+🎨 CanvasStateManager initialized
+✅ Real-time collaboration initialized
+🚀 ImageCanvas Collaborative Server running on port 3000
+📊 Health check: http://localhost:3000/health
+🔌 WebSocket test: http://localhost:3000/test-websocket
+📁 File uploads: http://localhost:3000/uploads
+📋 Projects: http://localhost:3000/projects
+🔌 New socket connection: vKu_ugehQC0Emm1YAAAB
+🔌 New socket connection: _TgW5zltRtelLI0IAAAD
+[32m[nodemon] restarting due to changes...[39m
+[32m[nodemon] starting `node server/index.js`[39m
+✅ Database schema created/updated
+✅ Database configured with WAL mode and optimizations
+✅ Database initialized
+🎨 CanvasStateManager initialized
+✅ Real-time collaboration initialized
+🚀 ImageCanvas Collaborative Server running on port 3000
+📊 Health check: http://localhost:3000/health
+🔌 WebSocket test: http://localhost:3000/test-websocket
+📁 File uploads: http://localhost:3000/uploads
+📋 Projects: http://localhost:3000/projects
+🔌 New socket connection: ghWLc9kloQhm-nEBAAAB
+🔌 New socket connection: UTRXosKzeKdJy1zoAAAD
+[32m[nodemon] restarting due to changes...[39m
+[32m[nodemon] starting `node server/index.js`[39m
+✅ Database schema created/updated
+✅ Database configured with WAL mode and optimizations
+✅ Database initialized
+🎨 CanvasStateManager initialized
+✅ Real-time collaboration initialized
+🚀 ImageCanvas Collaborative Server running on port 3000
+📊 Health check: http://localhost:3000/health
+🔌 WebSocket test: http://localhost:3000/test-websocket
+📁 File uploads: http://localhost:3000/uploads
+📋 Projects: http://localhost:3000/projects
+🔌 New socket connection: HjMsxk0FBWpdjuCiAAAB
+🔌 New socket connection: dgzcPxjamW6kJprWAAAD
+🔌 New socket connection: -g_6zwUHZbrU7CY0AAAF
+GET /projects/user/1 - 2025-07-24T06:03:10.590Z
+GET /projects/11/canvas - 2025-07-24T06:03:10.602Z
+📥 Join request from user-85joonts (tab: 1753336990123-185joonts) for project 11
+👤 Created new user: user-85joonts (ID: 641)
+✅ user-85joonts (1753336990123-185joonts) joined project Dogs 2000
+📊 Project 11 now has 1 connections
+📤 Sent full state sync to user-85joonts, version: 116
+🔌 New socket connection: FGah7SVklQYDw89hAAAH
+GET /projects/user/1 - 2025-07-24T06:03:11.556Z
+GET /projects/11/canvas - 2025-07-24T06:03:11.561Z
+📥 Join request from user-u1aaimx4 (tab: 1753336991098-ru1aaimx4) for project 11
+👤 Created new user: user-u1aaimx4 (ID: 642)
+✅ user-u1aaimx4 (1753336991098-ru1aaimx4) joined project Dogs 2000
+📊 Project 11 now has 2 connections
+📤 Sent full state sync to user-u1aaimx4, version: 116
+📚 Loading history for project 11: found 232 operations
+📝 Recording operation 1753336990123-185joonts-1753336994300-8zb7tcq7l: {
+  type: 'node_move',
+  userId: 641,
+  hasUndoData: true,
+  transactionId: null
+}
+🔍 Getting undoable operations for user 641 in project 11: { timelineLength: 233, userId: 641, limit: 10 }
+📤 Sending undo state update to user 641: {
+  canUndo: true,
+  canRedo: false,
+  undoCount: 1,
+  redoCount: 0,
+  nextUndo: {
+    type: 'single',
+    operationId: '1753336990123-185joonts-1753336994300-8zb7tcq7l',
+    timestamp: 1753336994325
+  },
+  nextRedo: null
+}
+✅ Operation node_move executed, new version: 117
+🔌 Disconnecting user-85joonts (1753336990123-185joonts)
+🔌 New socket connection: 1kgVE2WPlsS-H856AAAJ
+GET /projects/user/1 - 2025-07-24T06:03:19.087Z
+GET /projects/11/canvas - 2025-07-24T06:03:19.093Z
+📥 Join request from user-3e42ktkw (tab: 1753336998622-e3e42ktkw) for project 11
+👤 Created new user: user-3e42ktkw (ID: 643)
+✅ user-3e42ktkw (1753336998622-e3e42ktkw) joined project Dogs 2000
+📊 Project 11 now has 2 connections
+📤 Sent full state sync to user-3e42ktkw, version: 117

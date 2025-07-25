@@ -74,7 +74,9 @@ class Command {
             id: this.id,
             type: this.type,
             params: this.params,
-            timestamp: this.timestamp
+            timestamp: this.timestamp,
+            undoData: this.undoData,
+            source: this.source
         };
     }
     

@@ -47,6 +47,15 @@ class CanvasNavigator {
                     <div class="loading-spinner">Loading...</div>
                 </div>
             </div>
+            <div class="navigator-footer">
+                <div class="database-info">
+                    <span class="database-size">Database: <span class="size-value">--</span></span>
+                </div>
+                <button class="cleanup-btn" title="Clean up orphaned data and unused media">
+                    <span class="icon">🧹</span>
+                    Clean Up
+                </button>
+            </div>
         `;
         
         // Create toggle button
@@ -71,9 +80,9 @@ class CanvasNavigator {
                 position: fixed;
                 top: 0;
                 left: -240px;
-                width: 220px;
+                width: 240px;
                 height: 100vh;
-                background: #1e1e1e;
+                background: rgba(30, 30, 30, 0.75);
                 color: #e0e0e0;
                 box-shadow: 2px 0 10px rgba(0,0,0,0.3);
                 transition: left 0.3s ease;
@@ -92,7 +101,7 @@ class CanvasNavigator {
                 display: flex;
                 justify-content: space-between;
                 align-items: center;
-                padding: 10px;
+                padding: 12px;
                 border-bottom: 1px solid #333;
                 background: #252525;
             }
@@ -107,11 +116,11 @@ class CanvasNavigator {
                 background: none;
                 border: none;
                 color: #999;
-                font-size: 24px;
+                font-size: 20px;
                 cursor: pointer;
                 padding: 0;
-                width: 30px;
-                height: 30px;
+                width: 28px;
+                height: 28px;
                 display: flex;
                 align-items: center;
                 justify-content: center;
@@ -126,10 +135,10 @@ class CanvasNavigator {
             
             /* Toolbar */
             .navigator-toolbar {
-                padding: 15px;
+                padding: 12px;
                 border-bottom: 1px solid #333;
                 display: flex;
-                gap: 10px;
+                gap: 8px;
             }
             
             .new-canvas-btn {
@@ -137,7 +146,7 @@ class CanvasNavigator {
                 background: #4CAF50;
                 border: none;
                 color: white;
-                padding: 10px 15px;
+                padding: 8px 12px;
                 border-radius: 4px;
                 cursor: pointer;
                 font-size: 12px;
@@ -145,7 +154,7 @@ class CanvasNavigator {
                 display: flex;
                 align-items: center;
                 justify-content: center;
-                gap: 8px;
+                gap: 6px;
                 transition: background 0.2s;
             }
             
@@ -154,7 +163,7 @@ class CanvasNavigator {
             }
             
             .new-canvas-btn .icon {
-                font-size: 18px;
+                font-size: 16px;
                 line-height: 1;
             }
             
@@ -162,10 +171,15 @@ class CanvasNavigator {
                 background: #333;
                 border: none;
                 color: #999;
-                padding: 10px;
+                padding: 8px;
                 border-radius: 4px;
                 cursor: pointer;
                 transition: all 0.2s;
+                width: 32px;
+                height: 32px;
+                display: flex;
+                align-items: center;
+                justify-content: center;
             }
             
             .refresh-btn:hover {
@@ -177,13 +191,13 @@ class CanvasNavigator {
             .canvas-list-container {
                 flex: 1;
                 overflow-y: auto;
-                padding: 10px;
+                padding: 12px;
             }
             
             .canvas-list {
                 display: flex;
                 flex-direction: column;
-                gap: 8px;
+                gap: 2px;
             }
             
             .canvas-list.loading {
@@ -195,14 +209,15 @@ class CanvasNavigator {
             
             .loading-spinner {
                 color: #666;
+                font-size: 12px;
             }
             
             /* Canvas Item */
             .canvas-item {
                 background: #2a2a2a;
                 border: 1px solid #333;
-                border-radius: 6px;
-                padding: 2px;
+                border-radius: 4px;
+                padding: 4px 8px;
                 cursor: pointer;
                 transition: all 0.2s;
                 position: relative;
@@ -218,22 +233,28 @@ class CanvasNavigator {
                 background: #3a3a3a;
                 border-color: #4CAF50;
                 border-width: 2px;
-                padding: 2px;
+                padding: 1px 7px;
             }
             
             .canvas-item-header {
                 display: flex;
                 justify-content: space-between;
-                align-items: flex-start;
-                margin-bottom: 0px;
+                align-items: center;
+                margin-bottom: 0;
+                gap: 4px;
             }
             
             .canvas-title {
                 font-size: 12px;
                 font-weight: 500;
-                margin: 0;
+                margin: 4px !important;
+                padding: 0;
                 color: #fff;
                 word-break: break-word;
+                flex: 1;
+                min-width: 0;
+                line-height: 1.2;
+                display: block;
             }
             
             .canvas-item.active .canvas-title {
@@ -241,10 +262,17 @@ class CanvasNavigator {
             }
             
             .canvas-actions {
-                display: flex;
-                gap: 5px;
+                display: flex !important;
+                flex-direction: row !important;
+                gap: 2px !important;
                 opacity: 0;
                 transition: opacity 0.2s;
+                flex-shrink: 0;
+                height: 16px;
+                min-width: 34px; /* 16px + 2px gap + 16px */
+                align-items: center;
+                justify-content: flex-start;
+                white-space: nowrap;
             }
             
             .canvas-item:hover .canvas-actions {
@@ -256,10 +284,20 @@ class CanvasNavigator {
                 border: none;
                 color: #666;
                 cursor: pointer;
-                padding: 4px;
-                border-radius: 3px;
-                font-size: 12px;
+                padding: 0;
+                margin: 0;
+                border-radius: 2px;
+                font-size: 10px;
+                line-height: 1;
                 transition: all 0.2s;
+                display: inline-flex;
+                align-items: center;
+                justify-content: center;
+                width: 16px;
+                height: 16px;
+                flex-shrink: 0;
+                box-sizing: border-box;
+                overflow: hidden;
             }
             
             .canvas-action-btn:hover {
@@ -273,23 +311,19 @@ class CanvasNavigator {
             }
             
             .canvas-meta {
-                display: flex;
-                flex-direction: column;
-                gap: 4px;
-                font-size: 8px;
-		opacity: 0.5;
+                font-size: 9px;
+                opacity: 0.6;
                 color: #999;
-            }
-            
-            .canvas-meta-row {
+                line-height: 1;
                 display: flex;
+                margin: 4px 0 4px 4px;
                 justify-content: space-between;
+                align-items: center;
             }
             
             .collaborator-count {
-                display: inline-flex;
-                align-items: center;
-                gap: 4px;
+                font-size: 9px;
+                margin-left: 8px;
             }
             
             /* Toggle Button */
@@ -341,6 +375,56 @@ class CanvasNavigator {
                 font-size: 14px;
                 color: #666;
             }
+            
+            /* Footer */
+            .navigator-footer {
+                padding: 12px;
+                border-top: 1px solid #333;
+                background: #252525;
+                display: flex;
+                justify-content: space-between;
+                align-items: center;
+                gap: 10px;
+            }
+            
+            .database-info {
+                font-size: 11px;
+                color: #999;
+            }
+            
+            .size-value {
+                color: #e0e0e0;
+                font-weight: 500;
+            }
+            
+            .cleanup-btn {
+                background: #333;
+                border: none;
+                color: #999;
+                padding: 6px 12px;
+                border-radius: 4px;
+                cursor: pointer;
+                font-size: 11px;
+                font-weight: 500;
+                display: flex;
+                align-items: center;
+                gap: 4px;
+                transition: all 0.2s;
+            }
+            
+            .cleanup-btn:hover {
+                background: #444;
+                color: #fff;
+            }
+            
+            .cleanup-btn.loading {
+                opacity: 0.6;
+                cursor: not-allowed;
+            }
+            
+            .cleanup-btn .icon {
+                font-size: 12px;
+            }
         `;
         document.head.appendChild(style);
     }
@@ -357,6 +441,18 @@ class CanvasNavigator {
         
         // Refresh button
         this.panel.querySelector('.refresh-btn').addEventListener('click', () => this.loadCanvases());
+        
+        // Cleanup button
+        const cleanupBtn = this.panel.querySelector('.cleanup-btn');
+        if (cleanupBtn) {
+            console.log('✅ Cleanup button found, adding event listener');
+            cleanupBtn.addEventListener('click', () => {
+                console.log('🖱️ Cleanup button clicked (event handler)');
+                this.performCleanup();
+            });
+        } else {
+            console.error('❌ Cleanup button not found during setup');
+        }
         
         // Keyboard shortcut (Ctrl/Cmd + O)
         document.addEventListener('keydown', (e) => {
@@ -386,6 +482,7 @@ class CanvasNavigator {
         this.panel.classList.add('open');
         this.toggleBtn.classList.add('active');
         this.loadCanvases();
+        this.updateDatabaseSize();
     }
     
     close() {
@@ -475,24 +572,11 @@ class CanvasNavigator {
             <div class="canvas-item ${isActive ? 'active' : ''}" data-canvas-id="${canvas.id}">
                 <div class="canvas-item-header">
                     <h4 class="canvas-title" data-canvas-id="${canvas.id}" data-original-name="${this.escapeHtml(canvas.name || 'Untitled Canvas')}">${this.escapeHtml(canvas.name || 'Untitled Canvas')}</h4>
-                    <div class="canvas-actions">
-                        <button class="canvas-action-btn duplicate" title="Duplicate">📋</button>
-                        <button class="canvas-action-btn delete" title="Delete">🗑️</button>
-                    </div>
+                    <div class="canvas-actions"><button class="canvas-action-btn duplicate" title="Duplicate">📋</button><button class="canvas-action-btn delete" title="Delete">🗑️</button></div>
                 </div>
                 <div class="canvas-meta">
-                    <div class="canvas-meta-row">
-                        <span>Modified: ${lastModified}</span>
-                        ${collaboratorCount > 0 ? `
-                            <span class="collaborator-count">
-                                <span>👥</span>
-                                <span>${collaboratorCount}</span>
-                            </span>
-                        ` : ''}
-                    </div>
-                    ${canvas.description ? `
-                        <div class="canvas-description">${this.escapeHtml(canvas.description)}</div>
-                    ` : ''}
+                    <span>Modified: ${lastModified}</span>
+                    ${collaboratorCount > 0 ? `<span class="collaborator-count">👥 ${collaboratorCount}</span>` : ''}
                 </div>
             </div>
         `;
@@ -1271,6 +1355,191 @@ class CanvasNavigator {
             });
         }
         return saved;
+    }
+    
+    async updateDatabaseSize() {
+        try {
+            console.log('📊 Fetching database size from:', CONFIG.ENDPOINTS.DATABASE_SIZE);
+            const response = await fetch(CONFIG.ENDPOINTS.DATABASE_SIZE);
+            if (!response.ok) throw new Error('Failed to get database size');
+            
+            const data = await response.json();
+            console.log('📊 Database size data:', data);
+            const sizeElement = this.panel.querySelector('.size-value');
+            if (sizeElement) {
+                sizeElement.textContent = data.sizeFormatted || '--';
+            }
+        } catch (error) {
+            console.error('Failed to get database size:', error);
+            const sizeElement = this.panel.querySelector('.size-value');
+            if (sizeElement) {
+                sizeElement.textContent = 'Error';
+            }
+        }
+    }
+    
+    async performCleanup() {
+        console.log('🧹 Cleanup button clicked');
+        const cleanupBtn = this.panel.querySelector('.cleanup-btn');
+        if (!cleanupBtn) {
+            console.error('Cleanup button not found');
+            return;
+        }
+        
+        if (cleanupBtn.classList.contains('loading')) {
+            console.log('Cleanup already in progress');
+            return;
+        }
+        
+        // Enhanced confirmation dialog with options
+        const confirmMessage = `This will:
+• Remove orphaned data and unused media files
+• Clear client-side caches (images, thumbnails)
+• Clear undo/redo history
+
+Continue?`;
+        
+        if (!confirm(confirmMessage)) {
+            console.log('Cleanup cancelled by user');
+            return;
+        }
+        
+        cleanupBtn.classList.add('loading');
+        cleanupBtn.disabled = true;
+        const originalContent = cleanupBtn.innerHTML;
+        cleanupBtn.innerHTML = '<span class="icon">⏳</span> Cleaning...';
+        
+        try {
+            // Clear client-side caches first
+            console.log('🧹 Clearing client-side caches...');
+            
+            // Clear image cache
+            if (window.imageCache) {
+                window.imageCache.clear();
+                console.log('✅ Image cache cleared');
+            }
+            
+            // Clear thumbnail cache
+            if (window.thumbnailCache) {
+                window.thumbnailCache.clear();
+                console.log('✅ Thumbnail cache cleared');
+            }
+            
+            // Clear image resource cache
+            if (window.app && window.app.imageResourceCache) {
+                window.app.imageResourceCache.clear();
+                console.log('✅ Image resource cache cleared');
+            }
+            
+            // Clear client undo state
+            if (window.app && window.app.clientUndoManager) {
+                // Reset local undo state
+                window.app.clientUndoManager.undoState = {
+                    canUndo: false,
+                    canRedo: false,
+                    undoCount: 0,
+                    redoCount: 0,
+                    nextUndo: null,
+                    nextRedo: null
+                };
+                console.log('✅ Client undo state cleared');
+                
+                // Request server to clear undo history for this project
+                if (this.currentCanvasId && this.networkLayer && this.networkLayer.socket) {
+                    console.log('📡 Requesting server to clear undo history...');
+                    this.networkLayer.socket.emit('clear_undo_history', {
+                        projectId: this.currentCanvasId
+                    });
+                }
+            }
+            
+            // Clear any local storage
+            try {
+                // Clear undo-related localStorage entries
+                const keysToRemove = [];
+                for (let i = 0; i < localStorage.length; i++) {
+                    const key = localStorage.key(i);
+                    if (key && (key.includes('undo') || key.includes('redo'))) {
+                        keysToRemove.push(key);
+                    }
+                }
+                keysToRemove.forEach(key => localStorage.removeItem(key));
+                if (keysToRemove.length > 0) {
+                    console.log(`✅ Cleared ${keysToRemove.length} localStorage entries`);
+                }
+            } catch (e) {
+                console.warn('Failed to clear some localStorage entries:', e);
+            }
+            
+            // Now perform server cleanup
+            console.log('📡 Sending cleanup request to:', CONFIG.ENDPOINTS.DATABASE_CLEANUP);
+            const response = await fetch(CONFIG.ENDPOINTS.DATABASE_CLEANUP, {
+                method: 'POST'
+            });
+            
+            console.log('📡 Cleanup response status:', response.status);
+            if (!response.ok) throw new Error(`Cleanup failed with status ${response.status}`);
+            
+            const result = await response.json();
+            console.log('📡 Cleanup result:', result);
+            
+            // Update database size
+            await this.updateDatabaseSize();
+            
+            // Show success notification
+            if (this.app.showNotification) {
+                let message = 'Cleanup completed:\n';
+                const parts = [];
+                
+                // Server cleanup results
+                if (result.deleted) {
+                    if (result.deleted.files > 0) {
+                        parts.push(`• Removed ${result.deleted.files} orphaned files`);
+                    }
+                    if (result.deleted.largeOperations > 0) {
+                        parts.push(`• Removed ${result.deleted.largeOperations} operations with embedded images`);
+                    }
+                    if (result.deleted.operations > 0) {
+                        parts.push(`• Cleared ${result.deleted.operations} old operations`);
+                    }
+                    if (result.deleted.users > 0) {
+                        parts.push(`• Removed ${result.deleted.users} orphaned users`);
+                    }
+                }
+                
+                // Show size reduction if available
+                if (result.previousSize && result.newSize) {
+                    parts.push(`• Database size: ${result.previousSize.formatted} → ${result.newSize.formatted}`);
+                }
+                
+                // Client cleanup results
+                parts.push('• Cleared all client-side caches');
+                parts.push('• Reset undo/redo history');
+                
+                message = parts.length > 0 ? `Cleanup completed:\n${parts.join('\n')}` : 'Cleanup completed';
+                
+                this.app.showNotification({
+                    type: 'success',
+                    message: message,
+                    duration: 5000 // Show for longer since it's multi-line
+                });
+            }
+            
+            console.log('✅ Full cleanup completed:', result);
+            
+        } catch (error) {
+            console.error('Failed to perform cleanup:', error);
+            if (this.app.showNotification) {
+                this.app.showNotification({
+                    type: 'error',
+                    message: 'Cleanup failed. Please try again.'
+                });
+            }
+        } finally {
+            cleanupBtn.classList.remove('loading');
+            cleanupBtn.disabled = false;
+            cleanupBtn.innerHTML = originalContent;
+        }
     }
 }
 

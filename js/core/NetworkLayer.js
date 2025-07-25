@@ -153,6 +153,9 @@ class NetworkLayer {
             } else {
                 console.warn('⚠️ Invalid project_joined data:', data);
             }
+            
+            // Forward to local event handlers (e.g., ClientUndoManager)
+            this.emitLocal('project_joined', data);
         });
         
         this.socket.on('project_left', () => {
@@ -185,6 +188,28 @@ class NetworkLayer {
         
         this.socket.on('full_state_sync', (data) => {
             this.emitLocal('full_state_sync', data);
+        });
+        
+        // Undo/redo events
+        this.socket.on('undo_state_update', (data) => {
+            console.log('📨 NetworkLayer: Forwarding undo_state_update:', data);
+            this.emitLocal('undo_state_update', data);
+        });
+        
+        this.socket.on('undo_success', (data) => {
+            this.emitLocal('undo_success', data);
+        });
+        
+        this.socket.on('undo_failed', (data) => {
+            this.emitLocal('undo_failed', data);
+        });
+        
+        this.socket.on('redo_success', (data) => {
+            this.emitLocal('redo_success', data);
+        });
+        
+        this.socket.on('redo_failed', (data) => {
+            this.emitLocal('redo_failed', data);
         });
         
         // Error events

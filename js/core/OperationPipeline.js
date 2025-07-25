@@ -69,6 +69,9 @@ class OperationPipeline {
         if (typeof PasteNodesCommand !== 'undefined') {
             this.registerCommand('node_paste', PasteNodesCommand);
         }
+        if (typeof ImageUploadCompleteCommand !== 'undefined') {
+            this.registerCommand('image_upload_complete', ImageUploadCompleteCommand);
+        }
     }
     
     /**
@@ -196,6 +199,11 @@ class OperationPipeline {
             if (this.shouldUseStateSync(command) && !options.skipBroadcast) {
                 // Route through StateSyncManager for server-authoritative execution
                 console.log('🔄 Using server-authoritative state sync');
+                
+                // Let transaction manager process the operation
+                if (this.app.transactionManager) {
+                    this.app.transactionManager.processOperation(command);
+                }
                 
                 try {
                     const result = await this.app.stateSyncManager.executeOperation(command);

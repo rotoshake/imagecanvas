@@ -291,6 +291,12 @@ async function initApp() {
         app.canvasNavigator = new CanvasNavigator(app);
         window.canvasNavigator = app.canvasNavigator;
         
+        // Initialize Image Upload Coordinator
+        if (window.ImageUploadCoordinator) {
+            app.imageUploadCoordinator = new ImageUploadCoordinator(app);
+            console.log('✅ Image Upload Coordinator initialized');
+        }
+        
         // Initialize Floating Properties Inspector
         app.propertiesInspector = new FloatingPropertiesInspector(app.graphCanvas);
         window.propertiesInspector = app.propertiesInspector;

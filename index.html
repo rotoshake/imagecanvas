@@ -16,6 +16,7 @@
     <script src="js/core/GraphCircularReferenceResolver.js"></script>
     <script src="js/utils/cache.js"></script>
     <script src="js/utils/state.js"></script>
+    <script src="js/utils/undo-optimization.js"></script>
     
     <!-- Core systems -->
     <script src="js/core/animation.js"></script>
@@ -70,6 +71,7 @@
     <script src="js/commands/NodeCommands.js"></script>
     <script src="js/commands/NodeCommandsExtended.js"></script>
     <script src="js/commands/BulkCommand.js"></script>
+    <script src="js/commands/ImageUploadCompleteCommand.js"></script>
     <script src="js/core/CleanupManager.js"></script>
     <script src="js/core/OperationDependencyTracker.js"></script>
     <script src="js/core/OperationPipeline.js"></script>
@@ -85,10 +87,14 @@
     <!-- HybridUndoRedoManager removed to prevent conflicts -->
     <!-- <script src="js/core/HybridUndoRedoManager.js"></script> -->
     <script src="js/core/CollaborativeUndoRedoManager.js"></script>
+    <script src="js/core/ClientUndoManager.js"></script>
+    <script src="js/core/TransactionManager.js"></script>
     <!-- UniversalOperationRouter no longer needed after full migration -->
     <script src="js/core/CollaborativeArchitecture.js"></script>
     <script src="js/core/CanvasIntegration.js"></script>
     <script src="js/core/ImageUploadManager.js"></script>
+    <script src="js/core/ImageProcessingProgressManager.js"></script>
+    <script src="js/core/ImageUploadCoordinator.js"></script>
     <script src="js/core/ImageResourceCache.js"></script>
     <script src="js/core/AutoInit.js"></script>
     

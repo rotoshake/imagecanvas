@@ -10,7 +10,11 @@ ImageCanvas is a high-performance, collaborative media canvas application that s
 
 ## Documentation Library
 
-Documentation can be read, maintained and added to in the `/docs` subdirectory. If you ever need clarification on anything we're doing, it might be a good idea to read through it.
+Documentation can be read, maintained and added to in the `/docs` subdirectory. If you ever need clarification on anything we're doing, it might be a good idea to read through it. Don't put plans or reports of fixes here, just documentation that would be useful to another agent reading about the project.
+
+## Plans and Fixes
+
+Please place plans and fixes in the `/plans` subdirectory. This would include any reports on what was fixed, or audits of systems. Please don't place those in the `/docs` folder.
 
 ## Claude Memories
 

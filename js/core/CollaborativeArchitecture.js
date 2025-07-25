@@ -70,20 +70,31 @@ class CollaborativeArchitecture {
                 // Continue in offline mode
             }
             
-            // 7. Initialize collaborative undo/redo manager (AFTER stateSyncManager is available)
-            if (typeof CollaborativeUndoRedoManager !== 'undefined') {
+            // 7. Initialize new client undo manager
+            if (typeof ClientUndoManager !== 'undefined') {
+                this.app.undoManager = new ClientUndoManager(this.app);
+                console.log('✅ Client undo manager initialized');
+                
+                // Initialize transaction manager
+                if (typeof TransactionManager !== 'undefined') {
+                    this.app.transactionManager = new TransactionManager(this.app.undoManager);
+                    console.log('✅ Transaction manager initialized');
+                }
+            } else if (typeof CollaborativeUndoRedoManager !== 'undefined') {
+                // Fallback to old undo manager if new one not available
                 this.app.undoRedoManager = new CollaborativeUndoRedoManager(this.app);
                 // Force immediate interceptor setup now that all dependencies are available
                 if (this.app.undoRedoManager.setupInterceptors) {
                     this.app.undoRedoManager.setupInterceptors();
-                    console.log('✅ Collaborative undo/redo manager initialized with interceptors');
+                    console.log('✅ Collaborative undo/redo manager initialized with interceptors (fallback)');
                 } else {
-                    console.log('✅ Collaborative undo/redo manager initialized');
+                    console.log('✅ Collaborative undo/redo manager initialized (fallback)');
                 }
-            } else if (typeof HybridUndoRedoManager !== 'undefined') {
-                // Fallback to hybrid version if collaborative not available
-                this.app.undoRedoManager = new HybridUndoRedoManager(this.app);
-                console.log('✅ Hybrid undo/redo manager initialized (fallback)');
+            }
+            
+            // Keep backward compatibility
+            if (this.app.undoManager) {
+                this.app.undoRedoManager = this.app.undoManager;
             }
             
             // 8. Setup keyboard shortcuts for undo/redo
@@ -215,28 +226,10 @@ class CollaborativeArchitecture {
      * Setup keyboard shortcuts
      */
     setupKeyboardShortcuts() {
-        document.addEventListener('keydown', (e) => {
-            // Undo: Ctrl/Cmd + Z
-            if ((e.ctrlKey || e.metaKey) && e.key === 'z' && !e.shiftKey) {
-                e.preventDefault();
-                if (this.app.undoRedoManager) {
-                    this.app.undoRedoManager.undo();
-                } else {
-                    console.warn('Undo/redo manager not available');
-                }
-            }
-            
-            // Redo: Ctrl/Cmd + Shift + Z or Ctrl/Cmd + Y
-            else if (((e.ctrlKey || e.metaKey) && e.key === 'z' && e.shiftKey) ||
-                     ((e.ctrlKey || e.metaKey) && e.key === 'y')) {
-                e.preventDefault();
-                if (this.app.undoRedoManager) {
-                    this.app.undoRedoManager.redo();
-                } else {
-                    console.warn('Undo/redo manager not available');
-                }
-            }
-        });
+        // The ClientUndoManager now handles all keyboard shortcuts
+        // This method is kept for backward compatibility but does nothing
+        // to prevent duplicate event handlers
+        console.log('Keyboard shortcuts are now handled by ClientUndoManager');
     }
     
     /**

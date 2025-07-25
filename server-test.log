@@ -1,0 +1,29 @@
+
+> imagecanvas-collaborative@2.0.0 start
+> node server/index.js
+
+✅ Database schema created/updated
+✅ Database configured with WAL mode and optimizations
+✅ Database initialized
+🎨 CanvasStateManager initialized
+✅ Real-time collaboration initialized
+node:events:496
+      throw er; // Unhandled 'error' event
+      ^
+
+Error: listen EADDRINUSE: address already in use :::3000
+    at Server.setupListenHandle [as _listen2] (node:net:1937:16)
+    at listenInCluster (node:net:1994:12)
+    at Server.listen (node:net:2099:7)
+    at ImageCanvasServer.start (/Users/marcsteinberg/Documents/Projects/ImageCanvas/server/index.js:669:25)
+Emitted 'error' event on Server instance at:
+    at emitErrorNT (node:net:1973:8)
+    at process.processTicksAndRejections (node:internal/process/task_queues:90:21) {
+  code: 'EADDRINUSE',
+  errno: -48,
+  syscall: 'listen',
+  address: '::',
+  port: 3000
+}
+
+Node.js v22.14.0

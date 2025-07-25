@@ -47,12 +47,12 @@ class ImageCanvasServer {
             // Allow multiple connections from same origin
             allowEIO3: true,
             // Increase ping timeout to prevent premature disconnections during bulk operations
-            pingTimeout: 120000, // 2 minutes (doubled from 60s)
-            pingInterval: 25000,
+            pingTimeout: 300000, // 5 minutes for very large operations
+            pingInterval: 30000,
             // Allow WebSocket and polling transports
             transports: ['websocket', 'polling'],
-            // Increase maximum HTTP buffer size for large operations (20MB - doubled from 10MB)
-            maxHttpBufferSize: 2e7,
+            // Increase maximum HTTP buffer size for large operations (50MB for high-res images)
+            maxHttpBufferSize: 5e7,
             // Enable compression for large payloads
             perMessageDeflate: {
                 threshold: 1024 // Compress messages larger than 1KB
@@ -537,6 +537,256 @@ class ImageCanvasServer {
             }
         });
         
+        // Database maintenance endpoints
+        this.app.get('/database/size', async (req, res) => {
+            try {
+                const stats = await fs.stat(this.db.dbPath);
+                const sizeInBytes = stats.size;
+                
+                // Also check for WAL and SHM files (SQLite Write-Ahead Logging)
+                let totalSize = sizeInBytes;
+                try {
+                    const walStats = await fs.stat(this.db.dbPath + '-wal');
+                    totalSize += walStats.size;
+                } catch (e) {
+                    // WAL file might not exist
+                }
+                try {
+                    const shmStats = await fs.stat(this.db.dbPath + '-shm');
+                    totalSize += shmStats.size;
+                } catch (e) {
+                    // SHM file might not exist
+                }
+                
+                res.json({ 
+                    success: true,
+                    sizeInBytes: totalSize,
+                    sizeFormatted: this.formatBytes(totalSize)
+                });
+            } catch (error) {
+                console.error('Failed to get database size:', error);
+                res.status(500).json({ error: 'Failed to get database size' });
+            }
+        });
+        
+        this.app.post('/database/cleanup', async (req, res) => {
+            try {
+                console.log('🧹 Starting database cleanup...');
+                
+                // Check if database is initialized
+                if (!this.db || !this.db.dbPath) {
+                    return res.status(500).json({ error: 'Database not initialized' });
+                }
+                
+                // Get initial size
+                const initialStats = await fs.stat(this.db.dbPath);
+                let initialSize = initialStats.size;
+                try {
+                    const walStats = await fs.stat(this.db.dbPath + '-wal');
+                    initialSize += walStats.size;
+                } catch (e) {}
+                try {
+                    const shmStats = await fs.stat(this.db.dbPath + '-shm');
+                    initialSize += shmStats.size;
+                } catch (e) {}
+                console.log(`📊 Initial database size: ${this.formatBytes(initialSize)}`);
+                
+                // 1. Find orphaned files (files not referenced by any node)
+                // First get all files
+                const allFiles = await this.db.all('SELECT * FROM files');
+                
+                // Get all projects with canvas data
+                const projects = await this.db.all(`
+                    SELECT canvas_data FROM projects 
+                    WHERE canvas_data IS NOT NULL
+                `);
+                
+                // Extract all media URLs from all projects
+                const usedFilenames = new Set();
+                for (const project of projects) {
+                    try {
+                        const canvasData = JSON.parse(project.canvas_data);
+                        if (canvasData && canvasData.nodes) {
+                            for (const node of canvasData.nodes) {
+                                if (node.data && node.data.mediaUrl) {
+                                    // Extract filename from URL
+                                    const match = node.data.mediaUrl.match(/\/uploads\/(.+)$/);
+                                    if (match) {
+                                        usedFilenames.add(match[1]);
+                                    }
+                                }
+                            }
+                        }
+                    } catch (error) {
+                        console.error('Error parsing canvas data:', error);
+                    }
+                }
+                
+                // Find orphaned files
+                const orphanedFiles = allFiles.filter(file => !usedFilenames.has(file.filename));
+                
+                // 2. Delete orphaned file records and actual files
+                let deletedFiles = 0;
+                for (const file of orphanedFiles) {
+                    try {
+                        const filePath = path.join(__dirname, 'uploads', file.filename);
+                        await fs.unlink(filePath);
+                        await this.db.run('DELETE FROM files WHERE id = ?', [file.id]);
+                        deletedFiles++;
+                        
+                        // Also delete thumbnails
+                        const thumbnailSizes = [64, 128, 256, 512, 1024, 2048];
+                        const nameWithoutExt = path.parse(file.filename).name;
+                        for (const size of thumbnailSizes) {
+                            try {
+                                const thumbnailPath = path.join(__dirname, 'thumbnails', size.toString(), `${nameWithoutExt}.webp`);
+                                await fs.unlink(thumbnailPath);
+                            } catch (e) {
+                                // Thumbnail might not exist
+                            }
+                        }
+                    } catch (error) {
+                        console.error(`Failed to delete file ${file.filename}:`, error);
+                    }
+                }
+                
+                // 3. Clean up old operations more aggressively
+                // Declare result variables outside try block
+                let imageDataOpsResult, largeOpsResult, cleanupResult, userCleanupResult;
+                
+                // Temporarily disable foreign key constraints for cleanup
+                await this.db.run('PRAGMA foreign_keys = OFF');
+                
+                try {
+                    // First, delete ALL operations that contain base64 image data
+                    // This is the main cause of database bloat
+                    imageDataOpsResult = await this.db.run(`
+                        DELETE FROM operations 
+                        WHERE operation_data LIKE '%data:image%'
+                    `);
+                    console.log(`🗑️ Deleted ${imageDataOpsResult.changes} operations containing embedded image data`);
+                    
+                    // Also delete any large operations (over 10KB) that might contain other embedded data
+                    largeOpsResult = await this.db.run(`
+                        DELETE FROM operations 
+                        WHERE length(operation_data) > 10000
+                    `);
+                    console.log(`🗑️ Deleted ${largeOpsResult.changes} additional large operations`);
+                    
+                    // Keep only the most recent 50 operations per project (was 1000)
+                    cleanupResult = await this.db.run(`
+                        DELETE FROM operations 
+                        WHERE id NOT IN (
+                            SELECT id FROM operations o1
+                            WHERE (
+                                SELECT COUNT(*) FROM operations o2 
+                                WHERE o2.project_id = o1.project_id 
+                                AND o2.sequence_number >= o1.sequence_number
+                            ) <= 50
+                        )
+                    `);
+                    console.log(`🗑️ Deleted ${cleanupResult.changes} old operations (keeping recent 50 per project)`);
+                    
+                    // 4. Clean up inactive sessions
+                    const sessionResult = await this.db.run(
+                        "DELETE FROM active_sessions WHERE last_activity < datetime('now', '-1 hour')"
+                    );
+                    console.log(`🗑️ Deleted ${sessionResult.changes} inactive sessions`);
+                    
+                    // 5. Clean up orphaned project data (projects without owners)
+                    const orphanProjectResult = await this.db.run(`
+                        DELETE FROM projects 
+                        WHERE owner_id NOT IN (SELECT id FROM users)
+                    `);
+                    console.log(`🗑️ Deleted ${orphanProjectResult.changes} orphaned projects`);
+                    
+                    // 6. Clean up users who don't own any projects and aren't collaborators
+                    userCleanupResult = await this.db.run(`
+                        DELETE FROM users 
+                        WHERE id NOT IN (
+                            SELECT DISTINCT owner_id FROM projects
+                            UNION
+                            SELECT DISTINCT user_id FROM project_collaborators
+                        )
+                    `);
+                    console.log(`👤 Deleted ${userCleanupResult.changes} orphaned users`);
+                    
+                } finally {
+                    // Re-enable foreign key constraints
+                    await this.db.run('PRAGMA foreign_keys = ON');
+                }
+                
+                // 7. Checkpoint WAL file and VACUUM to reclaim space
+                console.log('🔄 Checkpointing WAL file...');
+                // First, checkpoint the WAL file to merge it back to main database
+                await this.db.run('PRAGMA wal_checkpoint(TRUNCATE)');
+                
+                console.log('🗜️ Running VACUUM to reclaim space...');
+                // Then vacuum to reclaim space
+                await this.db.run('VACUUM');
+                
+                console.log('🔄 Final checkpoint...');
+                // Finally, checkpoint again to clean up
+                await this.db.run('PRAGMA wal_checkpoint(TRUNCATE)');
+                
+                // Get new database size (including WAL and SHM files)
+                const stats = await fs.stat(this.db.dbPath);
+                let totalSize = stats.size;
+                try {
+                    const walStats = await fs.stat(this.db.dbPath + '-wal');
+                    totalSize += walStats.size;
+                } catch (e) {
+                    // WAL file might not exist after checkpoint
+                }
+                try {
+                    const shmStats = await fs.stat(this.db.dbPath + '-shm');
+                    totalSize += shmStats.size;
+                } catch (e) {
+                    // SHM file might not exist after checkpoint
+                }
+                
+                // Count total operations deleted
+                let totalOpsDeleted = 0;
+                let totalUsersDeleted = 0;
+                try {
+                    // Access these within a try block in case they're undefined
+                    totalOpsDeleted = (imageDataOpsResult?.changes || 0) + 
+                                     (largeOpsResult?.changes || 0) + 
+                                     (cleanupResult?.changes || 0);
+                    totalUsersDeleted = userCleanupResult?.changes || 0;
+                } catch (e) {
+                    console.warn('Could not count some cleanup results:', e);
+                }
+                
+                res.json({ 
+                    success: true,
+                    deleted: {
+                        files: deletedFiles,
+                        operations: totalOpsDeleted,
+                        users: totalUsersDeleted
+                    },
+                    newSize: {
+                        bytes: totalSize,
+                        formatted: this.formatBytes(totalSize)
+                    },
+                    previousSize: {
+                        bytes: initialSize,
+                        formatted: this.formatBytes(initialSize)
+                    }
+                });
+                
+                console.log(`📊 Final database size: ${this.formatBytes(totalSize)} (was ${this.formatBytes(initialSize)})`);
+                console.log('✅ Database cleanup completed');
+            } catch (error) {
+                console.error('Failed to perform cleanup:', error);
+                console.error('Stack trace:', error.stack);
+                res.status(500).json({ 
+                    error: 'Failed to perform cleanup',
+                    details: error.message 
+                });
+            }
+        });
+        
         // API placeholder routes
         this.app.use('/api/projects', (req, res) => {
             res.json({ message: 'Project API coming soon', status: 'placeholder' });
@@ -704,6 +954,21 @@ class ImageCanvasServer {
             state.timestamp > 0
         );
     }
+    
+    /**
+     * Format bytes to human readable string
+     */
+    formatBytes(bytes, decimals = 2) {
+        if (bytes === 0) return '0 Bytes';
+        
+        const k = 1024;
+        const dm = decimals < 0 ? 0 : decimals;
+        const sizes = ['Bytes', 'KB', 'MB', 'GB', 'TB'];
+        
+        const i = Math.floor(Math.log(bytes) / Math.log(k));
+        
+        return parseFloat((bytes / Math.pow(k, i)).toFixed(dm)) + ' ' + sizes[i];
+    }
 }
 
 // Start server if this file is run directly
@@ -719,4 +984,4 @@ if (require.main === module) {
     });
 }
 
-module.exports = ImageCanvasServer; 
+module.exports = ImageCanvasServer; // Restart trigger Wed Jul 23 23:12:03 PDT 2025

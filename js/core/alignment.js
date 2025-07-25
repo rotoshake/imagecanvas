@@ -166,8 +166,9 @@ class AutoAlignmentManager {
                 this.autoAlignCommittedTargets = this.autoAlignAnimTargets;
                 this.autoAlignCommitPoint = [...currentPos];
                 
-                // Save state for axis switching
-                this.canvas.pushUndoState();
+                // DISABLED: Undo state is now handled by the OperationPipeline when drag completes
+                // This prevents intermediate undo entries during alignment
+                // this.canvas.pushUndoState();
             }
         }
         
@@ -519,8 +520,9 @@ class AutoAlignmentManager {
                 this.selection.invalidateBoundingBox();
                 
                 if (!this.autoAlignMode) {
-                    // Push undo state when completely finished
-                    this.canvas.pushUndoState();
+                    // DISABLED: Undo state is now handled by the OperationPipeline when drag completes
+                    // This prevents intermediate undo entries during alignment
+                    // this.canvas.pushUndoState();
                     
                     this.autoAlignOriginals = null;
                     this.autoAlignMasterOrder = null;
@@ -607,8 +609,9 @@ class AutoAlignmentManager {
                 this.gridAlignAnimNodes = null;
                 this.gridAlignAnimTargets = null;
                 
-                // Save state when grid alignment is complete
-                this.canvas.pushUndoState();
+                // DISABLED: Undo state is now handled by the OperationPipeline when drag completes
+                // This prevents intermediate undo entries during alignment
+                // this.canvas.pushUndoState();
             }
         }
         

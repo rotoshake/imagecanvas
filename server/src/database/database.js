@@ -132,6 +132,9 @@ class Database {
         await this.exec(schema);
         console.log('✅ Database schema created/updated');
         
+        // Apply undo system migrations
+        await this.applyUndoMigrations();
+        
         // Create default user if it doesn't exist
         const defaultUser = await this.get('SELECT * FROM users WHERE id = 1');
         if (!defaultUser) {
@@ -140,6 +143,53 @@ class Database {
                 [1, 'default', 'Default User']
             );
             console.log('✅ Default user created');
+        }
+    }
+    
+    async applyUndoMigrations() {
+        try {
+            // Check if migrations have already been applied
+            const columns = await this.all(`PRAGMA table_info(operations)`);
+            const hasTransactionId = columns.some(col => col.name === 'transaction_id');
+            
+            if (!hasTransactionId) {
+                console.log('📦 Applying undo system migrations...');
+                
+                // Add undo support columns to operations table
+                await this.run('ALTER TABLE operations ADD COLUMN transaction_id TEXT');
+                await this.run('ALTER TABLE operations ADD COLUMN undo_data JSON');
+                await this.run(`ALTER TABLE operations ADD COLUMN state TEXT DEFAULT 'applied' CHECK(state IN ('applied', 'undone'))`);
+                await this.run('ALTER TABLE operations ADD COLUMN undone_at DATETIME');
+                await this.run('ALTER TABLE operations ADD COLUMN undone_by INTEGER REFERENCES users(id)');
+                await this.run('ALTER TABLE operations ADD COLUMN redone_at DATETIME');
+                await this.run('ALTER TABLE operations ADD COLUMN redone_by INTEGER REFERENCES users(id)');
+                
+                // Create indexes
+                await this.run('CREATE INDEX IF NOT EXISTS idx_operations_transaction ON operations(transaction_id)');
+                await this.run('CREATE INDEX IF NOT EXISTS idx_operations_state ON operations(state)');
+                await this.run('CREATE INDEX IF NOT EXISTS idx_operations_user_state ON operations(user_id, state)');
+                
+                // Create active transactions table
+                await this.run(`
+                    CREATE TABLE IF NOT EXISTS active_transactions (
+                        id TEXT PRIMARY KEY,
+                        project_id INTEGER NOT NULL REFERENCES projects(id),
+                        user_id INTEGER NOT NULL REFERENCES users(id),
+                        source TEXT,
+                        started_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                        operation_count INTEGER DEFAULT 0,
+                        state TEXT DEFAULT 'active' CHECK(state IN ('active', 'committed', 'aborted'))
+                    )
+                `);
+                
+                await this.run('CREATE INDEX IF NOT EXISTS idx_active_transactions_user ON active_transactions(user_id, state)');
+                await this.run('CREATE INDEX IF NOT EXISTS idx_active_transactions_project ON active_transactions(project_id)');
+                
+                console.log('✅ Undo system migrations applied');
+            }
+        } catch (error) {
+            console.error('⚠️ Error applying undo migrations:', error);
+            // Non-fatal - the system can work without these columns
         }
     }
     
