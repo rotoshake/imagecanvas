@@ -137,24 +137,27 @@ class DragDropManager {
             }
         }
         
-        // Upload images first via HTTP (videos will use the old flow for now)
-        const uploadedImages = new Map(); // hash -> upload result
+        // Upload all media files first via HTTP to avoid large WebSocket messages
+        const uploadedMedia = new Map(); // hash -> upload result
+        const allMediaFiles = [...imageFiles, ...videoFiles];
         
-        if (imageFiles.length > 0 && window.imageUploadManager) {
-            console.log(`📤 Uploading ${imageFiles.length} images via HTTP first...`);
+        if (allMediaFiles.length > 0 && window.imageUploadManager) {
+            const imageCount = imageFiles.length;
+            const videoCount = videoFiles.length;
+            console.log(`📤 Uploading ${imageCount} images and ${videoCount} videos via HTTP first...`);
             
             // Show upload notification
             if (window.unifiedNotifications) {
                 window.unifiedNotifications.info(
-                    `Uploading ${imageFiles.length} images...`,
-                    { detail: 'Please wait while images are uploaded' }
+                    `Uploading ${allMediaFiles.length} media files...`,
+                    { detail: `${imageCount} images, ${videoCount} videos - please wait while files are uploaded` }
                 );
             }
             
-            // Process images in batches to avoid overwhelming the server
-            const BATCH_SIZE = 5; // Upload 5 at a time
-            for (let i = 0; i < imageFiles.length; i += BATCH_SIZE) {
-                const batch = imageFiles.slice(i, i + BATCH_SIZE);
+            // Process media files in batches to avoid overwhelming the server
+            const BATCH_SIZE = 3; // Upload 3 at a time (videos are larger)
+            for (let i = 0; i < allMediaFiles.length; i += BATCH_SIZE) {
+                const batch = allMediaFiles.slice(i, i + BATCH_SIZE);
                 const uploadPromises = [];
                 
                 for (const file of batch) {
@@ -167,10 +170,10 @@ class DragDropManager {
                         window.imageProcessingProgress.updateFileHash(file.name, hash);
                     }
                     
-                    // Start upload
-                    const uploadPromise = window.imageUploadManager.uploadImage(dataURL, file.name, hash)
+                    // Start upload (works for both images and videos)
+                    const uploadPromise = window.imageUploadManager.uploadMedia(dataURL, file.name, hash, file.type)
                         .then(result => {
-                            uploadedImages.set(hash, {
+                            uploadedMedia.set(hash, {
                                 ...result,
                                 file,
                                 dataURL,
@@ -181,7 +184,7 @@ class DragDropManager {
                         .catch(error => {
                             console.error(`❌ Failed to upload ${file.name}:`, error);
                             // Store failure so we can fall back to old method
-                            uploadedImages.set(hash, { error, file, dataURL, hash });
+                            uploadedMedia.set(hash, { error, file, dataURL, hash });
                         });
                     
                     uploadPromises.push(uploadPromise);
@@ -201,7 +204,7 @@ class DragDropManager {
                 // Yield control to keep UI responsive
                 await new Promise(resolve => requestAnimationFrame(resolve));
                 
-                const nodeData = await this.createNodeFromFile(file, dropPos, i * cascadeOffset, batchId, uploadedImages);
+                const nodeData = await this.createNodeFromFile(file, dropPos, i * cascadeOffset, batchId, uploadedMedia);
                 if (nodeData) {
                     // Don't mark load as complete yet - let the image node do it when actually loaded
                     // This ensures thumbnail progress is tracked properly
@@ -221,22 +224,19 @@ class DragDropManager {
                                 }
                             };
                             
-                            // For pre-uploaded images, don't include the data URL
+                            // For pre-uploaded media, don't include the data URL - use server URL instead
                             if (nodeData.properties.serverUrl) {
-                                // Already uploaded - just use server URL
-                                console.log(`📎 Creating node with pre-uploaded image: ${nodeData.properties.serverUrl}`);
-                            } else if (nodeData.type === 'media/image') {
+                                // Already uploaded - just use server URL (works for both images and videos)
+                                console.log(`📎 Creating node with pre-uploaded ${nodeData.type}: ${nodeData.properties.serverUrl}`);
+                            } else {
                                 // Fallback for failed uploads - include data URL
-                                nodeParams.properties.src = nodeData.dataURL;
-                            }
-                            
-                            // For videos, include video data (keep old flow for now)
-                            if (nodeData.type === 'media/video') {
-                                nodeParams.videoData = {
-                                    src: nodeData.dataURL,
-                                    filename: nodeData.properties.filename,
-                                    hash: nodeData.properties.hash
-                                };
+                                if (nodeData.type === 'media/image') {
+                                    nodeParams.properties.src = nodeData.dataURL;
+                                } else if (nodeData.type === 'media/video') {
+                                    // Even for videos, avoid sending large data via WebSocket
+                                    console.warn(`⚠️ Video upload failed for ${nodeData.properties.filename}, skipping WebSocket fallback`);
+                                    throw new Error('Video upload failed and WebSocket fallback disabled for large files');
+                                }
                             }
                             
                             // Use operation pipeline from the start for proper undo tracking
@@ -369,30 +369,31 @@ class DragDropManager {
         }
     }
     
-    async createNodeFromFile(file, basePos, offset, batchId, uploadedImages) {
+    async createNodeFromFile(file, basePos, offset, batchId, uploadedMedia) {
         // Determine node type
         const isVideo = file.type.startsWith('video/') || file.type === 'image/gif';
         const nodeType = isVideo ? 'media/video' : 'media/image';
         
         let dataURL, hash, uploadResult;
         
-        // Check if this image was pre-uploaded
-        if (uploadedImages && !isVideo) {
-            // For images, check if we already have the upload result
+        // Check if this media file was pre-uploaded
+        if (uploadedMedia) {
+            // Check if we already have the upload result (works for both images and videos)
             // First we need to get the hash to look it up
             dataURL = await this.fileToDataURL(file);
             hash = await HashUtils.hashImageData(dataURL);
-            uploadResult = uploadedImages.get(hash);
+            uploadResult = uploadedMedia.get(hash);
             
             if (uploadResult && !uploadResult.error) {
-                console.log(`✅ Using pre-uploaded image: ${uploadResult.url}`);
+                console.log(`✅ Using pre-uploaded ${isVideo ? 'video' : 'image'}: ${uploadResult.url}`);
                 // Don't need to cache locally since it's already on server
-            } else {
+            } else if (uploadResult && uploadResult.error) {
+                console.warn(`⚠️ Upload failed for ${file.name}, using local cache`);
                 // Cache locally as fallback
                 window.imageCache.set(hash, dataURL);
             }
         } else {
-            // For videos or if no pre-upload, process normally
+            // If no pre-upload system, process normally
             console.log('📱 Processing file for state sync:', file.name);
             dataURL = await this.fileToDataURL(file);
             hash = await HashUtils.hashImageData(dataURL);

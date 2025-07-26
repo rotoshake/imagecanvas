@@ -51,16 +51,15 @@ const CONFIG = {
     
     PERFORMANCE: {
         MAX_FPS: 120,
-        THUMBNAIL_THRESHOLD: 50, // pixels
+        THUMBNAIL_THRESHOLD: 50, // pixels - use thumbnail when video node is smaller than this on screen
         VISIBILITY_MARGIN: 200,
         BATCH_SIZE: 100
     },
     
     ALIGNMENT: {
         DEFAULT_MARGIN: 20,
-        SPRING_K: 180.0,
-        SPRING_D: 16.0,
-        ANIMATION_DT: 1/40,
+        SPRING_K: 180.0,  // Spring constant (stiffness) - frame-rate independent
+        SPRING_D: 16.0,   // Damping coefficient - frame-rate independent  
         TOLERANCE: 10,
         ANIMATION_THRESHOLD: 2.0  // Higher = tighter/faster finish, lower = smoother/longer tail
     },

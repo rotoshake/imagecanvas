@@ -205,3 +205,8 @@ class BaseNode {
     onDrawForeground(ctx) {}
     onRemoved() {}
 }
+
+// Make BaseNode available globally for browser environments
+if (typeof window !== 'undefined') {
+    window.BaseNode = BaseNode;
+}

@@ -443,3 +443,8 @@ class TextNode extends BaseNode {
         };
     }
 }
+
+// Make TextNode available globally for browser environments
+if (typeof window !== 'undefined') {
+    window.TextNode = TextNode;
+}

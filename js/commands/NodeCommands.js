@@ -89,11 +89,27 @@ class MoveNodeCommand extends Command {
             if (this.params.properties && (node.type === 'media/image' || node.type === 'media/video')) {
                 Object.assign(node.properties, this.params.properties);
                 
+                // Ensure video nodes have proper default properties if missing
+                if (node.type === 'media/video') {
+                    if (node.properties.loop === undefined) {
+                        node.properties.loop = true;
+                    }
+                    if (node.properties.muted === undefined) {
+                        node.properties.muted = true;
+                    }
+                    if (node.properties.autoplay === undefined) {
+                        node.properties.autoplay = true;
+                    }
+                    if (node.properties.paused === undefined) {
+                        node.properties.paused = false;
+                    }
+                }
+                
                 // Reload media if lost
-                if (node.type === 'media/image' && !node.img && node.properties.src) {
-                    node.setImage(node.properties.src, node.properties.filename, node.properties.hash);
-                } else if (node.type === 'media/video' && !node.video && node.properties.src) {
-                    node.setVideo(node.properties.src, node.properties.filename, node.properties.hash);
+                if (node.type === 'media/image' && !node.img && (node.properties.src || node.properties.serverUrl)) {
+                    node.setImage(node.properties.serverUrl || node.properties.src, node.properties.filename, node.properties.hash);
+                } else if (node.type === 'media/video' && !node.video && (node.properties.src || node.properties.serverUrl)) {
+                    node.setVideo(node.properties.serverUrl || node.properties.src, node.properties.filename, node.properties.hash);
                 }
             }
             
@@ -120,10 +136,10 @@ class MoveNodeCommand extends Command {
                     Object.assign(node.properties, props);
                     
                     // Reload media if lost
-                    if (node.type === 'media/image' && !node.img && node.properties.src) {
-                        node.setImage(node.properties.src, node.properties.filename, node.properties.hash);
-                    } else if (node.type === 'media/video' && !node.video && node.properties.src) {
-                        node.setVideo(node.properties.src, node.properties.filename, node.properties.hash);
+                    if (node.type === 'media/image' && !node.img && (node.properties.src || node.properties.serverUrl)) {
+                        node.setImage(node.properties.serverUrl || node.properties.src, node.properties.filename, node.properties.hash);
+                    } else if (node.type === 'media/video' && !node.video && (node.properties.src || node.properties.serverUrl)) {
+                        node.setVideo(node.properties.serverUrl || node.properties.src, node.properties.filename, node.properties.hash);
                     }
                 }
                 
@@ -481,8 +497,35 @@ class CreateNodeCommand extends Command {
                     hasServerUrl: !!this.params.properties?.serverUrl
                 });
             }
-        } else if (node.type === 'media/video' && this.params.videoData) {
-            // Add to graph BEFORE setVideo so user sees it immediately
+        } else if (node.type === 'media/video' && (this.params.properties?.serverUrl || this.params.properties?.src)) {
+            // Video creation matching the image pattern
+            if (this.params.properties && this.params.properties.serverUrl) {
+                // Video already uploaded, use server URL
+                // Construct full URL if it's a relative path
+                const url = this.params.properties.serverUrl.startsWith('http') 
+                    ? this.params.properties.serverUrl 
+                    : CONFIG.SERVER.API_BASE + this.params.properties.serverUrl;
+                    
+                node.setVideo(
+                    url,
+                    this.params.properties.filename,
+                    this.params.properties.hash
+                );
+                
+                // Mark as loading (will complete when video loads)
+                node.loadingState = 'loading';
+                node.loadingProgress = 50;
+            } else if (this.params.properties?.src) {
+                // Fallback: local data URL 
+                console.warn('⚠️ Creating video node with local data URL - upload failed?');
+                node.setVideo(
+                    this.params.properties.src,
+                    this.params.properties.filename,
+                    this.params.properties.hash
+                );
+            }
+            
+            // Add to graph AFTER setVideo to ensure properties are set
             graph.add(node);
             
             // Force immediate canvas redraw to show loading state
@@ -490,12 +533,6 @@ class CreateNodeCommand extends Command {
                 graph.canvas.dirty_canvas = true;
                 requestAnimationFrame(() => graph.canvas.draw());
             }
-            
-            await node.setVideo(
-                this.params.videoData.src,
-                this.params.videoData.filename,
-                this.params.videoData.hash
-            );
             
             // Store for undo
             this.undoData = { nodeId: node.id };

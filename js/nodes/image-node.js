@@ -31,7 +31,6 @@ class ImageNode extends BaseNode {
     }
     
     async setImage(src, filename = null, hash = null) {
-        console.log(`🖼️ setImage called on node ${this.id}: current title="${this.title}", filename="${filename}"`);
         
         // Store only references, not the data
         this.properties.filename = filename;
@@ -58,10 +57,7 @@ class ImageNode extends BaseNode {
         // Only set title if it's empty or undefined
         // This preserves user-customized titles while ensuring new nodes get a title
         if (filename && !this.title) {
-            console.log(`🔄 setImage setting title to filename: "${filename}"`);
             this.title = filename;
-        } else if (filename && this.title) {
-            console.log(`✅ setImage preserving existing title: "${this.title}" (filename: "${filename}")`);
         }
         
         // Resolve the actual image source
@@ -179,7 +175,6 @@ class ImageNode extends BaseNode {
             // More specific check for known upload paths
             if (src.startsWith('/uploads/') || src.startsWith('/thumbnails/')) {
                 const absoluteUrl = CONFIG.SERVER.API_BASE + src;
-                console.log(`🔗 Converting relative URL: ${src} → ${absoluteUrl}`);
                 return absoluteUrl;
             }
             // Return data URLs and absolute URLs as-is
@@ -190,7 +185,6 @@ class ImageNode extends BaseNode {
         if (this.properties.hash && window.imageCache) {
             const cached = window.imageCache.get(this.properties.hash);
             if (cached) {
-                console.log(`✅ Resolved image from cache: ${this.properties.hash.substring(0, 8)}...`);
                 return cached;
             }
         }
@@ -201,7 +195,6 @@ class ImageNode extends BaseNode {
             const url = this.properties.serverUrl.startsWith('http') 
                 ? this.properties.serverUrl 
                 : CONFIG.SERVER.API_BASE + this.properties.serverUrl;
-            console.log(`🌐 Using server URL: ${url}`);
             return url;
         }
         
@@ -209,7 +202,6 @@ class ImageNode extends BaseNode {
         if (this.properties.hash && window.app?.imageResourceCache) {
             const resource = window.app.imageResourceCache.get(this.properties.hash);
             if (resource?.url) {
-                console.log(`📦 Resolved from resource cache: ${this.properties.hash.substring(0, 8)}...`);
                 return resource.url;
             }
         }
@@ -579,4 +571,9 @@ class ImageNode extends BaseNode {
         
         // Title rendering is handled at canvas level by drawNodeTitle()
     }
+}
+
+// Make ImageNode available globally for browser environments
+if (typeof window !== 'undefined') {
+    window.ImageNode = ImageNode;
 }

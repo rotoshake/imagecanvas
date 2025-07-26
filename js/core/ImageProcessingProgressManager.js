@@ -32,6 +32,9 @@ class ImageProcessingProgressManager {
                 startTime: Date.now(),
                 notificationId: `image-processing-${this.currentBatchId}`,
                 notificationCreated: false, // Track if notification was created
+                // File type tracking
+                imageCount: 0,
+                videoCount: 0,
                 // Progress tracking
                 loaded: 0,
                 uploaded: 0,
@@ -50,10 +53,15 @@ class ImageProcessingProgressManager {
             const hash = file.hash || this.generateFileHash(file);
             // Check if file already exists in batch to avoid duplicates
             if (!batch.files.has(hash)) {
+                // Determine file type
+                const isVideo = file.type?.startsWith('video/') || file.type === 'image/gif';
+                const fileType = isVideo ? 'video' : 'image';
+                
                 batch.files.set(hash, {
                     filename: file.name,
                     hash: hash,
                     size: file.size,
+                    type: fileType,
                     loadProgress: 0,
                     uploadProgress: 0,
                     thumbnailProgress: 0,
@@ -62,6 +70,13 @@ class ImageProcessingProgressManager {
                 });
                 this.fileToBatchMap.set(hash, this.currentBatchId);
                 batch.totalFiles++;
+                
+                // Update type counters
+                if (fileType === 'video') {
+                    batch.videoCount++;
+                } else {
+                    batch.imageCount++;
+                }
             }
         });
         
@@ -191,6 +206,22 @@ class ImageProcessingProgressManager {
     }
     
     /**
+     * Generate appropriate message based on file types in batch
+     */
+    _getBatchMessage(batch) {
+        if (batch.imageCount > 0 && batch.videoCount > 0) {
+            // Mixed files
+            return `Processing ${batch.totalFiles} files`;
+        } else if (batch.videoCount > 0) {
+            // Only videos
+            return batch.videoCount === 1 ? 'Processing 1 video' : `Processing ${batch.videoCount} videos`;
+        } else {
+            // Only images (default)
+            return batch.imageCount === 1 ? 'Processing 1 image' : `Processing ${batch.imageCount} images`;
+        }
+    }
+
+    /**
      * Perform the actual batch notification update
      */
     _performBatchNotificationUpdate(batchId) {
@@ -237,7 +268,7 @@ class ImageProcessingProgressManager {
             window.unifiedNotifications.show({
                 id: batch.notificationId,
                 type: batch.failed > 0 ? 'warning' : 'info',
-                message: `Processing ${batch.totalFiles} images`,
+                message: this._getBatchMessage(batch),
                 detail: details.join(' • '),
                 progress: {
                     current: overallProgress,
@@ -254,7 +285,7 @@ class ImageProcessingProgressManager {
             // Update existing notification in place
             window.unifiedNotifications.update(batch.notificationId, {
                 type: batch.failed > 0 ? 'warning' : 'info',
-                message: `Processing ${batch.totalFiles} images`,
+                message: this._getBatchMessage(batch),
                 detail: details.join(' • '),
                 progress: {
                     current: overallProgress,

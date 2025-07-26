@@ -5,7 +5,7 @@
 class VideoNode extends BaseNode {
     constructor() {
         super('media/video');
-        this.title = 'Video';
+        this.title = '';
         this.properties = { 
             src: null, 
             filename: null, 
@@ -15,19 +15,32 @@ class VideoNode extends BaseNode {
             autoplay: true,
             paused: false  // Add paused property to properties
         };
-        this.flags = { hide_title: true };
+        this.flags = { hide_title: false };
         this.video = null;
-        // Remove individual thumbnail storage - use global cache
-        this.thumbnailSizes = CONFIG.THUMBNAILS.SIZES;
+        this.thumbnail = null; // Simple single thumbnail for small display
         this.userPaused = false;  // Keep for backward compatibility
         this.loadingProgress = 0; // 0-1 for unified progress tracking
         this.loadingState = 'loading'; // Start as loading to show immediate feedback
+        
     }
     
     async setVideo(src, filename = null, hash = null) {
-        this.properties.src = src;
+        // Ensure loop property is always defined (fix for undefined from state restoration)
+        if (this.properties.loop === undefined) {
+            this.properties.loop = true;
+        }
+        
+        // Store only references, not the data
         this.properties.filename = filename;
         this.properties.hash = hash;
+        
+        // If src is a server URL, store it as serverUrl
+        if (src && !src.startsWith('data:')) {
+            this.properties.serverUrl = src;
+        } else if (src) {
+            this.properties.src = src;
+        }
+        
         this.loadingState = 'loading';
         
         // Only set title if it's empty or undefined
@@ -36,15 +49,18 @@ class VideoNode extends BaseNode {
             this.title = filename;
         }
         
-        try {
-            this.video = await this.loadVideoAsync(src);
-            this.loadingState = 'loaded';
-            
-            // Force immediate redraw to show loaded video
-            const canvas = this.graph?.canvas || window.app?.graphCanvas;
-            if (canvas && canvas.forceRedraw) {
-                canvas.forceRedraw();
+        // Resolve the actual video source
+        const videoSrc = await this.resolveVideoSource(src);
+        if (!videoSrc) {
+            console.warn(`⚠️ No video source available yet for node ${this.id} - waiting for upload`);
+            if (!this.properties.serverUrl && !this.properties.hash) {
+                this.loadingState = 'error';
             }
+            return;
+        }
+        
+        try {
+            this.video = await this.loadVideoAsync(videoSrc);
             
             // Store original dimensions
             this.originalWidth = this.video.videoWidth;
@@ -64,20 +80,22 @@ class VideoNode extends BaseNode {
                 this.lockedAspectRatio = this.size[0] / this.size[1];
             }
             
-            // Use global thumbnail cache - non-blocking and shared!
-            if (hash && window.thumbnailCache) {
-                // Start thumbnail generation if not already available
-                window.thumbnailCache.generateThumbnailsProgressive(
-                    hash, 
-                    this.video, 
-                    (progress) => {
-                        this.loadingProgress = progress;
-                        // Trigger redraw for progress updates
-                        if (this.graph?.canvas) {
-                            this.graph.canvas.dirty_canvas = true;
-                        }
-                    }
-                );
+            // Create a simple single thumbnail for small display sizes
+            // This will set loadingProgress to 1.0 and loadingState to 'loaded'
+            this.createVideoThumbnail();
+            
+            // Set loading state after thumbnail creation
+            this.loadingState = 'loaded';
+            
+            // Mark loading as complete in the progress tracking system
+            if (this.properties.hash && window.imageProcessingProgress) {
+                window.imageProcessingProgress.updateLoadProgress(this.properties.hash, 1.0);
+            }
+            
+            // Force immediate redraw to show loaded video
+            const canvas = this.graph?.canvas || window.app?.graphCanvas;
+            if (canvas && canvas.forceRedraw) {
+                canvas.forceRedraw();
             }
             
             this.onResize();
@@ -85,6 +103,9 @@ class VideoNode extends BaseNode {
             
             // Start playback only if not paused
             if (!this.properties.paused) {
+                // Ensure video is muted for autoplay to work
+                this.video.muted = true;
+                this.properties.muted = true;
                 this.play();  // Auto-play by default
             } else {
                 this.pause(); // Explicitly pause if paused
@@ -93,6 +114,157 @@ class VideoNode extends BaseNode {
         } catch (error) {
             console.error('Failed to load video:', error);
             this.loadingState = 'error';
+            this.loadingProgress = 1.0; // Mark as complete even if failed
+            
+            // Mark as failed in the progress tracking system
+            if (this.properties.hash && window.imageProcessingProgress) {
+                window.imageProcessingProgress.markFailed(this.properties.hash, 'loading');
+            }
+        }
+    }
+    
+    /**
+     * Resolve video source from references
+     * Priority: direct src > cache > serverUrl > resourceCache
+     */
+    async resolveVideoSource(src) {
+        // 1. If we have a direct source, check if it needs conversion
+        if (src) {
+            // Convert relative server URLs to absolute
+            if (src.startsWith('/uploads/') || src.startsWith('/thumbnails/')) {
+                const absoluteUrl = CONFIG.SERVER.API_BASE + src;
+                return absoluteUrl;
+            }
+            // Return data URLs and absolute URLs as-is
+            return src;
+        }
+        
+        // 2. Try to get from cache using hash
+        if (this.properties.hash && window.imageCache) {
+            const cached = window.imageCache.get(this.properties.hash);
+            if (cached) {
+                return cached;
+            }
+        }
+        
+        // 3. Try server URL
+        if (this.properties.serverUrl) {
+            // Convert relative URL to absolute if needed
+            const url = this.properties.serverUrl.startsWith('http') 
+                ? this.properties.serverUrl 
+                : CONFIG.SERVER.API_BASE + this.properties.serverUrl;
+            return url;
+        }
+        
+        // 4. Try resource cache (for duplicated nodes)
+        if (this.properties.hash && window.app?.imageResourceCache) {
+            const resource = window.app.imageResourceCache.get(this.properties.hash);
+            if (resource?.url) {
+                return resource.url;
+            }
+        }
+        
+        // 5. No source available
+        console.error(`❌ No video source available for node ${this.id}`, {
+            hash: this.properties.hash,
+            serverUrl: this.properties.serverUrl,
+            filename: this.properties.filename,
+            hasImageCache: !!window.imageCache,
+            hasResourceCache: !!window.app?.imageResourceCache
+        });
+        return null;
+    }
+    
+    createVideoThumbnail() {
+        if (!this.video || this.video.readyState < 2) {
+            // Video not ready yet, try again later
+            if (this.video && this.video.readyState < 2) {
+                this.video.addEventListener('loadeddata', () => {
+                    this.createVideoThumbnail();
+                }, { once: true });
+            }
+            return;
+        }
+        
+        try {
+            // Create a simple 64x64 thumbnail for small display
+            const canvas = document.createElement('canvas');
+            const ctx = canvas.getContext('2d');
+            const size = 64; // Single small thumbnail size
+            
+            // Maintain aspect ratio
+            const videoAspect = this.video.videoWidth / this.video.videoHeight;
+            let thumbWidth, thumbHeight;
+            
+            if (videoAspect > 1) {
+                thumbWidth = size;
+                thumbHeight = size / videoAspect;
+            } else {
+                thumbWidth = size * videoAspect;
+                thumbHeight = size;
+            }
+            
+            canvas.width = thumbWidth;
+            canvas.height = thumbHeight;
+            
+            // Ensure video is at beginning and ready for thumbnail capture
+            const originalTime = this.video.currentTime;
+            this.video.currentTime = 0; // Seek to beginning for thumbnail
+            
+            // Wait for seek to complete, then draw thumbnail
+            const drawThumbnail = () => {
+                try {
+                    // Draw video frame to thumbnail
+                    ctx.drawImage(this.video, 0, 0, thumbWidth, thumbHeight);
+                    
+                    // Restore original playback position
+                    this.video.currentTime = originalTime;
+                    
+                } catch (drawError) {
+                    console.warn(`Failed to draw video thumbnail for ${this.id}:`, drawError);
+                    // Create a placeholder thumbnail
+                    ctx.fillStyle = '#333';
+                    ctx.fillRect(0, 0, thumbWidth, thumbHeight);
+                    ctx.fillStyle = '#fff';
+                    ctx.font = '12px Arial';
+                    ctx.textAlign = 'center';
+                    ctx.fillText('📹', thumbWidth/2, thumbHeight/2);
+                }
+            };
+            
+            // Try to draw immediately, but also set up a fallback
+            drawThumbnail();
+            
+            // Also try again after a short delay in case the seek needs time
+            setTimeout(drawThumbnail, 100);
+            
+            // Store thumbnail
+            this.thumbnail = canvas;
+            
+            
+            // Complete loading progress - this is a video thumbnail, not image thumbnails
+            this.loadingProgress = 1.0;
+            
+            // Mark thumbnail as complete in the progress tracking system
+            if (this.properties.hash && window.imageProcessingProgress) {
+                window.imageProcessingProgress.updateThumbnailProgress(this.properties.hash, 1.0);
+            }
+            
+            // Trigger redraw to show completed progress
+            const graphCanvas = this.graph?.canvas || window.app?.graphCanvas;
+            if (graphCanvas) {
+                graphCanvas.dirty_canvas = true;
+            }
+            
+        } catch (error) {
+            console.warn('Failed to create video thumbnail:', error);
+            // Set progress to complete even if thumbnail failed
+            this.loadingProgress = 1.0;
+            
+            // Mark thumbnail as complete in the progress tracking system even if failed
+            if (this.properties.hash && window.imageProcessingProgress) {
+                window.imageProcessingProgress.updateThumbnailProgress(this.properties.hash, 1.0);
+            }
         }
     }
     
@@ -114,6 +286,36 @@ class VideoNode extends BaseNode {
                 }
             };
             
+            // Add event listeners to handle looping and ensure canvas redraws
+            video.addEventListener('ended', () => {
+                if (video.loop) {
+                    // Force restart if loop doesn't work automatically
+                    video.currentTime = 0;
+                    video.play().catch(console.warn);
+                }
+                // Force canvas redraw when video loops
+                this.markDirty();
+            });
+            
+            video.addEventListener('play', () => {
+                // Single redraw when video starts playing
+                this.markDirty();
+            });
+            
+            video.addEventListener('pause', () => {
+                // Single redraw when video pauses
+                this.markDirty();
+            });
+            
+            // Key fix: redraw when video loops
+            video.addEventListener('timeupdate', () => {
+                // Only trigger redraw occasionally, not every frame
+                if (!this._lastUpdateTime || Date.now() - this._lastUpdateTime > 100) {
+                    this._lastUpdateTime = Date.now();
+                    this.markDirty();
+                }
+            });
+            
             video.onerror = () => reject(new Error('Failed to load video'));
             video.src = src;
         });
@@ -134,9 +336,35 @@ class VideoNode extends BaseNode {
             const useThumbnail = screenWidth < CONFIG.PERFORMANCE.THUMBNAIL_THRESHOLD;
             
             if (!useThumbnail) {
-                this.togglePlayback();
+                // If video needs user interaction, any click will start it
+                if (this._needsUserInteraction) {
+                    this._needsUserInteraction = false;
+                    this.play();
+                } else {
+                    this.togglePlayback();
+                }
                 this.markDirty();
                 return true;  // Event handled
+            }
+        }
+        return false;
+    }
+    
+    onClick(event) {
+        // Single click can also start videos that need user interaction
+        if (this._needsUserInteraction && this.video) {
+            const canvas = this.graph?.canvas;
+            if (!canvas) return false;
+            
+            const mousePos = canvas.mouseState?.graph;
+            if (!mousePos) return false;
+            
+            const inBounds = this.containsPoint(mousePos[0], mousePos[1]);
+            if (inBounds) {
+                this._needsUserInteraction = false;
+                this.play();
+                this.markDirty();
+                return true;
             }
         }
         return false;
@@ -152,10 +380,9 @@ class VideoNode extends BaseNode {
         });
     }
     
-    // Use global thumbnail cache instead of individual generation
+    // Video nodes use their own simple thumbnail instead of the global cache
     getBestThumbnail(targetWidth, targetHeight) {
-        if (!this.properties.hash || !window.thumbnailCache) return null;
-        return window.thumbnailCache.getBestThumbnail(this.properties.hash, targetWidth, targetHeight);
+        return this.thumbnail; // Return our simple thumbnail or null
     }
     
     onResize() {
@@ -174,6 +401,12 @@ class VideoNode extends BaseNode {
     onDrawForeground(ctx) {
         this.validate();
         
+        // Auto-start loading if we have a source but haven't started yet
+        if ((this.loadingState === 'idle' || this.loadingState === 'loading') && 
+            (this.properties.serverUrl || this.properties.hash || this.properties.src) && !this.video) {
+            this.setVideo(this.properties.serverUrl || this.properties.src, this.properties.filename, this.properties.hash);
+        }
+        
         // Show loading ring if loading, or if we're a new node without a video yet
         if (this.loadingState === 'loading' || (!this.video && this.loadingState !== 'error')) {
             this.drawProgressRing(ctx, this.loadingProgress);
@@ -187,53 +420,42 @@ class VideoNode extends BaseNode {
         
         if (!this.video) return;
         
-        const scale = this.graph?.canvas?.viewport?.scale || 1;
+        // Get scale from multiple possible sources
+        const scale = this.graph?.canvas?.viewport?.scale || 
+                     window.app?.graphCanvas?.viewport?.scale ||
+                     window.app?.graphCanvas?.ds?.scale ||
+                     1;
+                     
         const screenWidth = this.size[0] * scale;
         const screenHeight = this.size[1] * scale;
         const useThumbnail = screenWidth < CONFIG.PERFORMANCE.THUMBNAIL_THRESHOLD || 
                             screenHeight < CONFIG.PERFORMANCE.THUMBNAIL_THRESHOLD;
         
+        
         try {
-            if (useThumbnail) {
-                const thumbnail = this.getBestThumbnail(this.size[0], this.size[1]);
-                if (thumbnail) {
-                    ctx.imageSmoothingEnabled = true;
-                    ctx.imageSmoothingQuality = CONFIG.THUMBNAILS.QUALITY;
-                    ctx.drawImage(thumbnail, 0, 0, this.size[0], this.size[1]);
-                } else {
-                    // Show progress if thumbnails are still generating
-                    if (this.properties.hash && window.thumbnailCache && 
-                        !window.thumbnailCache.hasThumbnails(this.properties.hash)) {
-                        // Show loading ring with current progress
-                        this.drawProgressRing(ctx, this.loadingProgress);
-                        // But also draw the video frame behind it if available
-                        if (this.video && this.video.readyState >= 2) {
-                            ctx.save();
-                            ctx.globalAlpha = 0.3; // Show faded video behind loading ring
-                            ctx.imageSmoothingEnabled = true;
-                            ctx.imageSmoothingQuality = CONFIG.THUMBNAILS.QUALITY;
-                            ctx.drawImage(this.video, 0, 0, this.size[0], this.size[1]);
-                            ctx.restore();
-                        }
-                        return;
-                    } else {
-                        // Fallback to video if thumbnail not available
-                        this.drawVideo(ctx);
-                    }
-                }
+            if (useThumbnail && this.thumbnail) {
+                // Use simple video thumbnail for small sizes
+                ctx.imageSmoothingEnabled = true;
+                ctx.imageSmoothingQuality = CONFIG.THUMBNAILS.QUALITY;
+                ctx.drawImage(this.thumbnail, 0, 0, this.size[0], this.size[1]);
+                
             } else {
+                // Full resolution video
                 this.drawVideo(ctx);
                 this.managePlayback();
+                
+                // Show play indicator if video needs user interaction
+                if (this._needsUserInteraction) {
+                    this.drawPlayIndicator(ctx);
+                }
             }
         } catch (error) {
             console.warn('Video drawing error:', error);
             this.drawPlaceholder(ctx, 'Video Error');
         }
         
-        // Draw title if not using thumbnail
-        if (!useThumbnail) {
-            this.drawTitle(ctx);
-        }
+        // Title rendering is handled at canvas level by drawNodeTitle()
+        // (same as image nodes for consistency)
     }
     
     drawVideo(ctx) {
@@ -245,14 +467,58 @@ class VideoNode extends BaseNode {
     }
     
     managePlayback() {
+        if (!this.video) return;
+        
         // Continue video playback if not paused
         if (!this.properties.paused && this.video.paused) {
             this.video.play().catch(() => {
                 // Autoplay might be blocked, that's okay
             });
         }
+        
+        // Ensure loop property is set correctly
+        if (this.video.loop !== this.properties.loop) {
+            this.video.loop = this.properties.loop;
+        }
+        
+        // If video has ended and should loop, restart it
+        if (this.video.ended && this.properties.loop && !this.properties.paused) {
+            this.video.currentTime = 0;
+            this.video.play().catch(console.warn);
+        }
     }
     
+    
+    drawPlayIndicator(ctx) {
+        ctx.save();
+        
+        // Semi-transparent overlay
+        ctx.fillStyle = 'rgba(0, 0, 0, 0.5)';
+        ctx.fillRect(0, 0, this.size[0], this.size[1]);
+        
+        // Play triangle
+        const centerX = this.size[0] / 2;
+        const centerY = this.size[1] / 2;
+        const iconSize = Math.min(this.size[0], this.size[1]) * 0.15;
+        
+        ctx.fillStyle = 'rgba(255, 255, 255, 0.9)';
+        ctx.beginPath();
+        ctx.moveTo(centerX - iconSize, centerY - iconSize);
+        ctx.lineTo(centerX + iconSize, centerY);
+        ctx.lineTo(centerX - iconSize, centerY + iconSize);
+        ctx.closePath();
+        ctx.fill();
+        
+        // "Click to play" text
+        ctx.fillStyle = 'rgba(255, 255, 255, 0.8)';
+        ctx.font = `${Math.max(12, Math.min(16, this.size[0] * 0.08))}px Arial`;
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText('Click to play', centerX, centerY + iconSize + 20);
+        
+        ctx.restore();
+    }
+
     drawPlaybackIndicator(ctx) {
         ctx.save();
         
@@ -291,7 +557,15 @@ class VideoNode extends BaseNode {
         this.properties.paused = false;
         this.userPaused = false;  // Keep for backward compatibility
         if (this.video) {
-            this.video.play().catch(console.warn);
+            this.video.play().catch((error) => {
+                if (error.name === 'NotAllowedError') {
+                    // Mark as needing user interaction
+                    this._needsUserInteraction = true;
+                    console.log(`🎬 Video ${this.id} needs user interaction to play`);
+                } else {
+                    console.warn('Video play error:', error);
+                }
+            });
         }
     }
     
@@ -390,4 +664,9 @@ class VideoNode extends BaseNode {
             readyState: this.video.readyState
         };
     }
+}
+
+// Make VideoNode available globally for browser environments
+if (typeof window !== 'undefined') {
+    window.VideoNode = VideoNode;
 }

@@ -12,10 +12,18 @@ class ImageUploadManager {
     }
 
     /**
+     * Upload media (image or video) data to server via HTTP
+     * Returns a promise that resolves to the server URL
+     */
+    async uploadMedia(mediaData, filename, hash, mimeType = 'image/jpeg') {
+        return this.uploadImage(mediaData, filename, hash, mimeType);
+    }
+
+    /**
      * Upload image data to server via HTTP
      * Returns a promise that resolves to the server URL
      */
-    async uploadImage(imageData, filename, hash) {
+    async uploadImage(imageData, filename, hash, mimeType = 'image/jpeg') {
         // Check if already uploading
         if (this.uploadQueue.has(hash)) {
             console.log(`⏳ Upload already in progress for ${hash}`);
@@ -25,7 +33,7 @@ class ImageUploadManager {
         // Bundle tracking is now handled by unified progress system
 
         // Create upload promise
-        const uploadPromise = this._performUpload(imageData, filename, hash);
+        const uploadPromise = this._performUpload(imageData, filename, hash, mimeType);
         this.uploadQueue.set(hash, uploadPromise);
 
         try {
@@ -38,14 +46,15 @@ class ImageUploadManager {
         }
     }
 
-    async _performUpload(imageData, filename, hash) {
-        console.log(`📤 Uploading image ${filename} (${hash})`);
+    async _performUpload(mediaData, filename, hash, mimeType = 'image/jpeg') {
+        const isVideo = mimeType.startsWith('video/');
+        console.log(`📤 Uploading ${isVideo ? 'video' : 'image'} ${filename} (${hash})`);
         
         // Progress is now handled by unified progress system
 
         try {
             // Convert base64 to blob
-            const blob = await this._dataURLToBlob(imageData);
+            const blob = await this._dataURLToBlob(mediaData);
             
             // Create form data
             const formData = new FormData();

@@ -21,15 +21,15 @@ class AnimationSystem {
     updateAnimations(deltaTime) {
         if (!this.running) return false;
         
-        // Cap delta time to prevent large jumps (8.33ms = 120 FPS capability)
-        const cappedDeltaTime = Math.min(deltaTime, 8.33);
+        // Convert deltaTime to seconds and cap for stability (33ms = 30 FPS minimum)
+        const deltaTimeSeconds = Math.min(deltaTime / 1000, 0.033);
         
         const toRemove = [];
         let hasActiveAnimations = false;
         
         for (const [id, animation] of this.animations) {
             hasActiveAnimations = true;
-            const finished = this.updateAnimation(animation, cappedDeltaTime);
+            const finished = this.updateAnimation(animation, deltaTimeSeconds);
             if (finished) {
                 toRemove.push(id);
                 if (animation.onComplete) {
@@ -44,7 +44,7 @@ class AnimationSystem {
         return hasActiveAnimations && this.animations.size > 0;
     }
     
-    updateAnimation(animation, deltaTime) {
+    updateAnimation(animation, deltaTimeSeconds) {
         const { target, properties, spring } = animation;
         let allFinished = true;
         
@@ -56,8 +56,9 @@ class AnimationSystem {
             const dx = targetValue - current;
             const acceleration = spring.k * dx - spring.d * velocity;
             
-            config.velocity = velocity + acceleration * (deltaTime / 1000);
-            target[prop] = current + config.velocity * (deltaTime / 1000);
+            // All calculations now use seconds directly
+            config.velocity = velocity + acceleration * deltaTimeSeconds;
+            target[prop] = current + config.velocity * deltaTimeSeconds;
             
             const threshold = config.threshold || 0.05;
             if (Math.abs(dx) > threshold || Math.abs(config.velocity) > threshold) {
