@@ -10,7 +10,7 @@ class LGraphCanvas {
         this.graph.canvas = this;
         
         // Core systems
-        this.viewport = new ViewportManager(canvas);
+        this.viewport = new ViewportManager(canvas, this);
         this.selection = new SelectionManager();
         this.handleDetector = new HandleDetector(this.viewport, this.selection);
         this.animationSystem = new AnimationSystem();
@@ -25,6 +25,16 @@ class LGraphCanvas {
         this.frameCounter = 0;
         this.lastFrameTime = performance.now();
         this.fps = 0;
+        
+        // FPS Test Mode
+        this.fpsTestMode = 'normal'; // 'normal', 'minimal', 'nocap', 'noanimations', 'noloading'
+        this.frameTimes = [];
+        this.maxFrameTimeSamples = 120; // Keep last 2 seconds at 60fps
+        this.isTestModeActive = false;
+        
+        // Visibility caching
+        this.cachedVisibleNodes = null;
+        this.lastViewportState = null;
         
         // Async loading management
         this.loadingQueue = new Set();
@@ -41,6 +51,9 @@ class LGraphCanvas {
         // Initialize action manager
         this.actionManager = null; // Will be set when collaborative manager is ready
         
+        // Gallery view manager
+        this.galleryViewManager = null; // Will be set by app
+        
         // Initialize
         this.setupEventListeners();
         this.viewport.applyDPI();
@@ -48,7 +61,17 @@ class LGraphCanvas {
         this.startRenderLoop();
         this.startPreloadLoop();
         
+        // Ensure at least one initial draw happens
+        setTimeout(() => {
+            this.dirty_canvas = true;
+        }, 100);
+        
         console.log('LGraphCanvas initialized');
+        
+        // Setup FPS testing helpers for console (with delay to ensure everything is ready)
+        setTimeout(() => {
+            this.setupFPSTestingHelpers();
+        }, 100);
     }
     
     createMouseState() {
@@ -108,22 +131,141 @@ class LGraphCanvas {
         // Keyboard events
         document.addEventListener('keydown', this.onKeyDown.bind(this));
         
-        // Window resize
-        window.addEventListener('resize', this.onWindowResize.bind(this));
+        // Window resize - debounced to prevent flicker
+        this.debouncedResize = Utils.debounce(this.onWindowResize.bind(this), 100);
+        window.addEventListener('resize', this.debouncedResize);
         // Call resize immediately to set initial size
         this.onWindowResize();
-        
-        // Start render loop
-        this.startRenderLoop();
         
         // Selection callbacks
         this.selection.addCallback(this.onSelectionChanged.bind(this));
     }
     
     startRenderLoop() {
+        // Track loading state check timing
+        let lastLoadingCheck = 0;
+        const LOADING_CHECK_INTERVAL = 100; // Check every 100ms - balanced performance/responsiveness
+        
+        // Track which nodes were loading to detect when they finish
+        const loadingNodeIds = new Set();
+        
+        // Track actively loading nodes for efficient checks
+        const activelyLoadingNodes = new Map(); // nodeId -> node reference
+        
+        // FPS limiting
+        let lastRenderTime = 0;
+        const targetFrameTime = 1000 / CONFIG.PERFORMANCE.MAX_FPS; // milliseconds per frame
+        
+        // Test mode render loops - but allow dynamic switching
+        if (this.fpsTestMode !== 'normal') {
+            this.startTestRenderLoop();
+            return;
+        }
+        
         // Use requestAnimationFrame for efficient rendering
-        const renderFrame = () => {
-            if (this.dirty_canvas) {
+        const renderFrame = (currentTime) => {
+            // No artificial FPS limiting - let RAF handle natural display sync
+            // The old FPS limiting was causing timing conflicts with vsync
+            
+            
+            // Calculate deltaTime BEFORE updating lastRenderTime  
+            const deltaTime = lastRenderTime > 0 ? currentTime - lastRenderTime : 16.67;
+            
+            // Count this as a potential frame for accurate FPS measurement
+            this.updatePerformanceStats(currentTime);
+            lastRenderTime = currentTime;
+            
+            const now = Date.now();
+            let shouldDraw = this.dirty_canvas;
+            let renderReasons = [];
+            
+            if (this.dirty_canvas) renderReasons.push('dirty');
+            
+            // Periodically check if we have loading nodes
+            if (now - lastLoadingCheck > LOADING_CHECK_INTERVAL) {
+                lastLoadingCheck = now;
+                
+                // First, check if any new nodes need to start loading
+                if (this.graph && this.graph.nodes) {
+                    for (const node of this.graph.nodes) {
+                        if ((node.type === 'media/image' || node.type === 'canvas/image' || node.type === 'image') &&
+                            !activelyLoadingNodes.has(node.id)) {
+                            // Check if this node needs to start loading
+                            const needsLoading = node.loadingState === 'loading' || 
+                                   (node.loadingState === 'idle' && 
+                                    (node.properties?.serverUrl || node.properties?.hash) && 
+                                    !node.img);
+                            
+                            if (needsLoading) {
+                                activelyLoadingNodes.set(node.id, node);
+                                loadingNodeIds.add(node.id);
+                            }
+                        }
+                    }
+                }
+                
+                // Now check only the actively loading nodes
+                const finishedNodes = [];
+                for (const [nodeId, node] of activelyLoadingNodes) {
+                    if (node.loadingState === 'loaded' || node.img) {
+                        // This node finished loading!
+                        finishedNodes.push(nodeId);
+                        shouldDraw = true;
+                    }
+                }
+                
+                // Remove finished nodes from tracking
+                for (const nodeId of finishedNodes) {
+                    activelyLoadingNodes.delete(nodeId);
+                    loadingNodeIds.delete(nodeId);
+                }
+                
+                // Trigger redraw if we have loading nodes
+                if (activelyLoadingNodes.size > 0) {
+                    shouldDraw = true;
+                    renderReasons.push(`loading(${activelyLoadingNodes.size})`);
+                }
+            }
+            
+            // Update alignment animations
+            if (this.alignmentManager) {
+                this.alignmentManager.updateAnimations();
+            }
+            
+            // Update general animations (integrated for 120 FPS performance)
+            const hasActiveAnimations = this.animationSystem && this.animationSystem.updateAnimations(deltaTime);
+            
+            // Check if any videos are playing or alignment is active
+            const hasActiveVideos = this.graph.nodes && this.graph.nodes.some(node => 
+                node.type === 'media/video' && node.video && !node.video.paused
+            );
+            
+            const hasActiveAlignment = this.alignmentManager && this.alignmentManager.isAnimating();
+            const hasActiveViewportAnimation = this.viewport && this.viewport.isAnimating;
+            
+            if (hasActiveVideos) {
+                shouldDraw = true;
+                renderReasons.push('video');
+            }
+            if (hasActiveAlignment) {
+                shouldDraw = true;
+                renderReasons.push('alignment');
+            }
+            if (hasActiveViewportAnimation) {
+                shouldDraw = true;
+                renderReasons.push('viewport');
+            }
+            if (hasActiveAnimations) {
+                shouldDraw = true;
+                renderReasons.push('animations');
+            }
+            
+            // Debug logging for render reasons
+            if (window.DEBUG_FPS && shouldDraw && renderReasons.length > 0) {
+                console.log(`🎯 Frame triggered by: ${renderReasons.join(', ')}`);
+            }
+            
+            if (shouldDraw) {
                 this.dirty_canvas = false;
                 this.draw();
             }
@@ -132,12 +274,275 @@ class LGraphCanvas {
         requestAnimationFrame(renderFrame);
     }
     
+    startTestRenderLoop() {
+        console.log(`🧪 FPS Test Mode: ${this.fpsTestMode}`);
+        
+        let lastRenderTime = 0;
+        
+        const testRenderFrame = (currentTime) => {
+            // Track frame times for statistics
+            if (lastRenderTime > 0) {
+                const frameTime = currentTime - lastRenderTime;
+                this.frameTimes.push(frameTime);
+                if (this.frameTimes.length > this.maxFrameTimeSamples) {
+                    this.frameTimes.shift();
+                }
+            }
+            
+            // Different test modes
+            switch (this.fpsTestMode) {
+                case 'minimal':
+                    // Truly minimal - just clear and draw basic background
+                    this.updatePerformanceStats(currentTime);
+                    
+                    const ctx = this.ctx;
+                    const canvas = this.canvas;
+                    
+                    // Clear canvas
+                    ctx.clearRect(0, 0, canvas.width, canvas.height);
+                    
+                    // Draw basic background
+                    ctx.fillStyle = '#222';
+                    ctx.fillRect(0, 0, canvas.width, canvas.height);
+                    
+                    // Draw simple FPS indicator
+                    ctx.fillStyle = '#4af';
+                    ctx.font = '16px monospace';
+                    ctx.fillText(`MINIMAL MODE - FPS: ${this.fps}`, 10, 30);
+                    break;
+                    
+                case 'nocap':
+                    // Normal render but no FPS cap
+                    this.updatePerformanceStats(currentTime);
+                    this.dirty_canvas = true; // Force continuous draw
+                    this.draw();
+                    break;
+                    
+                case 'noanimations':
+                    // Normal render but skip all animation updates
+                    this.updatePerformanceStats(currentTime);
+                    this.dirty_canvas = true;
+                    this.draw();
+                    break;
+                    
+                case 'noloading':
+                    // Normal render but skip loading checks
+                    this.updatePerformanceStats(currentTime);
+                    this.dirty_canvas = true;
+                    this.draw();
+                    break;
+            }
+            
+            lastRenderTime = currentTime;
+            requestAnimationFrame(testRenderFrame);
+        };
+        
+        requestAnimationFrame(testRenderFrame);
+    }
+    
+    setFPSTestMode(mode) {
+        const validModes = ['normal', 'minimal', 'nocap', 'noanimations', 'noloading'];
+        if (!validModes.includes(mode)) {
+            console.error(`Invalid FPS test mode: ${mode}. Valid modes: ${validModes.join(', ')}`);
+            return;
+        }
+        
+        const oldMode = this.fpsTestMode;
+        this.fpsTestMode = mode;
+        this.frameTimes = []; // Reset frame time samples
+        
+        console.log(`🧪 FPS Test Mode changed to: ${mode}`);
+        
+        // If switching from normal mode to a test mode, start the test render loop
+        if (oldMode === 'normal' && mode !== 'normal') {
+            console.log('🚀 Starting test render loop immediately...');
+            this.isTestModeActive = true;
+            this.startTestRenderLoop();
+        } else if (mode === 'normal') {
+            console.log('📊 FPS Test Mode disabled. Reload to return to normal rendering.');
+            this.isTestModeActive = false;
+        } else {
+            console.log('✅ Test mode updated');
+        }
+        
+        // Force canvas redraw to show mode change in stats
+        this.dirty_canvas = true;
+    }
+    
+    getFrameTimeStats() {
+        if (this.frameTimes.length === 0) return null;
+        
+        const sorted = [...this.frameTimes].sort((a, b) => a - b);
+        const avg = sorted.reduce((a, b) => a + b, 0) / sorted.length;
+        const p50 = sorted[Math.floor(sorted.length * 0.5)];
+        const p95 = sorted[Math.floor(sorted.length * 0.95)];
+        const p99 = sorted[Math.floor(sorted.length * 0.99)];
+        
+        return {
+            samples: sorted.length,
+            avg: avg.toFixed(2),
+            p50: p50.toFixed(2),
+            p95: p95.toFixed(2),
+            p99: p99.toFixed(2),
+            avgFPS: (1000 / avg).toFixed(1),
+            p50FPS: (1000 / p50).toFixed(1)
+        };
+    }
+    
+    showFPSTestMenu() {
+        const modes = [
+            { key: '1', mode: 'normal', desc: 'Normal rendering' },
+            { key: '2', mode: 'minimal', desc: 'Minimal (just draw)' },
+            { key: '3', mode: 'nocap', desc: 'No FPS cap' },
+            { key: '4', mode: 'noanimations', desc: 'No animations' },
+            { key: '5', mode: 'noloading', desc: 'No loading checks' }
+        ];
+        
+        let message = '🧪 FPS Test Modes:\n';
+        modes.forEach(m => {
+            const current = this.fpsTestMode === m.mode ? ' ✓' : '';
+            message += `${m.key}: ${m.desc}${current}\n`;
+        });
+        message += '\nPress a number key or ESC to cancel';
+        
+        // Always show in console
+        console.log(message);
+        
+        if (this.showNotification) {
+            this.showNotification({
+                type: 'info',
+                message: message,
+                duration: 10000
+            });
+        } else {
+            // Fallback: Create a temporary overlay
+            const overlay = document.createElement('div');
+            overlay.style.cssText = `
+                position: fixed;
+                top: 50%;
+                left: 50%;
+                transform: translate(-50%, -50%);
+                background: rgba(0, 0, 0, 0.9);
+                color: white;
+                padding: 20px;
+                font-family: monospace;
+                font-size: 14px;
+                white-space: pre;
+                z-index: 10000;
+                border: 2px solid #4af;
+                border-radius: 8px;
+            `;
+            overlay.textContent = message;
+            document.body.appendChild(overlay);
+            
+            // Remove overlay after selection or timeout
+            const removeOverlay = () => {
+                if (overlay.parentNode) {
+                    overlay.parentNode.removeChild(overlay);
+                }
+            };
+            setTimeout(removeOverlay, 10000);
+            
+            // Store removal function for cleanup
+            this._fpsMenuCleanup = removeOverlay;
+        }
+        
+        // Listen for next key press
+        const handleKey = (e) => {
+            const key = e.key;
+            const mode = modes.find(m => m.key === key);
+            
+            if (mode) {
+                this.setFPSTestMode(mode.mode);
+                document.removeEventListener('keydown', handleKey);
+                
+                // Clean up overlay if exists
+                if (this._fpsMenuCleanup) {
+                    this._fpsMenuCleanup();
+                    this._fpsMenuCleanup = null;
+                }
+                
+                // Show stats after mode change
+                setTimeout(() => {
+                    this.showFPSStats();
+                }, 100);
+            } else if (key === 'Escape') {
+                document.removeEventListener('keydown', handleKey);
+                
+                // Clean up overlay if exists
+                if (this._fpsMenuCleanup) {
+                    this._fpsMenuCleanup();
+                    this._fpsMenuCleanup = null;
+                }
+            }
+        };
+        
+        document.addEventListener('keydown', handleKey);
+    }
+    
+    showFPSStats() {
+        const stats = this.getFrameTimeStats();
+        if (!stats) {
+            console.log('📊 No frame time data available yet');
+            return;
+        }
+        
+        const message = `📊 Frame Time Stats:
+Samples: ${stats.samples}
+Avg: ${stats.avg}ms (${stats.avgFPS} FPS)
+P50: ${stats.p50}ms (${stats.p50FPS} FPS)
+P95: ${stats.p95}ms
+P99: ${stats.p99}ms
+Mode: ${this.fpsTestMode}`;
+        
+        console.log(message);
+        
+        if (this.showNotification) {
+            this.showNotification({
+                type: 'info',
+                message: message,
+                duration: 5000
+            });
+        }
+    }
+    
+    setupFPSTestingHelpers() {
+        // Add global FPS testing functions to window for easy console access
+        window.testFPS = (mode) => {
+            const modes = { 1: 'normal', 2: 'minimal', 3: 'nocap', 4: 'noanimations', 5: 'noloading' };
+            const modeName = modes[mode] || mode;
+            
+            if (!['normal', 'minimal', 'nocap', 'noanimations', 'noloading'].includes(modeName)) {
+                console.log('Invalid mode. Use: testFPS(2) for minimal, testFPS(3) for no cap, etc.');
+                return;
+            }
+            
+            this.setFPSTestMode(modeName);
+            console.log(`✅ FPS Test Mode set to: ${modeName} - Reload to activate`);
+        };
+        
+        window.fpsStats = () => {
+            const stats = this.getFrameTimeStats();
+            console.log(`Current FPS: ${this.fps}`);
+            console.log(`Test Mode: ${this.fpsTestMode}`);
+            
+            if (stats && stats.samples > 0) {
+                console.log(`Frame Stats: ${stats.avg}ms avg (${stats.avgFPS} FPS), ${stats.p50}ms median`);
+            }
+        };
+        
+        console.log('📊 FPS Testing: Use testFPS(2) or Ctrl+Shift+F');
+    }
+    
     
     // ===================================
     // EVENT HANDLERS
     // ===================================
     
     onMouseDown(e) {
+        // In gallery mode, skip node interactions but allow canvas panning
+        const isGalleryMode = this.galleryViewManager && this.galleryViewManager.active;
+        
         // Finish any active text editing
         if (this._editingTextInput) {
             this.finishTextEditing();
@@ -184,6 +589,13 @@ class LGraphCanvas {
 
         // Handle different interaction modes in priority order
         if (this.handlePanMode(e)) return;
+        
+        // In gallery mode, skip node interactions (only allow panning)
+        if (isGalleryMode) {
+            e.preventDefault();
+            return;
+        }
+        
         if (this.handleRotationMode(e)) return;
         if (this.handleResizeMode(e)) return;
         if (this.handleNodeDrag(e)) return;
@@ -194,6 +606,9 @@ class LGraphCanvas {
     }
     
     onMouseMove(e) {
+        // Let normal mouse move handling work even in gallery mode
+        // Gallery mode will skip node interactions in the mouse down handler
+        
         const [x, y] = this.viewport.convertCanvasToOffset(e.clientX, e.clientY);
         this.mouseState.canvas = [x, y];
         this.mouseState.graph = this.viewport.convertOffsetToGraph(x, y);
@@ -248,6 +663,13 @@ class LGraphCanvas {
         // Regular interaction cleanup
         this.finishInteractions();
         
+        // Gallery mode spring-back check
+        if (this.galleryViewManager && this.galleryViewManager.active) {
+            if (this.galleryViewManager.handleMouseUp) {
+                this.galleryViewManager.handleMouseUp(e);
+            }
+        }
+        
         // DISABLED: Undo state is now handled by the OperationPipeline through node_duplicate operations
         // This prevents duplicate undo entries for duplication operations
         // if (this.interactionState.dragging.isDuplication) {
@@ -269,7 +691,7 @@ class LGraphCanvas {
         e.preventDefault();
         
         // Navigation zoom (intentionally NOT synced to other users)
-        const delta = e.deltaY < 0 ? 1 : -1; // Positive for zoom in, negative for zoom out
+        const delta = e.deltaY < 0 ? -1 : 1; // Negative for zoom in (wheel up), positive for zoom out (wheel down)
         const mousePos = this.mouseState.canvas || [0, 0];
         
         // Use the viewport.zoom method to ensure navigation state is saved
@@ -320,6 +742,12 @@ class LGraphCanvas {
                 // Single node selected
                 this.resetRotation(rotationHandle);
             }
+            
+            // Save navigation state after rotation reset
+            if (window.navigationStateManager) {
+                console.log('📍 Saving navigation state after rotation reset');
+                window.navigationStateManager.onViewportChange();
+            }
             return;
         }
         
@@ -367,6 +795,12 @@ class LGraphCanvas {
                 // Single node selected
                 this.resetAspectRatio(resizeHandle);
             }
+            
+            // Save navigation state after aspect ratio reset
+            if (window.navigationStateManager) {
+                console.log('📍 Saving navigation state after aspect ratio reset');
+                window.navigationStateManager.onViewportChange();
+            }
             return;
         }
         
@@ -383,6 +817,17 @@ class LGraphCanvas {
         // Otherwise, check for node double-click
         const node = this.handleDetector.getNodeAtPosition(...this.mouseState.graph, this.graph.nodes);
         if (node) {
+            // Check if this is a media node and we should enter gallery mode
+            if (this.galleryViewManager && (node.type === 'media/image' || node.type === 'media/video')) {
+                // Don't enter gallery mode if we're clicking on the title area
+                if (!this.canEditTitle(node, this.mouseState.graph)) {
+                    // Not clicking on title, enter gallery mode
+                    this.galleryViewManager.enter(node);
+                    return;
+                }
+                // Otherwise, let title editing take precedence
+            }
+            
             // Special handling for video nodes with multi-selection
             if (node.type === 'media/video' && this.selection.size() > 1) {
                 // Toggle the clicked video
@@ -440,6 +885,9 @@ class LGraphCanvas {
     
     onSelectionChanged(selection) {
         this.dirty_canvas = true;
+        
+        // Navigation state only needs to be saved on viewport changes, not selection changes
+        // The selection state is part of the canvas state, not navigation state
     }
     
     onWindowResize() {
@@ -458,13 +906,16 @@ class LGraphCanvas {
         this.canvas.style.width = displayWidth + 'px';
         this.canvas.style.height = displayHeight + 'px';
         
-        // Update viewport DPR
+        // Update viewport DPR and apply transformations
         if (this.viewport) {
             this.viewport.dpr = dpr;
+            // Apply DPI to reset canvas transformations
+            this.viewport.applyDPI();
         }
         
-        // Set canvas to redraw
+        // Force immediate redraw
         this.dirty_canvas = true;
+        this.draw();
     }
     
     // ===================================
@@ -717,9 +1168,8 @@ class LGraphCanvas {
         this.interactionState.dragging.node = draggedDuplicate;
         this.interactionState.dragging.isDuplication = true;  // Mark as duplication drag
         
-        // Force immediate redraw to show any loading states
+        // Force redraw to show any loading states
         this.dirty_canvas = true;
-        requestAnimationFrame(() => this.draw());
         
         // Calculate offsets for all duplicates
         for (const duplicate of duplicates) {
@@ -1178,7 +1628,7 @@ class LGraphCanvas {
         // Canvas pan (navigation - intentionally NOT synced to other users)
         if (this.interactionState.dragging.canvas) {
             this.interactionState.dragging.canvas = false;
-            this.debouncedSave(); // Save viewport state locally only
+            // Navigation state is saved by NavigationStateManager through viewport hooks
         }
         
         // Node drag
@@ -1424,9 +1874,8 @@ class LGraphCanvas {
                             }
                         }
                         
-                        // Force a redraw to ensure any loading states are visible
+                        // Force redraw to ensure any loading states are visible
                         this.dirty_canvas = true;
-                        requestAnimationFrame(() => this.draw());
                         
                     }).catch(error => {
                         console.error('❌ Alt+drag duplicate failed:', error);
@@ -1440,6 +1889,12 @@ class LGraphCanvas {
             }
             
             this.interactionState.dragging.isDuplication = false;
+            
+            // Save navigation state after node drag operations
+            if (wasInteracting && window.navigationStateManager) {
+                console.log('📍 Saving navigation state after node drag');
+                window.navigationStateManager.onViewportChange();
+            }
             
             // For duplication: always create undo state (even without movement)
             // For regular drag: only create undo state if there was interaction
@@ -1488,6 +1943,13 @@ class LGraphCanvas {
             this.interactionState.resizing.nodes.clear();
             this.interactionState.resizing.initial.clear();
             this.interactionState.resizing.initialBBox = null; // Clear initial bbox on finish
+            
+            // Save navigation state after resize operations
+            if (wasInteracting && window.navigationStateManager) {
+                console.log('📍 Saving navigation state after resize');
+                window.navigationStateManager.onViewportChange();
+            }
+            
             // DISABLED: Undo state is now handled by the OperationPipeline through node_resize operations
             // if (wasInteracting) this.pushUndoState();
         }
@@ -1535,6 +1997,13 @@ class LGraphCanvas {
             this.interactionState.rotating.node = null;
             this.interactionState.rotating.nodes.clear();
             this.interactionState.rotating.initial.clear();
+            
+            // Save navigation state after rotation operations
+            if (wasInteracting && window.navigationStateManager) {
+                console.log('📍 Saving navigation state after rotation');
+                window.navigationStateManager.onViewportChange();
+            }
+            
             // DISABLED: Undo state is now handled by the OperationPipeline through node_rotate operations
             // if (wasInteracting) this.pushUndoState();
         }
@@ -1559,10 +2028,23 @@ class LGraphCanvas {
     // ===================================
     
     handleKeyboardShortcut(e) {
+        // Check gallery mode first - it handles its own keyboard events
+        if (this.galleryViewManager && this.galleryViewManager.active) {
+            // Gallery mode handles its own events through its event listener
+            return false;
+        }
+        
         const key = e.key.toLowerCase();
         const ctrl = e.ctrlKey || e.metaKey;
         const shift = e.shiftKey;
         const alt = e.altKey;
+        
+        // FPS Test Mode shortcuts (Ctrl+Shift+F, then number)
+        if (ctrl && shift && key === 'f') {
+            console.log('🧪 FPS Test Menu triggered');
+            this.showFPSTestMenu();
+            return true;
+        }
         
         // Save
         if (ctrl && key === 's') {
@@ -1832,6 +2314,12 @@ class LGraphCanvas {
                     }
                     
                     this.dirty_canvas = true;
+                    
+                    // Save navigation state after paste
+                    if (window.navigationStateManager) {
+                        console.log('📍 Saving navigation state after paste');
+                        window.navigationStateManager.onViewportChange();
+                    }
                 } else {
                     console.warn('⚠️ Paste operation returned no nodes');
                 }
@@ -1960,9 +2448,6 @@ class LGraphCanvas {
                     }
                     
                     this.dirty_canvas = true;
-                    
-                    // Force immediate redraw to show loading states
-                    requestAnimationFrame(() => this.draw());
                 }
             } catch (error) {
                 console.error('Failed to duplicate nodes:', error);
@@ -2129,6 +2614,12 @@ class LGraphCanvas {
                 // The operation pipeline handles the actual deletion and selection clearing
                 // No need to manually remove nodes or clear selection
                 this.dirty_canvas = true;
+                
+                // Save navigation state after deletion
+                if (window.navigationStateManager) {
+                    console.log('📍 Saving navigation state after node deletion');
+                    window.navigationStateManager.onViewportChange();
+                }
             } catch (error) {
                 console.error('Failed to delete nodes:', error);
             }
@@ -2187,22 +2678,14 @@ class LGraphCanvas {
         const centerX = canvasWidth / 2;
         const centerY = canvasHeight / 2;
         
-        // Calculate new scale
-        const currentScale = this.viewport.scale;
-        const newScale = Utils.clamp(
-            currentScale * factor,
-            CONFIG.CANVAS.MIN_SCALE,
-            CONFIG.CANVAS.MAX_SCALE
-        );
+        // Convert factor to delta for viewport.zoom method
+        // factor > 1 means zoom in (negative delta), factor < 1 means zoom out (positive delta)
+        const delta = factor > 1 ? -1 : 1;
         
-        if (newScale !== currentScale) {
-            // Apply zoom centered on canvas
-            const scaleRatio = newScale / currentScale;
-            this.viewport.offset[0] = centerX - (centerX - this.viewport.offset[0]) * scaleRatio;
-            this.viewport.offset[1] = centerY - (centerY - this.viewport.offset[1]) * scaleRatio;
-            this.viewport.scale = newScale;
-            this.dirty_canvas = true;
-        }
+        // Use viewport.zoom() to ensure navigation state is saved through hooks
+        this.viewport.zoom(delta, centerX, centerY);
+        
+        this.dirty_canvas = true;
     }
     
     resetView() {
@@ -2238,18 +2721,24 @@ class LGraphCanvas {
         }
         
         // Reset viewport to standard home position
-        this.viewport.scale = 1.0;
-        const canvasWidth = this.canvas.width / this.viewport.dpr;
-        const canvasHeight = this.canvas.height / this.viewport.dpr;
-        this.viewport.offset = [canvasWidth / 2, canvasHeight / 2];
+        // Use viewport.resetView() if available, otherwise direct modification
+        if (this.viewport.resetView) {
+            this.viewport.resetView();
+        } else {
+            this.viewport.scale = 1.0;
+            const canvasWidth = this.canvas.width / this.viewport.dpr;
+            const canvasHeight = this.canvas.height / this.viewport.dpr;
+            this.viewport.offset = [canvasWidth / 2, canvasHeight / 2];
+        }
         
-        // Trigger navigation state save
+        // Force navigation state save after reset
         if (window.navigationStateManager) {
+            console.log('🔍 Manually triggering navigation state save after resetView');
             window.navigationStateManager.onViewportChange();
         }
         
         this.dirty_canvas = true;
-        this.debouncedSave();
+        // Navigation state is saved by NavigationStateManager.onViewportChange() above
     }
     
     findNodeInDirection(fromNode, direction) {
@@ -3112,6 +3601,8 @@ class LGraphCanvas {
                         resetRotation: false,
                         values: [node.originalAspect]
                     });
+                    // Ensure immediate visual feedback
+                    this.dirty_canvas = true;
                 } else {
                     // Fallback
                     node.aspectRatio = node.originalAspect;
@@ -3142,6 +3633,8 @@ class LGraphCanvas {
                         resetRotation: false,
                         values: originalAspects
                     });
+                    // Ensure immediate visual feedback
+                    this.dirty_canvas = true;
                 } else {
                     // Fallback
                     for (const node of resizeHandle.nodes) {
@@ -3167,6 +3660,8 @@ class LGraphCanvas {
                     resetRotation: true,
                     resetAspectRatio: false
                 });
+                // Ensure immediate visual feedback
+                this.dirty_canvas = true;
             } else {
                 // Fallback
                 rotationHandle.node.rotation = 0;
@@ -3183,6 +3678,8 @@ class LGraphCanvas {
                     resetAspectRatio: false,
                     values: values
                 });
+                // Ensure immediate visual feedback
+                this.dirty_canvas = true;
             } else {
                 // Fallback
                 for (const node of rotationHandle.nodes) {
@@ -3234,6 +3731,9 @@ class LGraphCanvas {
     // DEBOUNCED OPERATIONS
     // ===================================
     
+    // DEPRECATED: Navigation state is now handled by NavigationStateManager
+    // StateManager is disabled in server-authoritative mode
+    /*
     debouncedSave() {
         if (this._saveTimeout) {
             clearTimeout(this._saveTimeout);
@@ -3244,41 +3744,21 @@ class LGraphCanvas {
             }
         }, 500);
     }
+    */
     
     // ===================================
     // RENDERING SYSTEM
     // ===================================
     
-    startRenderLoop() {
-        const render = (timestamp) => {
-            this.updatePerformanceStats(timestamp);
-            
-            // Update alignment animations
-            if (this.alignmentManager) {
-                this.alignmentManager.updateAnimations();
-            }
-            
-            if (this.dirty_canvas) {
-                this.draw();
-                this.dirty_canvas = false;
-            }
-            
-            // Check if any videos are playing or alignment is active
-            const hasActiveVideos = this.graph.nodes.some(node => 
-                node.type === 'media/video' && node.video && !node.video.paused
-            );
-            
-            const hasActiveAlignment = this.alignmentManager && this.alignmentManager.isAnimating();
-            const hasActiveViewportAnimation = this.viewport && this.viewport.isAnimating;
-            
-            if (hasActiveVideos || hasActiveAlignment || hasActiveViewportAnimation) {
-                this.dirty_canvas = true;
-            }
-            
-            requestAnimationFrame(render);
-        };
-        
-        requestAnimationFrame(render);
+    forceRedraw() {
+        // Force redraw on next frame
+        this.dirty_canvas = true;
+        // Don't call draw() directly - let the render loop handle it
+        // This prevents conflicting requestAnimationFrame loops
+    }
+    
+    invalidateVisibilityCache() {
+        this.cachedVisibleNodes = null;
     }
     
     startPreloadLoop() {
@@ -3362,12 +3842,24 @@ class LGraphCanvas {
         // Clear canvas
         ctx.clearRect(0, 0, canvas.width, canvas.height);
         
-        // Draw background
-        ctx.fillStyle = '#222';
+        // Draw background (darker in gallery mode)
+        if (this.galleryViewManager && this.galleryViewManager.active) {
+            ctx.fillStyle = '#111'; // Darker background for gallery mode
+        } else {
+            ctx.fillStyle = '#222'; // Normal background
+        }
         ctx.fillRect(0, 0, canvas.width, canvas.height);
         
-        // Draw grid
-        this.drawGrid(ctx);
+        // Apply gallery mode darkening if active
+        if (this.galleryViewManager && this.galleryViewManager.active) {
+            // Don't apply darkening here - it's handled by the overlay div
+            // This ensures the darkening appears over everything
+        }
+        
+        // Draw grid (skip in gallery mode for cleaner look)
+        if (!this.galleryViewManager || !this.galleryViewManager.active) {
+            this.drawGrid(ctx);
+        }
         
         const gridTime = performance.now();
         
@@ -3376,19 +3868,45 @@ class LGraphCanvas {
         ctx.translate(this.viewport.offset[0], this.viewport.offset[1]);
         ctx.scale(this.viewport.scale, this.viewport.scale);
         
-        // Get visible nodes for performance
-        const visibleNodes = this.viewport.getVisibleNodes(
-            this.graph.nodes, 
-            this.getConfig('PERFORMANCE.VISIBILITY_MARGIN', 200)
-        );
+        // Check if viewport has changed (or if we haven't initialized yet)
+        const viewportChanged = !this.lastViewportState ||
+            this.viewport.offset[0] !== this.lastViewportState.offsetX ||
+            this.viewport.offset[1] !== this.lastViewportState.offsetY ||
+            this.viewport.scale !== this.lastViewportState.scale;
+        
+        // Get visible nodes - use cache if viewport hasn't changed AND node count hasn't changed
+        let visibleNodes;
+        const nodeCountChanged = this.cachedVisibleNodes && 
+            this.cachedVisibleNodes.length !== this.graph.nodes.length;
+            
+        if (viewportChanged || !this.cachedVisibleNodes || nodeCountChanged) {
+            visibleNodes = this.viewport.getVisibleNodes(
+                this.graph.nodes, 
+                this.getConfig('PERFORMANCE.VISIBILITY_MARGIN', 200)
+            );
+            
+            // Update cache
+            this.cachedVisibleNodes = visibleNodes;
+            this.lastViewportState = {
+                offsetX: this.viewport.offset[0],
+                offsetY: this.viewport.offset[1],
+                scale: this.viewport.scale
+            };
+            
+            // Only update node visibility when viewport changes or nodes added/removed
+            this.updateNodeVisibility(visibleNodes);
+        } else {
+            visibleNodes = this.cachedVisibleNodes;
+        }
         
         const cullTime = performance.now();
         
-        // Update node visibility and loading
-        this.updateNodeVisibility(visibleNodes);
-        
         // Draw all visible nodes
         for (const node of visibleNodes) {
+            // In gallery mode, only draw the current node
+            if (this.galleryViewManager && this.galleryViewManager.shouldHideNode(node)) {
+                continue;
+            }
             this.drawNode(ctx, node);
         }
         
@@ -3406,10 +3924,10 @@ class LGraphCanvas {
         
         const totalTime = uiTime - startTime;
         
-        // Log performance if frame takes longer than 16ms (below 60fps)
-        // if (totalTime > 16) {
-        //     console.log(`🐌 Slow frame: ${totalTime.toFixed(1)}ms total (grid: ${(gridTime-startTime).toFixed(1)}ms, cull: ${(cullTime-gridTime).toFixed(1)}ms, nodes: ${(nodesTime-cullTime).toFixed(1)}ms, ui: ${(uiTime-nodesTime).toFixed(1)}ms)`);
-        // }
+        // Performance debugging - enable with window.DEBUG_FPS = true
+        if (window.DEBUG_FPS && totalTime > 8.33) {
+            console.log(`🐌 Slow frame: ${totalTime.toFixed(1)}ms total (grid: ${(gridTime-startTime).toFixed(1)}ms, cull: ${(cullTime-gridTime).toFixed(1)}ms, nodes: ${(nodesTime-cullTime).toFixed(1)}ms, ui: ${(uiTime-nodesTime).toFixed(1)}ms)`);
+        }
     }
     
     drawGrid(ctx) {
@@ -3500,6 +4018,14 @@ class LGraphCanvas {
     drawNode(ctx, node) {
         ctx.save();
         
+        // Apply gallery mode opacity during transitions
+        if (this.galleryViewManager && this.galleryViewManager.active) {
+            const opacity = this.galleryViewManager.getNodeOpacity(node);
+            if (opacity < 1) {
+                ctx.globalAlpha = opacity;
+            }
+        }
+        
         // Use animated position if available (priority order)
         let drawPos = node.pos;
         if (node._gridAnimPos) {
@@ -3530,9 +4056,10 @@ class LGraphCanvas {
             }
         }
         
-        // Draw selection and handles (hide during alignment)
+        // Draw selection and handles (hide during alignment and gallery mode)
         if (this.selection.isSelected(node) && 
-            (!this.alignmentManager || !this.alignmentManager.isActive())) {
+            (!this.alignmentManager || !this.alignmentManager.isActive()) &&
+            (!this.galleryViewManager || this.galleryViewManager.shouldRenderSelectionUI())) {
             this.drawNodeSelection(ctx, node);
         }
         
@@ -3681,6 +4208,11 @@ class LGraphCanvas {
     }
     
     drawOverlays(ctx) {
+        // Skip all overlays in gallery mode
+        if (this.galleryViewManager && !this.galleryViewManager.shouldRenderSelectionUI()) {
+            return;
+        }
+        
         // Draw selection rectangle
         if (this.interactionState.selecting.active) {
             this.drawSelectionRectangle(ctx);
@@ -3796,7 +4328,7 @@ class LGraphCanvas {
         ctx.setTransform(this.viewport.dpr, 0, 0, this.viewport.dpr, 0, 0);
         
         // Position in lower left
-        const statsHeight = 80;
+        const statsHeight = this.fpsTestMode !== 'normal' ? 100 : 80;
         const statsWidth = 160;
         const margin = 10;
         const yPos = (this.canvas.height / this.viewport.dpr) - statsHeight - margin;
@@ -3826,6 +4358,17 @@ class LGraphCanvas {
             `Scale: ${(this.viewport.scale * 100).toFixed(0)}%`,
             `References: ${uniqueCachedAssets}`
         ];
+        
+        // Add test mode indicator if active
+        if (this.fpsTestMode !== 'normal') {
+            stats.push(`TEST: ${this.fpsTestMode}`);
+            
+            // Add frame time stats if available
+            const frameStats = this.getFrameTimeStats();
+            if (frameStats && frameStats.samples > 10) {
+                ctx.fillStyle = '#ff0';  // Yellow for test stats
+            }
+        }
         
         stats.forEach((stat, i) => {
             ctx.fillText(stat, margin + 5, yPos + 15 + i * 14);
@@ -3896,7 +4439,7 @@ class LGraphCanvas {
         this.canvas.removeEventListener('wheel', this.onMouseWheel);
         this.canvas.removeEventListener('dblclick', this.onDoubleClick);
         document.removeEventListener('keydown', this.onKeyDown);
-        window.removeEventListener('resize', this.onWindowResize);
+        window.removeEventListener('resize', this.debouncedResize);
         
         console.log('LGraphCanvas cleaned up');
     }

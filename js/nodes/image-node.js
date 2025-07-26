@@ -19,10 +19,14 @@ class ImageNode extends BaseNode {
         this.thumbnailSizes = [64, 128, 256, 512, 1024, 2048];
         this.aspectRatio = 1;
         this.originalAspect = 1;
+        this.originalWidth = null;
+        this.originalHeight = null;
         this.size = [200, 200];
+        this.aspectRatioLocked = true; // Lock aspect ratio by default
+        this.lockedAspectRatio = 1; // Will be updated when image loads
         
         // Progressive loading state
-        this.loadingState = 'idle'; // idle, loading, loaded, error
+        this.loadingState = 'loading'; // idle, loading, loaded, error - start as loading to show immediate feedback
         this.loadingProgress = 0; // 0-1 for unified progress tracking
     }
     
@@ -84,9 +88,20 @@ class ImageNode extends BaseNode {
         try {
             // Load image with progress tracking
             this.img = await this.loadImageAsyncOptimized(imageSrc);
-            // console.log(`✅ Image loaded for node:${this.id}`);
             this.loadingState = 'loaded';
             // Progress is now handled in loadImageAsyncOptimized
+            
+            // Force immediate redraw to show loaded image
+            const canvas = this.graph?.canvas || window.app?.graphCanvas;
+            if (canvas && canvas.forceRedraw) {
+                canvas.forceRedraw();
+            } else {
+                console.warn(`⚠️ Cannot force redraw - canvas:${!!canvas} forceRedraw:${!!(canvas && canvas.forceRedraw)}`);
+            }
+            
+            // Store native dimensions
+            this.originalWidth = this.img.width || this.img.naturalWidth;
+            this.originalHeight = this.img.height || this.img.naturalHeight;
             
             // Set aspect ratio immediately
             if (this.aspectRatio === 1) {
@@ -95,6 +110,14 @@ class ImageNode extends BaseNode {
                 this.size[0] = this.size[1] * this.aspectRatio;
             } else {
                 this.originalAspect = this.img.width / this.img.height;
+            }
+            
+            // Update locked aspect ratio
+            this.lockedAspectRatio = this.size[0] / this.size[1];
+            
+            // Report load completion to progress tracker
+            if (hash && window.imageProcessingProgress) {
+                window.imageProcessingProgress.updateLoadProgress(hash, 1);
             }
             
             // Use global thumbnail cache - non-blocking and shared!
@@ -120,29 +143,7 @@ class ImageNode extends BaseNode {
             }
             
             this.onResize();
-            this.markDirty();
-            
-            // Force canvas redraw when image loads
-            // Use global app reference as node might not be in graph yet
-            const canvas = this.graph?.canvas || window.app?.graphCanvas;
-            if (canvas) {
-                // console.log(`🎨 Forcing canvas redraw for loaded image node:${this.id}`);
-                
-                // Mark as dirty immediately
-                canvas.dirty_canvas = true;
-                
-                // Force an immediate draw to ensure the image appears
-                // This bypasses the render loop to guarantee immediate visibility
-                if (canvas.draw) {
-                    // console.log(`🖌️ Executing immediate canvas.draw() for node:${this.id}`);
-                    requestAnimationFrame(() => {
-                        canvas.dirty_canvas = true;
-                        canvas.draw();
-                    });
-                }
-            } else {
-                console.warn(`⚠️ No canvas available for redraw - node:${this.id}`);
-            }
+            // markDirty() not needed - forceRedraw() already called above
             
         } catch (error) {
             console.error('Failed to load image:', error);
@@ -155,9 +156,10 @@ class ImageNode extends BaseNode {
         return new Promise((resolve, reject) => {
             const img = new Image();
             img.onload = () => {
-                // Trigger immediate redraw when image loads
-                if (this.graph?.canvas) {
-                    this.graph.canvas.dirty_canvas = true;
+                // Trigger redraw when image loads
+                const canvas = this.graph?.canvas || window.app?.graphCanvas;
+                if (canvas) {
+                    canvas.dirty_canvas = true;
                 }
                 resolve(img);
             };
@@ -254,22 +256,29 @@ class ImageNode extends BaseNode {
                                             URL.revokeObjectURL(blobUrl);
                                             this.loadingProgress = 0.9; // 90% when loaded
                                             
-                                            // Trigger immediate redraw when image loads
-                                            if (this.graph?.canvas) {
-                                                this.graph.canvas.dirty_canvas = true;
+                                            // Trigger redraw when image loads
+                                            const canvas = this.graph?.canvas || window.app?.graphCanvas;
+                                            if (canvas) {
+                                                canvas.dirty_canvas = true;
                                             }
                                             
                                             if (img.decode) {
                                                 img.decode()
                                                     .then(() => {
                                                         this.loadingProgress = 1.0; // 100% when decoded
-                                                        // Trigger redraw after decode
-                                                        if (this.graph?.canvas) {
-                                                            this.graph.canvas.dirty_canvas = true;
+                                                        // Force redraw after decode
+                                                        const canvas = this.graph?.canvas || window.app?.graphCanvas;
+                                                        if (canvas && canvas.forceRedraw) {
+                                                            canvas.forceRedraw();
+                                                        } else if (canvas) {
+                                                            canvas.dirty_canvas = true;
                                                         }
                                                         resolve(img);
                                                     })
-                                                    .catch(() => resolve(img));
+                                                    .catch(() => {
+                                                        this.loadingProgress = 1.0;
+                                                        resolve(img);
+                                                    });
                                             } else {
                                                 this.loadingProgress = 1.0;
                                                 resolve(img);
@@ -300,22 +309,29 @@ class ImageNode extends BaseNode {
                             img.onload = () => {
                                 this.loadingProgress = 0.9;
                                 
-                                // Trigger immediate redraw when image loads
-                                if (this.graph?.canvas) {
-                                    this.graph.canvas.dirty_canvas = true;
+                                // Trigger redraw when image loads
+                                const canvas = this.graph?.canvas || window.app?.graphCanvas;
+                                if (canvas) {
+                                    canvas.dirty_canvas = true;
                                 }
                                 
                                 if (img.decode) {
                                     img.decode()
                                         .then(() => {
                                             this.loadingProgress = 1.0;
-                                            // Trigger redraw after decode
-                                            if (this.graph?.canvas) {
-                                                this.graph.canvas.dirty_canvas = true;
+                                            // Force redraw after decode
+                                            const canvas = this.graph?.canvas || window.app?.graphCanvas;
+                                            if (canvas && canvas.forceRedraw) {
+                                                canvas.forceRedraw();
+                                            } else if (canvas) {
+                                                canvas.dirty_canvas = true;
                                             }
                                             resolve(img);
                                         })
-                                        .catch(() => resolve(img));
+                                        .catch(() => {
+                                            this.loadingProgress = 1.0;
+                                            resolve(img);
+                                        });
                                 } else {
                                     this.loadingProgress = 1.0;
                                     resolve(img);
@@ -329,9 +345,10 @@ class ImageNode extends BaseNode {
                         console.warn('Fetch failed, falling back to regular image loading:', error);
                         img.onload = () => {
                             this.loadingProgress = 1.0;
-                            // Trigger immediate redraw when image loads
-                            if (this.graph?.canvas) {
-                                this.graph.canvas.dirty_canvas = true;
+                            // Trigger redraw when image loads
+                            const canvas = this.graph?.canvas || window.app?.graphCanvas;
+                            if (canvas) {
+                                canvas.dirty_canvas = true;
                             }
                             resolve(img);
                         };
@@ -342,22 +359,29 @@ class ImageNode extends BaseNode {
                 img.onload = () => {
                     this.loadingProgress = 0.9;
                     
-                    // Trigger immediate redraw when image loads
-                    if (this.graph?.canvas) {
-                        this.graph.canvas.dirty_canvas = true;
+                    // Trigger redraw when image loads
+                    const canvas = this.graph?.canvas || window.app?.graphCanvas;
+                    if (canvas) {
+                        canvas.dirty_canvas = true;
                     }
                     
                     if (img.decode) {
                         img.decode()
                             .then(() => {
                                 this.loadingProgress = 1.0;
-                                // Trigger redraw after decode
-                                if (this.graph?.canvas) {
-                                    this.graph.canvas.dirty_canvas = true;
+                                // Force redraw after decode
+                                const canvas = this.graph?.canvas || window.app?.graphCanvas;
+                                if (canvas && canvas.forceRedraw) {
+                                    canvas.forceRedraw();
+                                } else if (canvas) {
+                                    canvas.dirty_canvas = true;
                                 }
                                 resolve(img);
                             })
-                            .catch(() => resolve(img));
+                            .catch(() => {
+                                this.loadingProgress = 1.0;
+                                resolve(img);
+                            });
                     } else {
                         this.loadingProgress = 1.0;
                         resolve(img);
@@ -442,11 +466,16 @@ class ImageNode extends BaseNode {
         
         const centerX = this.size[0] / 2;
         const centerY = this.size[1] / 2;
-        const radius = Math.min(this.size[0], this.size[1]) * 0.15; // 15% of smallest dimension
         
-        // Make line width screen-space aware and thicker
+        // Calculate screen-space consistent line width (4px)
         const scale = this.graph?.canvas?.viewport?.scale || 1;
-        const lineWidth = Math.max(6 / scale, 2); // Thicker line (6px in screen space, min 2px)
+        const lineWidth = 4 / scale;
+        
+        // Calculate radius with screen-space limits
+        const baseRadius = Math.min(this.size[0], this.size[1]) * 0.15; // 15% of smallest dimension
+        const minRadius = 20 / scale;  // 20px minimum in screen space
+        const maxRadius = 100 / scale; // 100px maximum in screen space
+        const radius = Math.max(minRadius, Math.min(baseRadius, maxRadius));
         
         // Draw background ring
         ctx.beginPath();
@@ -480,14 +509,13 @@ class ImageNode extends BaseNode {
         this.validate();
         
         // Auto-start loading if we have a source but haven't started yet
-        if (this.loadingState === 'idle' && (this.properties.serverUrl || this.properties.hash) && !this.img) {
-            console.log(`🎨 Auto-starting load for node:${this.id}`);
+        if ((this.loadingState === 'idle' || this.loadingState === 'loading') && 
+            (this.properties.serverUrl || this.properties.hash) && !this.img) {
             this.setImage(this.properties.serverUrl, this.properties.filename, this.properties.hash);
         }
         
-        // Show loading ring if loading or if we have potential to load
-        if (this.loadingState === 'loading' || 
-            (this.loadingState === 'idle' && (this.properties.serverUrl || this.properties.hash) && !this.img)) {
+        // Show loading ring if loading, or if we're a new node without an image yet
+        if (this.loadingState === 'loading' || (!this.img && this.loadingState !== 'error')) {
             // console.log(`🔄 Drawing loading ring for node:${this.id} state:${this.loadingState}`);
             this.drawProgressRing(ctx, this.loadingProgress);
             return;
@@ -524,7 +552,17 @@ class ImageNode extends BaseNode {
                 // Check if thumbnails exist for this hash
                 if (this.properties.hash && window.thumbnailCache && 
                     !window.thumbnailCache.hasThumbnails(this.properties.hash)) {
+                    // Show loading ring with current progress
                     this.drawProgressRing(ctx, this.loadingProgress);
+                    // But also draw the full image behind it if available
+                    if (this.img) {
+                        ctx.save();
+                        ctx.globalAlpha = 0.3; // Show faded image behind loading ring
+                        ctx.imageSmoothingEnabled = true;
+                        ctx.imageSmoothingQuality = CONFIG.THUMBNAILS.QUALITY;
+                        ctx.drawImage(this.img, 0, 0, this.size[0], this.size[1]);
+                        ctx.restore();
+                    }
                     return;
                 } else {
                     // Fall back to full image if no thumbnails available but image is loaded

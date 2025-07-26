@@ -6,6 +6,11 @@
     <title>ImageCanvas</title>
     <link rel="icon" href="data:,">
     <link rel="stylesheet" href="css/app.css">
+    <style>
+        /* Inline critical styles to prevent white flash */
+        body, html { background-color: #222; margin: 0; padding: 0; }
+        #mycanvas { background-color: #222; }
+    </style>
 </head>
 <body>
     <canvas id="mycanvas"></canvas>
@@ -80,6 +85,7 @@
     <script src="js/core/PersistenceHandler.js"></script>
     <script src="js/core/StateSyncManager.js"></script>
     <script src="js/core/NavigationStateManager.js"></script>
+    <script src="js/core/GalleryViewManager.js"></script>
     <script src="js/core/OperationTracker.js"></script>
     <script src="js/core/BulkOperationManager.js"></script>
     <script src="js/core/BackgroundSyncManager.js"></script>

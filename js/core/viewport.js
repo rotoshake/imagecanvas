@@ -3,8 +3,9 @@
 // ===================================
 
 class ViewportManager {
-    constructor(canvas) {
+    constructor(canvas, graphCanvas = null) {
         this.canvas = canvas;
+        this.graphCanvas = graphCanvas; // Reference to LGraphCanvas instance
         this.offset = [0, 0];
         this.scale = CONFIG.CANVAS.DEFAULT_SCALE;
         this.dpr = window.devicePixelRatio || 1;
@@ -23,6 +24,10 @@ class ViewportManager {
         
         this.setupEventListeners();
         this.validateState();
+    }
+    
+    setGraphCanvas(graphCanvas) {
+        this.graphCanvas = graphCanvas;
     }
     
     setupEventListeners() {
@@ -90,7 +95,7 @@ class ViewportManager {
     }
     
     zoom(delta, centerX, centerY) {
-        const zoomFactor = delta > 0 ? 0.9 : 1.1;
+        const zoomFactor = delta > 0 ? (1 / CONFIG.CANVAS.ZOOM_FACTOR) : CONFIG.CANVAS.ZOOM_FACTOR;
         const newScale = Utils.clamp(
             this.scale * zoomFactor,
             CONFIG.CANVAS.MIN_SCALE,
@@ -182,8 +187,8 @@ class ViewportManager {
             this.validateState();
             
             // Mark canvas as dirty for main render loop
-            if (this.canvas && this.canvas.graphCanvas) {
-                this.canvas.graphCanvas.dirty_canvas = true;
+            if (this.graphCanvas) {
+                this.graphCanvas.dirty_canvas = true;
             }
             
             // Continue or finish animation
@@ -199,7 +204,7 @@ class ViewportManager {
                 this.validateState();
                 
                 // Trigger navigation state save after animation completes
-                if (this.canvas.graphCanvas && window.navigationStateManager) {
+                if (window.navigationStateManager) {
                     window.navigationStateManager.onViewportChange();
                 }
             }

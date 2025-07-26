@@ -5,8 +5,8 @@ class FloatingPropertiesInspector {
         this.isVisible = false;
         this.currentNodes = new Map();
         this.propertyEditors = new Map();
-        this.position = { x: window.innerWidth - 320, y: 100 };
-        this.size = { width: 280, height: 400 };
+        this.position = { x: window.innerWidth - 360, y: 100 };
+        this.size = { width: 320, height: 400 };
         
         // Debounce timers for different property types
         this.debounceTimers = new Map();
@@ -138,6 +138,27 @@ class FloatingPropertiesInspector {
                 flex: 1;
                 overflow-y: auto;
                 padding: 16px;
+                max-height: calc(100vh - 120px);
+                scrollbar-width: thin;
+                scrollbar-color: #444 #2a2a2a;
+            }
+            
+            .inspector-content::-webkit-scrollbar {
+                width: 8px;
+            }
+            
+            .inspector-content::-webkit-scrollbar-track {
+                background: #2a2a2a;
+                border-radius: 4px;
+            }
+            
+            .inspector-content::-webkit-scrollbar-thumb {
+                background: #444;
+                border-radius: 4px;
+            }
+            
+            .inspector-content::-webkit-scrollbar-thumb:hover {
+                background: #555;
             }
 
             .properties-list {
@@ -150,6 +171,7 @@ class FloatingPropertiesInspector {
                 display: flex;
                 flex-direction: column;
                 gap: 8px;
+                padding-bottom: 8px;
             }
 
             .property-group-title {
@@ -172,12 +194,48 @@ class FloatingPropertiesInspector {
                 color: #ccc;
                 font-weight: 500;
             }
+            
+            /* Icon label boxes for draggable controls */
+            .property-label-icon {
+                display: inline-flex;
+                align-items: center;
+                justify-content: center;
+                width: 24px;
+                height: 24px;
+                background: #2a2a2a;
+                border: 1px solid #444;
+                border-radius: 4px;
+                color: #ccc;
+                font-size: 12px;
+                font-weight: 600;
+                cursor: ew-resize;
+                user-select: none;
+                transition: all 0.15s ease;
+                margin-bottom: 4px;
+            }
+            
+            .property-label-icon:hover {
+                background: #333;
+                border-color: #555;
+                color: #fff;
+            }
+            
+            .property-label-icon:active {
+                background: #222;
+                border-color: #0066cc;
+            }
+            
+            .property-label-icon.dragging {
+                background: #0066cc;
+                border-color: #0066cc;
+                color: #fff;
+            }
 
             .property-input {
                 background: #2a2a2a;
                 border: 1px solid #444;
                 border-radius: 4px;
-                padding: 6px 8px;
+                padding: 2px 4px;
                 color: #e0e0e0;
                 font-size: 12px;
                 font-family: inherit;
@@ -256,6 +314,33 @@ class FloatingPropertiesInspector {
 
             .property-row .property-item {
                 flex: 1;
+            }
+            
+            /* Width/Height row styling */
+            .width-height-row {
+                align-items: center;
+            }
+            
+            .size-controls-container {
+                display: flex;
+                gap: 8px;
+                align-items: center;
+                flex: 1;
+            }
+            
+            .size-controls-container .property-item {
+                flex: 1;
+            }
+            
+            .aspect-ratio-lock-container {
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                padding: 0 4px;
+            }
+            
+            .size-reset {
+                align-self: center;
             }
 
             .no-selection {
@@ -372,6 +457,87 @@ class FloatingPropertiesInspector {
             .property-input.transform-input {
                 width: 50px; /* Adjust this value as needed */
             }
+            
+            .property-input.rotation-input {
+                width: 60px; /* Shorter width for rotation */
+            }
+            
+            /* Reset button styling */
+            .property-reset-button {
+                display: inline-flex;
+                align-items: center;
+                justify-content: center;
+                width: 20px;
+                height: 20px;
+                padding: 0;
+                margin-left: 6px;
+                background: transparent;
+                border: 1px solid #444;
+                border-radius: 50%;
+                color: #888;
+                font-size: 12px;
+                cursor: pointer;
+                transition: all 0.15s ease;
+                flex-shrink: 0;
+            }
+            
+            .property-reset-button:hover {
+                background: #333;
+                border-color: #555;
+                color: #ccc;
+            }
+            
+            .property-reset-button:active {
+                background: #222;
+                transform: scale(0.95);
+            }
+            
+            /* Container for input with reset button */
+            .property-input-container {
+                display: flex;
+                align-items: center;
+                gap: 6px;
+            }
+            
+            /* Aspect ratio lock button */
+            .aspect-ratio-lock {
+                display: inline-flex;
+                align-items: center;
+                justify-content: center;
+                width: 24px;
+                height: 24px;
+                padding: 0;
+                background: transparent;
+                border: 1px solid #444;
+                border-radius: 4px;
+                color: #888;
+                font-size: 14px;
+                cursor: pointer;
+                transition: all 0.15s ease;
+                flex-shrink: 0;
+                margin: 0 4px;
+            }
+            
+            .aspect-ratio-lock:hover {
+                background: #333;
+                border-color: #555;
+                color: #ccc;
+            }
+            
+            .aspect-ratio-lock.locked {
+                background: #0066cc;
+                border-color: #0066cc;
+                color: #fff;
+            }
+            
+            .aspect-ratio-lock.locked:hover {
+                background: #0052a3;
+                border-color: #0052a3;
+            }
+            
+            .aspect-ratio-lock:active {
+                transform: scale(0.95);
+            }
 
             /* Title input with visibility toggle */
             .title-input-container {
@@ -406,13 +572,41 @@ class FloatingPropertiesInspector {
                 color: #666;
                 background-color: rgba(255, 255, 255, 0.03);
             }
+            
+            /* Container for icon label + input */
+            .property-input-with-icon {
+                display: flex;
+                align-items: center;
+                gap: 6px;
+            }
+            
+            .property-input-with-icon .property-label-icon {
+                margin-bottom: 0;
+                flex-shrink: 0;
+            }
+            
+            .property-input-with-icon .property-input {
+                flex: 1;
+            }
+            
+            .property-input-with-icon .property-input-container {
+                display: flex;
+                align-items: center;
+                gap: 6px;
+                flex: 1;
+            }
 
             .property-value-text {
                 color: #999;
                 font-size: 12px;
                 font-style: italic;
                 display: inline-block;
-                padding: 6px 0;
+                background: #1a1a1a;
+                border: 1px solid #333;
+                border-radius: 4px;
+                padding: 2px 6px;
+                width: 100%;
+                box-sizing: border-box;
             }
         `;
         document.head.appendChild(style);
@@ -700,7 +894,7 @@ class FloatingPropertiesInspector {
         if (this.currentNodes.size > 1) {
             const info = document.createElement('div');
             info.className = 'multi-selection-info';
-            info.textContent = `${this.currentNodes.size} nodes selected - showing common properties`;
+            info.textContent = `${this.currentNodes.size} nodes selected`;
             contentEl.appendChild(info);
         }
 
@@ -729,6 +923,22 @@ class FloatingPropertiesInspector {
             const nodes = Array.from(this.currentNodes.values());
             const isHidden = nodes.every(node => node.flags?.hide_title);
             this.updateTitleToggleState(this.titleToggleDot, this.titleToggleDot.titleInput, isHidden);
+        }
+        
+        // Update aspect ratio lock button state if it exists
+        if (this.aspectRatioLockBtn && this.currentNodes.size > 0) {
+            const nodes = Array.from(this.currentNodes.values());
+            const allLocked = nodes.length > 0 && nodes.every(node => node.aspectRatioLocked !== false);
+            
+            if (allLocked) {
+                this.aspectRatioLockBtn.classList.add('locked');
+                this.aspectRatioLockBtn.innerHTML = '🔗';
+                this.aspectRatioLockBtn.title = 'Unlock aspect ratio';
+            } else {
+                this.aspectRatioLockBtn.classList.remove('locked');
+                this.aspectRatioLockBtn.innerHTML = '⛓️‍💥';
+                this.aspectRatioLockBtn.title = 'Lock aspect ratio';
+            }
         }
         
         // Update input values without recreating the UI
@@ -839,8 +1049,14 @@ class FloatingPropertiesInspector {
         } else if (firstNode.type === 'image' || firstNode.type === 'media/image') {
             Object.assign(allProperties, {
                 filename: 'readonly',
+                sourceResolution: 'readonly',
                 scale: 'range'
             });
+        }
+        
+        // Add source resolution for video nodes too
+        if (firstNode.type === 'video' || firstNode.type === 'media/video') {
+            allProperties.sourceResolution = 'readonly';
         }
 
         for (const [prop, type] of Object.entries(allProperties)) {
@@ -866,6 +1082,11 @@ class FloatingPropertiesInspector {
             case 'width': return node.size?.[0];
             case 'height': return node.size?.[1];
             case 'filename': return node.properties?.filename;
+            case 'sourceResolution': 
+                if (node.originalWidth && node.originalHeight) {
+                    return `${node.originalWidth} × ${node.originalHeight}`;
+                }
+                return 'Unknown';
             default: return node[prop];
         }
     }
@@ -873,7 +1094,7 @@ class FloatingPropertiesInspector {
     renderPropertyGroups(container, properties) {
         const groups = {
             'Transform': ['x', 'y', 'width', 'height', 'rotation'],
-            'Content': ['filename', 'title', 'text', 'fontSize', 'fontFamily', 'textAlign', 'padding', 'leadingFactor'],
+            'Content': ['filename', 'sourceResolution', 'title', 'text', 'fontSize', 'fontFamily', 'textAlign', 'padding', 'leadingFactor'],
             'Appearance': ['textColor', 'bgColor', 'bgAlpha', 'scale'],
             'Playback': ['loop', 'muted', 'autoplay', 'paused']
         };
@@ -920,8 +1141,38 @@ class FloatingPropertiesInspector {
         const rowEl = document.createElement('div');
         rowEl.className = 'property-row';
         
-        for (const data of propData) {
-            this.renderProperty(rowEl, data.prop, data, true);
+        // Special handling for width/height row
+        if (propData.length === 2 && propData[0].prop === 'width' && propData[1].prop === 'height') {
+            rowEl.classList.add('width-height-row');
+            
+            // Create a container for the width/height inputs and lock button
+            const sizeContainer = document.createElement('div');
+            sizeContainer.className = 'size-controls-container';
+            
+            // Render width
+            this.renderProperty(sizeContainer, propData[0].prop, propData[0], true);
+            
+            // Add aspect ratio lock button between width and height
+            const lockBtnContainer = document.createElement('div');
+            lockBtnContainer.className = 'aspect-ratio-lock-container';
+            const lockBtn = this.createAspectRatioLockButton();
+            lockBtnContainer.appendChild(lockBtn);
+            sizeContainer.appendChild(lockBtnContainer);
+            
+            // Render height
+            this.renderProperty(sizeContainer, propData[1].prop, propData[1], true);
+            
+            rowEl.appendChild(sizeContainer);
+            
+            // Add reset button
+            const resetBtn = this.createResetButton('size');
+            resetBtn.className = 'property-reset-button size-reset';
+            rowEl.appendChild(resetBtn);
+        } else {
+            // Normal row rendering
+            for (const data of propData) {
+                this.renderProperty(rowEl, data.prop, data, true);
+            }
         }
         
         container.appendChild(rowEl);
@@ -931,10 +1182,40 @@ class FloatingPropertiesInspector {
         const itemEl = document.createElement('div');
         itemEl.className = 'property-item';
 
-        const labelEl = document.createElement('div');
-        labelEl.className = 'property-label';
-        labelEl.textContent = this.formatPropertyLabel(prop);
-        itemEl.appendChild(labelEl);
+        // Create container for icon + input for transform properties
+        if (['x', 'y', 'width', 'height', 'rotation'].includes(prop)) {
+            const inputContainer = document.createElement('div');
+            inputContainer.className = 'property-input-with-icon';
+            
+            const iconLabel = this.createIconLabel(prop);
+            inputContainer.appendChild(iconLabel);
+            
+            // Create the input and add it to the container
+            if (prop === 'rotation') {
+                const rotationContainer = document.createElement('div');
+                rotationContainer.className = 'property-input-container';
+                
+                const inputEl = this.createPropertyInput(prop, propData);
+                rotationContainer.appendChild(inputEl);
+                
+                const resetBtn = this.createResetButton('rotation');
+                rotationContainer.appendChild(resetBtn);
+                
+                inputContainer.appendChild(rotationContainer);
+            } else {
+                const inputEl = this.createPropertyInput(prop, propData);
+                inputContainer.appendChild(inputEl);
+            }
+            
+            itemEl.appendChild(inputContainer);
+            container.appendChild(itemEl);
+            return; // Skip the rest of the method
+        } else {
+            const labelEl = document.createElement('div');
+            labelEl.className = 'property-label';
+            labelEl.textContent = this.formatPropertyLabel(prop);
+            itemEl.appendChild(labelEl);
+        }
 
         if (prop === 'title') {
             // Special handling for title with visibility toggle
@@ -1078,6 +1359,8 @@ class FloatingPropertiesInspector {
         // Add specific class for transform properties
         if (prop === 'x' || prop === 'y' || prop === 'width' || prop === 'height') {
             input.classList.add('transform-input');
+        } else if (prop === 'rotation') {
+            input.classList.add('rotation-input');
         }
         
         // Format position values to show decimals
@@ -1265,6 +1548,170 @@ class FloatingPropertiesInspector {
         
         return span;
     }
+    
+    createResetButton(resetType) {
+        const button = document.createElement('button');
+        button.className = 'property-reset-button';
+        button.innerHTML = '↻'; // Circular arrow icon
+        
+        // Update title based on reset type
+        if (resetType === 'size') {
+            button.title = 'Reset aspect ratio';
+        } else {
+            button.title = `Reset ${resetType}`;
+        }
+        
+        button.addEventListener('click', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            this.handleReset(resetType);
+        });
+        
+        return button;
+    }
+    
+    createAspectRatioLockButton() {
+        const button = document.createElement('button');
+        button.className = 'aspect-ratio-lock';
+        
+        // Check if all selected nodes have aspect ratio locked
+        const nodes = Array.from(this.currentNodes.values());
+        const allLocked = nodes.length > 0 && nodes.every(node => node.aspectRatioLocked !== false);
+        
+        if (allLocked) {
+            button.classList.add('locked');
+        }
+        
+        // Set icon - chain link (locked) or broken chain (unlocked)
+        button.innerHTML = allLocked ? '🔗' : '⛓️‍💥';
+        button.title = allLocked ? 'Unlock aspect ratio' : 'Lock aspect ratio';
+        
+        button.addEventListener('click', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            this.toggleAspectRatioLock();
+        });
+        
+        // Store reference for updates
+        this.aspectRatioLockBtn = button;
+        
+        return button;
+    }
+    
+    createIconLabel(prop) {
+        const label = document.createElement('div');
+        label.className = 'property-label-icon';
+        
+        // Set icon based on property
+        const icons = {
+            x: 'X',
+            y: 'Y',
+            width: '↔',
+            height: '↕',
+            rotation: '↻'
+        };
+        
+        label.textContent = icons[prop] || prop.toUpperCase();
+        label.title = this.formatPropertyLabel(prop);
+        
+        // Add drag functionality
+        let isDragging = false;
+        let startX = 0;
+        let initialNodeValues = new Map(); // Store initial values per node
+        let lastCommittedDelta = 0;
+        
+        label.addEventListener('mousedown', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            
+            isDragging = true;
+            startX = e.clientX;
+            lastCommittedDelta = 0;
+            label.classList.add('dragging');
+            
+            // Store initial values for all selected nodes
+            initialNodeValues.clear();
+            Array.from(this.currentNodes.values()).forEach(node => {
+                const value = this.getNodeProperty(node, prop);
+                if (value !== undefined) {
+                    initialNodeValues.set(node.id, value);
+                }
+            });
+            
+            document.addEventListener('mousemove', onMouseMove);
+            document.addEventListener('mouseup', onMouseUp);
+        });
+        
+        const onMouseMove = (e) => {
+            if (!isDragging) return;
+            
+            const deltaX = e.clientX - startX;
+            let sensitivity = 1;
+            
+            // Different sensitivities for different properties
+            if (prop === 'rotation') {
+                sensitivity = 0.5; // Slower for rotation
+            } else if (prop === 'x' || prop === 'y') {
+                sensitivity = 0.5; // Slower for position
+            }
+            
+            // Hold shift for fine control
+            if (e.shiftKey) {
+                sensitivity *= 0.1;
+            }
+            
+            const delta = deltaX * sensitivity;
+            
+            // Only update if delta has changed significantly
+            if (Math.abs(delta - lastCommittedDelta) < 0.5) {
+                return;
+            }
+            
+            lastCommittedDelta = delta;
+            
+            // Apply relative change to all selected nodes
+            const nodes = Array.from(this.currentNodes.values());
+            const nodeIds = [];
+            const newValues = [];
+            
+            nodes.forEach(node => {
+                const initialValue = initialNodeValues.get(node.id);
+                if (initialValue === undefined) return;
+                
+                let newValue = initialValue + delta;
+                
+                // Apply constraints
+                if (prop === 'width' || prop === 'height') {
+                    newValue = Math.max(50, newValue); // Minimum size
+                } else if (prop === 'rotation') {
+                    // Keep rotation in -360 to 360 range
+                    newValue = ((newValue % 360) + 360) % 360;
+                    if (newValue > 180) newValue -= 360;
+                }
+                
+                nodeIds.push(node.id);
+                newValues.push(newValue);
+            });
+            
+            // Commit the change in real-time
+            if (nodeIds.length > 0) {
+                this.executeRelativePropertyUpdate(prop, nodeIds, newValues);
+            }
+        };
+        
+        const onMouseUp = (e) => {
+            if (!isDragging) return;
+            
+            isDragging = false;
+            label.classList.remove('dragging');
+            initialNodeValues.clear();
+            
+            document.removeEventListener('mousemove', onMouseMove);
+            document.removeEventListener('mouseup', onMouseUp);
+        };
+        
+        return label;
+    }
 
     formatPropertyLabel(prop) {
         const labels = {
@@ -1275,6 +1722,7 @@ class FloatingPropertiesInspector {
             rotation: 'Rotation',
             title: 'Title',
             filename: 'Source File',
+            sourceResolution: 'Source Resolution',
             text: 'Text',
             fontSize: 'Font Size',
             fontFamily: 'Font Family',
@@ -1305,6 +1753,91 @@ class FloatingPropertiesInspector {
             this.debounceTimers.delete(timerKey);
             this.executeNodePropertyUpdate(prop, value);
         }, this.debounceDelay));
+    }
+    
+    executeRelativePropertyUpdate(prop, nodeIds, values) {
+        // Access operation pipeline from global app object
+        if (!window.app?.operationPipeline) {
+            console.warn('Operation pipeline not available');
+            return;
+        }
+        
+        // Get nodes by ID
+        const nodes = nodeIds.map((id, index) => ({
+            id: id,
+            node: this.currentNodes.get(id),
+            value: values[index]
+        })).filter(item => item.node);
+        
+        if (nodes.length === 0) return;
+        
+        // Handle different property types
+        if (prop === 'x' || prop === 'y') {
+            // Position update
+            const positions = nodes.map(item => {
+                const pos = [...item.node.pos];
+                if (prop === 'x') pos[0] = item.value;
+                else pos[1] = item.value;
+                return pos;
+            });
+            
+            if (nodeIds.length === 1) {
+                window.app.operationPipeline.execute('node_move', {
+                    nodeId: nodeIds[0],
+                    position: positions[0]
+                });
+            } else {
+                window.app.operationPipeline.execute('node_move', {
+                    nodeIds: nodeIds,
+                    positions: positions
+                });
+            }
+        } else if (prop === 'width' || prop === 'height') {
+            // Size update
+            const sizes = nodes.map(item => {
+                const size = [...item.node.size];
+                
+                // Check if aspect ratio is locked
+                const isUILocked = this.aspectRatioLockBtn && this.aspectRatioLockBtn.classList.contains('locked');
+                
+                if (isUILocked && item.node.aspectRatioLocked !== false) {
+                    const aspectRatio = item.node.lockedAspectRatio || (item.node.size[0] / item.node.size[1]);
+                    
+                    if (prop === 'width') {
+                        size[0] = item.value;
+                        size[1] = item.value / aspectRatio;
+                    } else {
+                        size[1] = item.value;
+                        size[0] = item.value * aspectRatio;
+                    }
+                    
+                    // Ensure both dimensions meet minimum size
+                    if (size[0] < 50 || size[1] < 50) {
+                        const scale = Math.max(50 / size[0], 50 / size[1]);
+                        size[0] *= scale;
+                        size[1] *= scale;
+                    }
+                } else {
+                    if (prop === 'width') size[0] = item.value;
+                    else size[1] = item.value;
+                }
+                
+                return size;
+            });
+            
+            window.app.operationPipeline.execute('node_resize', {
+                nodeIds: nodeIds,
+                sizes: sizes
+            });
+        } else if (prop === 'rotation') {
+            // Rotation update
+            nodes.forEach((item, index) => {
+                window.app.operationPipeline.execute('node_rotate', {
+                    nodeId: item.id,
+                    angle: values[index]
+                });
+            });
+        }
     }
     
     executeNodePropertyUpdate(prop, value) {
@@ -1357,8 +1890,34 @@ class FloatingPropertiesInspector {
                 // Ensure minimum size of 50px
                 const validatedValue = Math.max(50, value);
                 
-                if (prop === 'width') newSize[0] = validatedValue;
-                else newSize[1] = validatedValue;
+                // Check if aspect ratio is locked
+                // Important: When multi-selecting, the UI shows unlocked if ANY node is unlocked
+                // So we need to check the actual button state, not just the node property
+                const isUILocked = this.aspectRatioLockBtn && this.aspectRatioLockBtn.classList.contains('locked');
+                
+                if (isUILocked && node.aspectRatioLocked !== false) {
+                    // Use the locked aspect ratio (which is the ratio at the time of locking)
+                    const aspectRatio = node.lockedAspectRatio || (node.size[0] / node.size[1]);
+                    
+                    if (prop === 'width') {
+                        newSize[0] = validatedValue;
+                        newSize[1] = validatedValue / aspectRatio;
+                    } else {
+                        newSize[1] = validatedValue;
+                        newSize[0] = validatedValue * aspectRatio;
+                    }
+                    
+                    // Ensure both dimensions meet minimum size
+                    if (newSize[0] < 50 || newSize[1] < 50) {
+                        const scale = Math.max(50 / newSize[0], 50 / newSize[1]);
+                        newSize[0] *= scale;
+                        newSize[1] *= scale;
+                    }
+                } else {
+                    // Normal resize without aspect ratio lock - set exact dimensions
+                    if (prop === 'width') newSize[0] = validatedValue;
+                    else newSize[1] = validatedValue;
+                }
                 
                 nodeIds.push(node.id);
                 sizes.push(newSize);
@@ -1559,6 +2118,93 @@ class FloatingPropertiesInspector {
             node.size[1] = value;
         } else {
             node[prop] = value;
+        }
+    }
+    
+    handleReset(resetType) {
+        // Access operation pipeline from global app object
+        if (!window.app?.operationPipeline) {
+            console.warn('Operation pipeline not available');
+            return;
+        }
+        
+        const nodes = Array.from(this.currentNodes.values());
+        if (nodes.length === 0) return;
+        
+        const nodeIds = nodes.map(node => node.id);
+        
+        if (resetType === 'size') {
+            // Reset aspect ratio and enable lock
+            // First, reset to original aspect ratio
+            window.app.operationPipeline.execute('node_reset', {
+                nodeIds: nodeIds,
+                resetAspectRatio: true
+            });
+            
+            // Then enable aspect ratio lock for all nodes
+            nodes.forEach(node => {
+                node.aspectRatioLocked = true;
+                // Update locked aspect ratio
+                if (node.originalAspect) {
+                    node.lockedAspectRatio = node.originalAspect;
+                } else {
+                    node.lockedAspectRatio = node.size[0] / node.size[1];
+                }
+            });
+            
+            // Update the lock button to show locked state
+            if (this.aspectRatioLockBtn) {
+                this.aspectRatioLockBtn.classList.add('locked');
+                this.aspectRatioLockBtn.innerHTML = '🔗';
+                this.aspectRatioLockBtn.title = 'Unlock aspect ratio';
+            }
+            
+            // Mark canvas dirty for visual update
+            if (window.app?.graphCanvas) {
+                window.app.graphCanvas.dirty_canvas = true;
+            }
+        } else if (resetType === 'rotation') {
+            // Reset rotation to 0
+            window.app.operationPipeline.execute('node_reset', {
+                nodeIds: nodeIds,
+                resetRotation: true
+            });
+        }
+    }
+    
+    toggleAspectRatioLock() {
+        const nodes = Array.from(this.currentNodes.values());
+        if (nodes.length === 0) return;
+        
+        // Check current state - if any node is unlocked, we'll lock all
+        const shouldLock = nodes.some(node => node.aspectRatioLocked === false);
+        
+        // Update all selected nodes
+        nodes.forEach(node => {
+            node.aspectRatioLocked = shouldLock;
+            
+            // Always store current aspect ratio when locking (not original)
+            if (shouldLock && node.size) {
+                node.lockedAspectRatio = node.size[0] / node.size[1];
+            }
+        });
+        
+        // Update button state
+        if (this.aspectRatioLockBtn) {
+            if (shouldLock) {
+                this.aspectRatioLockBtn.classList.add('locked');
+                this.aspectRatioLockBtn.innerHTML = '🔗';
+                this.aspectRatioLockBtn.title = 'Unlock aspect ratio';
+            } else {
+                this.aspectRatioLockBtn.classList.remove('locked');
+                this.aspectRatioLockBtn.innerHTML = '⛓️‍💥';
+                this.aspectRatioLockBtn.title = 'Lock aspect ratio';
+            }
+        }
+        
+        // Save state for persistence
+        if (window.app?.graphCanvas) {
+            window.app.graphCanvas.dirty_canvas = true;
         }
     }
 

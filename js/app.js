@@ -56,6 +56,9 @@ class ImageCanvasApp {
             console.log('Image Canvas App initialized successfully');
             this.logControls();
             
+            // Setup FPS testing helpers
+            this.setupFPSTestingHelpers();
+            
         } catch (error) {
             console.error('Failed to initialize app:', error);
         }
@@ -279,6 +282,419 @@ class ImageCanvasApp {
         `;
         document.head.appendChild(style);
     }
+    
+    setupFPSTestingHelpers() {
+        // Add global FPS testing functions to window for easy console access
+        window.testFPS = (mode) => {
+            const canvas = this.graphCanvas;
+            if (!canvas) {
+                console.error('Canvas not ready');
+                return;
+            }
+            
+            const modes = { 1: 'normal', 2: 'minimal', 3: 'nocap', 4: 'noanimations', 5: 'noloading' };
+            const modeName = modes[mode] || mode;
+            
+            if (!['normal', 'minimal', 'nocap', 'noanimations', 'noloading'].includes(modeName)) {
+                console.log('❌ Invalid mode. Use:');
+                console.log('  testFPS(1) - Normal');
+                console.log('  testFPS(2) - Minimal (raw performance)');
+                console.log('  testFPS(3) - No FPS cap');
+                console.log('  testFPS(4) - No animations');
+                console.log('  testFPS(5) - No loading checks');
+                return;
+            }
+            
+            canvas.setFPSTestMode(modeName);
+            console.log(`✅ FPS Test Mode set to: ${modeName}`);
+            console.log('⚠️  Reload the page: location.reload()');
+        };
+        
+        window.fpsStats = () => {
+            const canvas = this.graphCanvas;
+            if (!canvas) {
+                console.error('Canvas not ready');
+                return;
+            }
+            
+            const stats = canvas.getFrameTimeStats();
+            console.log(`📊 Current FPS: ${canvas.fps}`);
+            console.log(`🧪 Test Mode: ${canvas.fpsTestMode}`);
+            
+            if (stats && stats.samples > 0) {
+                console.log(`⏱️  Frame Times: ${stats.avg}ms avg (${stats.avgFPS} FPS), ${stats.p50}ms median`);
+            } else {
+                console.log('⏱️  No frame time data yet (wait a few seconds in test mode)');
+            }
+        };
+        
+        // Test with limited nodes to find performance curve
+        window.testNodes = (maxNodes = 5) => {
+            const canvas = this.graphCanvas;
+            if (!canvas) {
+                console.error('Canvas not ready');
+                return;
+            }
+            
+            console.log(`🧪 Testing with max ${maxNodes} nodes...`);
+            
+            // Store original nodes
+            const originalNodes = canvas.graph.nodes;
+            
+            // Limit to maxNodes
+            canvas.graph.nodes = originalNodes.slice(0, maxNodes);
+            
+            // Monitor FPS for 5 seconds
+            setTimeout(() => {
+                console.log(`📊 FPS with ${maxNodes} nodes: ${canvas.fps}`);
+                
+                // Restore original nodes
+                canvas.graph.nodes = originalNodes;
+                canvas.dirty_canvas = true;
+                
+                console.log('✅ Node count restored');
+            }, 5000);
+            
+            canvas.dirty_canvas = true;
+        };
+        
+        // Profile what's slow in the draw method
+        window.profileDraw = () => {
+            const canvas = this.graphCanvas;
+            if (!canvas) {
+                console.error('Canvas not ready');
+                return;
+            }
+            
+            console.log('🔍 Profiling draw performance for 10 seconds...');
+            console.log('👆 Drag a node around to see active rendering performance');
+            
+            const originalDraw = canvas.draw;
+            const timings = {
+                grid: [],
+                culling: [],
+                nodes: [],
+                ui: [],
+                total: []
+            };
+            
+            canvas.draw = function() {
+                if (!this.ctx) return;
+                
+                const startTime = performance.now();
+                const ctx = this.ctx;
+                const canvas = this.canvas;
+                
+                // Clear canvas
+                ctx.clearRect(0, 0, canvas.width, canvas.height);
+                
+                // Background
+                if (this.galleryViewManager && this.galleryViewManager.active) {
+                    ctx.fillStyle = '#111';
+                } else {
+                    ctx.fillStyle = '#222';
+                }
+                ctx.fillRect(0, 0, canvas.width, canvas.height);
+                
+                // Draw grid
+                const gridStart = performance.now();
+                if (!this.galleryViewManager || !this.galleryViewManager.active) {
+                    this.drawGrid(ctx);
+                }
+                const gridTime = performance.now() - gridStart;
+                
+                // Viewport transformation
+                ctx.save();
+                ctx.translate(this.viewport.offset[0], this.viewport.offset[1]);
+                ctx.scale(this.viewport.scale, this.viewport.scale);
+                
+                // Culling
+                const cullStart = performance.now();
+                const viewportChanged = !this.lastViewportState ||
+                    this.viewport.offset[0] !== this.lastViewportState.offsetX ||
+                    this.viewport.offset[1] !== this.lastViewportState.offsetY ||
+                    this.viewport.scale !== this.lastViewportState.scale;
+                
+                let visibleNodes;
+                const nodeCountChanged = this.cachedVisibleNodes && 
+                    this.cachedVisibleNodes.length !== this.graph.nodes.length;
+                    
+                if (viewportChanged || !this.cachedVisibleNodes || nodeCountChanged) {
+                    visibleNodes = this.viewport.getVisibleNodes(
+                        this.graph.nodes, 
+                        this.getConfig('PERFORMANCE.VISIBILITY_MARGIN', 200)
+                    );
+                    this.cachedVisibleNodes = visibleNodes;
+                    this.lastViewportState = {
+                        offsetX: this.viewport.offset[0],
+                        offsetY: this.viewport.offset[1],
+                        scale: this.viewport.scale
+                    };
+                    this.updateNodeVisibility(visibleNodes);
+                } else {
+                    visibleNodes = this.cachedVisibleNodes;
+                }
+                const cullTime = performance.now() - cullStart;
+                
+                // Draw nodes
+                const nodesStart = performance.now();
+                for (const node of visibleNodes) {
+                    if (this.galleryViewManager && this.galleryViewManager.shouldHideNode(node)) {
+                        continue;
+                    }
+                    this.drawNode(ctx, node);
+                }
+                const nodesTime = performance.now() - nodesStart;
+                
+                ctx.restore();
+                
+                // UI overlays
+                const uiStart = performance.now();
+                this.drawOverlays(ctx);
+                this.drawStats(ctx);
+                const uiTime = performance.now() - uiStart;
+                
+                const totalTime = performance.now() - startTime;
+                
+                // Collect timing data
+                timings.grid.push(gridTime);
+                timings.culling.push(cullTime);
+                timings.nodes.push(nodesTime);
+                timings.ui.push(uiTime);
+                timings.total.push(totalTime);
+                
+                // Log slow frames
+                if (totalTime > 8.33) {
+                    console.log(`🐌 Slow frame: ${totalTime.toFixed(1)}ms (grid: ${gridTime.toFixed(1)}ms, cull: ${cullTime.toFixed(1)}ms, nodes: ${nodesTime.toFixed(1)}ms, ui: ${uiTime.toFixed(1)}ms)`);
+                }
+            };
+            
+            // Restore and show results after 10 seconds
+            setTimeout(() => {
+                canvas.draw = originalDraw;
+                
+                if (timings.total.length === 0) {
+                    console.log('❌ No frames rendered during profiling - try dragging a node');
+                    return;
+                }
+                
+                const avg = (arr) => arr.reduce((a, b) => a + b, 0) / arr.length;
+                const max = (arr) => Math.max(...arr);
+                
+                console.log('📊 Draw Performance Results:');
+                console.log(`Frames analyzed: ${timings.total.length}`);
+                console.log(`Total time - avg: ${avg(timings.total).toFixed(2)}ms, max: ${max(timings.total).toFixed(2)}ms`);
+                console.log(`Grid - avg: ${avg(timings.grid).toFixed(2)}ms, max: ${max(timings.grid).toFixed(2)}ms`);
+                console.log(`Culling - avg: ${avg(timings.culling).toFixed(2)}ms, max: ${max(timings.culling).toFixed(2)}ms`);
+                console.log(`Nodes - avg: ${avg(timings.nodes).toFixed(2)}ms, max: ${max(timings.nodes).toFixed(2)}ms`);
+                console.log(`UI - avg: ${avg(timings.ui).toFixed(2)}ms, max: ${max(timings.ui).toFixed(2)}ms`);
+                console.log(`Theoretical max FPS: ${(1000 / avg(timings.total)).toFixed(1)}`);
+            }, 10000);
+        };
+        
+        // Debug what's causing continuous renders
+        window.debugRedraws = () => {
+            const canvas = this.graphCanvas;
+            if (!canvas) {
+                console.error('Canvas not ready');
+                return;
+            }
+            
+            console.log('🔍 Checking render loop state...');
+            console.log(`Current FPS: ${canvas.fps}`);
+            console.log(`Dirty canvas: ${canvas.dirty_canvas}`);
+            console.log(`Animation system active: ${canvas.animationSystem?.animations?.size || 0} animations`);
+            console.log(`Viewport animating: ${canvas.viewport?.isAnimating || false}`);
+            console.log(`Alignment active: ${canvas.alignmentManager?.isAnimating() || false}`);
+            
+            const videoCount = canvas.graph.nodes.filter(n => 
+                n.type === 'media/video' && n.video && !n.video.paused
+            ).length;
+            console.log(`Playing videos: ${videoCount}`);
+            
+            const loadingCount = canvas.graph.nodes.filter(n => 
+                n.loadingState === 'loading'
+            ).length;
+            console.log(`Loading nodes: ${loadingCount}`);
+            
+            // Check if the render loop is actually running at 73 FPS
+            let frameCount = 0;
+            const startTime = performance.now();
+            
+            const originalDraw = canvas.draw;
+            canvas.draw = function() {
+                frameCount++;
+                if (frameCount % 20 === 0) { // Log every 20th frame
+                    const elapsed = (performance.now() - startTime) / 1000;
+                    const currentFPS = frameCount / elapsed;
+                    console.log(`🎯 Draw called ${frameCount} times, effective FPS: ${currentFPS.toFixed(1)}`);
+                }
+                return originalDraw.call(this);
+            };
+            
+            // Restore after 5 seconds
+            setTimeout(() => {
+                canvas.draw = originalDraw;
+                const elapsed = (performance.now() - startTime) / 1000;
+                const avgFPS = frameCount / elapsed;
+                console.log(`✅ Debug complete: ${frameCount} draws in ${elapsed.toFixed(1)}s = ${avgFPS.toFixed(1)} FPS`);
+            }, 5000);
+        };
+        
+        // Immediate minimal test (no reload needed)
+        window.testMinimal = () => {
+            const canvas = this.graphCanvas;
+            if (!canvas) {
+                console.error('Canvas not ready');
+                return;
+            }
+            
+            console.log('🧪 Switching to minimal mode immediately...');
+            canvas.setFPSTestMode('minimal');
+            
+            // Wait 3 seconds then show stats
+            setTimeout(() => {
+                console.log('📊 Minimal mode stats:');
+                const stats = canvas.getFrameTimeStats();
+                console.log(`Current FPS: ${canvas.fps}`);
+                if (stats && stats.samples > 0) {
+                    console.log(`Frame Times: ${stats.avg}ms avg (${stats.avgFPS} FPS)`);
+                }
+            }, 3000);
+        };
+        
+        // Quick test function that creates a simple animation to verify FPS capability
+        window.testRawFPS = () => {
+            console.log('🧪 Testing raw animation FPS...');
+            
+            // Create a simple test canvas
+            const testCanvas = document.createElement('canvas');
+            testCanvas.width = 400;
+            testCanvas.height = 300;
+            testCanvas.style.position = 'fixed';
+            testCanvas.style.top = '10px';
+            testCanvas.style.right = '10px';
+            testCanvas.style.zIndex = '10000';
+            testCanvas.style.border = '2px solid #4af';
+            testCanvas.style.background = '#000';
+            document.body.appendChild(testCanvas);
+            
+            const ctx = testCanvas.getContext('2d');
+            let frameCount = 0;
+            let lastTime = performance.now();
+            let testFPS = 0;
+            
+            let x = 50, y = 50, vx = 3, vy = 2;
+            
+            const animate = (currentTime) => {
+                frameCount++;
+                
+                if (currentTime - lastTime >= 1000) {
+                    testFPS = frameCount;
+                    frameCount = 0;
+                    lastTime = currentTime;
+                    console.log(`🚀 Raw animation FPS: ${testFPS}`);
+                }
+                
+                // Clear and draw
+                ctx.fillStyle = '#000';
+                ctx.fillRect(0, 0, 400, 300);
+                
+                // Update position
+                x += vx;
+                y += vy;
+                if (x <= 0 || x >= 380) vx = -vx;
+                if (y <= 0 || y >= 280) vy = -vy;
+                
+                // Draw box
+                ctx.fillStyle = '#4af';
+                ctx.fillRect(x, y, 20, 20);
+                
+                // Draw FPS
+                ctx.fillStyle = '#fff';
+                ctx.font = '14px monospace';
+                ctx.fillText(`Raw FPS: ${testFPS}`, 10, 25);
+                
+                requestAnimationFrame(animate);
+            };
+            
+            requestAnimationFrame(animate);
+            
+            // Remove after 10 seconds
+            setTimeout(() => {
+                document.body.removeChild(testCanvas);
+                console.log('✅ Raw FPS test completed');
+            }, 10000);
+        };
+        
+        // Debug FPS limiting
+        window.debugFPSLimit = () => {
+            const canvas = this.graphCanvas;
+            if (!canvas) {
+                console.error('Canvas not ready');
+                return;
+            }
+            
+            console.log('🔍 Debugging FPS limiting for 5 seconds...');
+            console.log('👆 Drag a node around while this runs');
+            
+            // Check the target frame time
+            const targetFPS = window.CONFIG?.PERFORMANCE?.MAX_FPS || 120;
+            const targetFrameTime = 1000 / targetFPS;
+            console.log(`Target FPS: ${targetFPS}, Target frame time: ${targetFrameTime.toFixed(2)}ms`);
+            
+            let frameCount = 0;
+            let skippedFrames = 0;
+            let totalWaitTime = 0;
+            
+            // Hook into the render loop to see timing
+            const originalRequestAnimationFrame = window.requestAnimationFrame;
+            window.requestAnimationFrame = function(callback) {
+                return originalRequestAnimationFrame.call(window, function(timestamp) {
+                    frameCount++;
+                    
+                    // Log timing occasionally
+                    if (frameCount % 60 === 0) {
+                        console.log(`📊 Frame ${frameCount}, skipped: ${skippedFrames}, avg wait: ${(totalWaitTime/frameCount).toFixed(2)}ms`);
+                    }
+                    
+                    return callback(timestamp);
+                });
+            };
+            
+            setTimeout(() => {
+                window.requestAnimationFrame = originalRequestAnimationFrame;
+                console.log(`✅ Debug complete: ${frameCount} total frames, ${skippedFrames} skipped`);
+                console.log(`Effective FPS: ${(frameCount / 5).toFixed(1)}`);
+            }, 5000);
+        };
+        
+        // Quick test for FPS limiting bug
+        window.testFPSLimiting = () => {
+            console.log('🧪 Testing FPS limiting bug...');
+            
+            // Enable FPS limit debugging
+            window.DEBUG_FPS_LIMIT = true;
+            
+            // Switch back to normal mode (with FPS limiting)
+            const canvas = this.graphCanvas;
+            canvas.setFPSTestMode('normal');
+            
+            console.log('👆 Drag a node around and watch frame timing in console');
+            console.log('Look for frames being skipped when they shouldn\'t be');
+            
+            setTimeout(() => {
+                window.DEBUG_FPS_LIMIT = false;
+                console.log('✅ FPS limiting test complete');
+            }, 10000);
+        };
+        
+        console.log('🚀 FPS Testing Ready! Commands:');
+        console.log('  testFPSLimiting() - Test FPS limiting bug (drag while running)');
+        console.log('  profileDraw()  - Profile draw performance');
+        console.log('  testMinimal()  - Test minimal mode (200+ FPS)');
+        console.log('  fpsStats()     - Show current stats');
+    }
 }
 
 // ===================================
@@ -326,6 +742,14 @@ class NodeFactory {
             if (options.size) node.size = [...options.size];
             if (options.properties) {
                 Object.assign(node.properties, options.properties);
+                
+                // Handle special properties that should be stored directly on the node
+                if (options.properties.originalWidth !== undefined) {
+                    node.originalWidth = options.properties.originalWidth;
+                }
+                if (options.properties.originalHeight !== undefined) {
+                    node.originalHeight = options.properties.originalHeight;
+                }
             }
             if (options.flags) {
                 Object.assign(node.flags, options.flags);
@@ -409,6 +833,11 @@ async function initApp() {
         app.navigationStateManager = new NavigationStateManager(app);
         window.navigationStateManager = app.navigationStateManager;
         
+        // Initialize Gallery View Manager
+        app.galleryViewManager = new GalleryViewManager(app);
+        window.galleryViewManager = app.galleryViewManager;
+        app.graphCanvas.galleryViewManager = app.galleryViewManager;
+        
         // Load last canvas or create default
         // Use more robust initialization that doesn't strictly depend on collaborative architecture
         setTimeout(() => {
@@ -445,6 +874,12 @@ async function initApp() {
                     // Initialize NavigationStateManager if available
                     if (app.navigationStateManager) {
                         app.navigationStateManager.initialize();
+                    }
+                    
+                    // Ensure extended commands are registered
+                    if (app.operationPipeline && app.operationPipeline.registerExtendedCommands) {
+                        console.log('📝 Ensuring extended commands are registered...');
+                        app.operationPipeline.registerExtendedCommands();
                     }
                     
                     // Load startup canvas

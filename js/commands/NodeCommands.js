@@ -270,8 +270,8 @@ class CreateNodeCommand extends Command {
         
         // Handle media nodes
         if (node.type === 'media/image') {
-            // Set loading state immediately for visual feedback
-            node.loadingState = 'loading';
+            // Loading state is already set in ImageNode constructor
+            // Just ensure progress is at 0
             node.loadingProgress = 0;
             
             // Check if we have a local data URL that needs uploading
@@ -482,14 +482,20 @@ class CreateNodeCommand extends Command {
                 });
             }
         } else if (node.type === 'media/video' && this.params.videoData) {
+            // Add to graph BEFORE setVideo so user sees it immediately
+            graph.add(node);
+            
+            // Force immediate canvas redraw to show loading state
+            if (graph.canvas) {
+                graph.canvas.dirty_canvas = true;
+                requestAnimationFrame(() => graph.canvas.draw());
+            }
+            
             await node.setVideo(
                 this.params.videoData.src,
                 this.params.videoData.filename,
                 this.params.videoData.hash
             );
-            
-            // Add to graph
-            graph.add(node);
             
             // Store for undo
             this.undoData = { nodeId: node.id };

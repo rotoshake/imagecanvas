@@ -21,6 +21,7 @@ class VideoNode extends BaseNode {
         this.thumbnailSizes = CONFIG.THUMBNAILS.SIZES;
         this.userPaused = false;  // Keep for backward compatibility
         this.loadingProgress = 0; // 0-1 for unified progress tracking
+        this.loadingState = 'loading'; // Start as loading to show immediate feedback
     }
     
     async setVideo(src, filename = null, hash = null) {
@@ -39,6 +40,16 @@ class VideoNode extends BaseNode {
             this.video = await this.loadVideoAsync(src);
             this.loadingState = 'loaded';
             
+            // Force immediate redraw to show loaded video
+            const canvas = this.graph?.canvas || window.app?.graphCanvas;
+            if (canvas && canvas.forceRedraw) {
+                canvas.forceRedraw();
+            }
+            
+            // Store original dimensions
+            this.originalWidth = this.video.videoWidth;
+            this.originalHeight = this.video.videoHeight;
+            
             // Set aspect ratio only if not previously set
             if (this.aspectRatio === 1) {
                 this.aspectRatio = this.video.videoWidth / this.video.videoHeight;
@@ -46,6 +57,11 @@ class VideoNode extends BaseNode {
                 this.size[0] = this.size[1] * this.aspectRatio;
             } else {
                 this.originalAspect = this.video.videoWidth / this.video.videoHeight;
+            }
+            
+            // Update locked aspect ratio if using default lock
+            if (this.aspectRatioLocked !== false) {
+                this.lockedAspectRatio = this.size[0] / this.size[1];
             }
             
             // Use global thumbnail cache - non-blocking and shared!
@@ -158,7 +174,8 @@ class VideoNode extends BaseNode {
     onDrawForeground(ctx) {
         this.validate();
         
-        if (this.loadingState === 'loading' || this.loadingState === 'idle') {
+        // Show loading ring if loading, or if we're a new node without a video yet
+        if (this.loadingState === 'loading' || (!this.video && this.loadingState !== 'error')) {
             this.drawProgressRing(ctx, this.loadingProgress);
             return;
         }
@@ -187,7 +204,17 @@ class VideoNode extends BaseNode {
                     // Show progress if thumbnails are still generating
                     if (this.properties.hash && window.thumbnailCache && 
                         !window.thumbnailCache.hasThumbnails(this.properties.hash)) {
+                        // Show loading ring with current progress
                         this.drawProgressRing(ctx, this.loadingProgress);
+                        // But also draw the video frame behind it if available
+                        if (this.video && this.video.readyState >= 2) {
+                            ctx.save();
+                            ctx.globalAlpha = 0.3; // Show faded video behind loading ring
+                            ctx.imageSmoothingEnabled = true;
+                            ctx.imageSmoothingQuality = CONFIG.THUMBNAILS.QUALITY;
+                            ctx.drawImage(this.video, 0, 0, this.size[0], this.size[1]);
+                            ctx.restore();
+                        }
                         return;
                     } else {
                         // Fallback to video if thumbnail not available

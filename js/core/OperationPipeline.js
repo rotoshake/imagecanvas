@@ -27,6 +27,7 @@ class OperationPipeline {
         this.registerBuiltinCommands();
         
         console.log('🚀 OperationPipeline initialized');
+        console.log('📝 Registered commands:', Array.from(this.commandRegistry.keys()));
     }
     
     /**
@@ -47,31 +48,52 @@ class OperationPipeline {
             this.registerCommand('node_property_update', UpdateNodePropertyCommand);
         }
         
-        // Extended node commands
-        if (typeof ResizeNodeCommand !== 'undefined') {
-            this.registerCommand('node_resize', ResizeNodeCommand);
-        }
-        if (typeof ResetNodeCommand !== 'undefined') {
-            this.registerCommand('node_reset', ResetNodeCommand);
-        }
-        if (typeof RotateNodeCommand !== 'undefined') {
-            this.registerCommand('node_rotate', RotateNodeCommand);
-        }
-        if (typeof VideoToggleCommand !== 'undefined') {
-            this.registerCommand('video_toggle', VideoToggleCommand);
-        }
-        if (typeof BatchPropertyUpdateCommand !== 'undefined') {
-            this.registerCommand('node_batch_property_update', BatchPropertyUpdateCommand);
-        }
-        if (typeof DuplicateNodesCommand !== 'undefined') {
-            this.registerCommand('node_duplicate', DuplicateNodesCommand);
-        }
-        if (typeof PasteNodesCommand !== 'undefined') {
-            this.registerCommand('node_paste', PasteNodesCommand);
-        }
+        // Try to register extended commands if available
+        this.registerExtendedCommands();
+        
         if (typeof ImageUploadCompleteCommand !== 'undefined') {
             this.registerCommand('image_upload_complete', ImageUploadCompleteCommand);
         }
+    }
+    
+    /**
+     * Register extended node commands - can be called later if not available during init
+     */
+    registerExtendedCommands() {
+        console.log('🔍 Checking for NodeCommandsExtended...', typeof window.NodeCommandsExtended);
+        if (typeof window.NodeCommandsExtended !== 'undefined') {
+            console.log('✅ Found NodeCommandsExtended with:', Object.keys(window.NodeCommandsExtended));
+            const { ResizeNodeCommand, ResetNodeCommand, RotateNodeCommand, VideoToggleCommand } = window.NodeCommandsExtended;
+            
+            if (ResizeNodeCommand && !this.commandRegistry.has('node_resize')) {
+                this.registerCommand('node_resize', ResizeNodeCommand);
+            }
+            if (ResetNodeCommand && !this.commandRegistry.has('node_reset')) {
+                this.registerCommand('node_reset', ResetNodeCommand);
+            }
+            if (RotateNodeCommand && !this.commandRegistry.has('node_rotate')) {
+                this.registerCommand('node_rotate', RotateNodeCommand);
+            }
+            if (VideoToggleCommand && !this.commandRegistry.has('video_toggle')) {
+                this.registerCommand('video_toggle', VideoToggleCommand);
+            }
+            
+            const { BatchPropertyUpdateCommand, DuplicateNodesCommand, PasteNodesCommand } = window.NodeCommandsExtended;
+            
+            if (BatchPropertyUpdateCommand && !this.commandRegistry.has('node_batch_property_update')) {
+                this.registerCommand('node_batch_property_update', BatchPropertyUpdateCommand);
+            }
+            if (DuplicateNodesCommand && !this.commandRegistry.has('node_duplicate')) {
+                this.registerCommand('node_duplicate', DuplicateNodesCommand);
+            }
+            if (PasteNodesCommand && !this.commandRegistry.has('node_paste')) {
+                this.registerCommand('node_paste', PasteNodesCommand);
+            }
+            
+            console.log('✅ Extended node commands registered');
+            return true;
+        }
+        return false;
     }
     
     /**
@@ -86,8 +108,17 @@ class OperationPipeline {
      * Create a command instance
      */
     createCommand(type, params, origin = 'local') {
-        const CommandClass = this.commandRegistry.get(type);
+        let CommandClass = this.commandRegistry.get(type);
+        
+        // If command not found, try registering extended commands as a fallback
+        if (!CommandClass && (type === 'node_resize' || type === 'node_rotate' || type === 'node_reset')) {
+            console.warn(`⚠️ Command ${type} not found, attempting to register extended commands...`);
+            this.registerExtendedCommands();
+            CommandClass = this.commandRegistry.get(type);
+        }
+        
         if (!CommandClass) {
+            console.error('❌ Available commands:', Array.from(this.commandRegistry.keys()));
             throw new Error(`Unknown command type: ${type}`);
         }
         
@@ -211,6 +242,38 @@ class OperationPipeline {
             if (this.shouldUseStateSync(command) && !options.skipBroadcast) {
                 // Route through StateSyncManager for server-authoritative execution
                 console.log('🔄 Using server-authoritative state sync');
+                
+                // For certain UI operations, execute locally first for immediate feedback
+                const optimisticOperations = ['node_reset', 'node_rotate'];
+                if (optimisticOperations.includes(command.type)) {
+                    console.log('⚡ Executing optimistic update for immediate feedback');
+                    const context = {
+                        app: this.app,
+                        graph: this.app.graph,
+                        canvas: this.app.graphCanvas
+                    };
+                    
+                    // Execute locally for immediate visual feedback
+                    try {
+                        await command.execute(context);
+                        
+                        // Mark affected nodes as having optimistic updates to prevent server overwrites
+                        const nodeIds = this.extractNodeIds(command);
+                        nodeIds.forEach(nodeId => {
+                            const node = this.app.graph.getNodeById(nodeId);
+                            if (node) {
+                                node._optimisticUpdate = {
+                                    operationId: command.id,
+                                    timestamp: Date.now(),
+                                    type: command.type
+                                };
+                            }
+                        });
+                    } catch (error) {
+                        console.error('Optimistic update failed:', error);
+                        // Continue with server sync anyway
+                    }
+                }
                 
                 // Let transaction manager process the operation
                 if (this.app.transactionManager) {

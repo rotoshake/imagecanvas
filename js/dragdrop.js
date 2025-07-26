@@ -203,9 +203,11 @@ class DragDropManager {
                 
                 const nodeData = await this.createNodeFromFile(file, dropPos, i * cascadeOffset, batchId, uploadedImages);
                 if (nodeData) {
-                    // Update the batch with the actual hash
+                    // Don't mark load as complete yet - let the image node do it when actually loaded
+                    // This ensures thumbnail progress is tracked properly
                     if (batchId && nodeData.properties.hash) {
-                        window.imageProcessingProgress?.updateLoadProgress(nodeData.properties.hash, 1);
+                        // Just update to show we're starting to load (50% progress)
+                        window.imageProcessingProgress?.updateLoadProgress(nodeData.properties.hash, 0.5);
                     }
                     if (window.app?.operationPipeline) {
                         try {
@@ -244,6 +246,14 @@ class DragDropManager {
                                 const createdNode = result.result.node;
                                 newNodes.push(createdNode);
                                 console.log(`✅ ${nodeData.type} node created via OperationPipeline, ID:`, createdNode.id);
+                                
+                                // Force immediate redraw to show loading state
+                                if (this.graph.canvas) {
+                                    this.graph.canvas.forceRedraw?.() || (() => {
+                                        this.graph.canvas.dirty_canvas = true;
+                                        this.graph.canvas.draw();
+                                    })();
+                                }
                                 
                                 // For images, the CreateNodeCommand will handle background upload
                                 // No need for additional sync operations here
@@ -288,8 +298,10 @@ class DragDropManager {
                                 
                                 // Force immediate redraw to show loading state
                                 if (this.graph.canvas) {
-                                    this.graph.canvas.dirty_canvas = true;
-                                    requestAnimationFrame(() => this.graph.canvas.draw());
+                                    this.graph.canvas.forceRedraw?.() || (() => {
+                                        this.graph.canvas.dirty_canvas = true;
+                                        this.graph.canvas.draw();
+                                    })();
                                 }
                                 
                                 // Mark for later sync when connection improves
@@ -323,8 +335,10 @@ class DragDropManager {
                             
                             // Force immediate redraw to show loading state
                             if (this.graph.canvas) {
-                                this.graph.canvas.dirty_canvas = true;
-                                requestAnimationFrame(() => this.graph.canvas.draw());
+                                this.graph.canvas.forceRedraw?.() || (() => {
+                                    this.graph.canvas.dirty_canvas = true;
+                                    this.graph.canvas.draw();
+                                })();
                             }
                         }
                     }
@@ -390,15 +404,31 @@ class DragDropManager {
         // Pre-load media to get correct dimensions
         let size = [200, 200]; // Default fallback
         let aspectRatio = undefined; // Let it use natural aspect ratio
+        let nativeWidth = null;
+        let nativeHeight = null;
         
         if (!isVideo) {
             // For images, pre-load to get dimensions
             try {
                 const img = await this.loadImageForDimensions(dataURL);
                 if (img.naturalWidth && img.naturalHeight) {
-                    const aspect = img.naturalWidth / img.naturalHeight;
-                    // Keep height at 200, adjust width for aspect ratio
-                    size = [200 * aspect, 200];
+                    nativeWidth = img.naturalWidth;
+                    nativeHeight = img.naturalHeight;
+                    const aspect = nativeWidth / nativeHeight;
+                    
+                    // Check import mode from config
+                    const importMode = window.CONFIG?.IMPORT?.IMAGE_IMPORT_MODE || 'fit';
+                    const fitSize = window.CONFIG?.IMPORT?.FIT_SIZE || 200;
+                    
+                    if (importMode === 'native') {
+                        // Use native dimensions
+                        size = [nativeWidth, nativeHeight];
+                        console.log(`📐 Importing at native resolution: ${nativeWidth}x${nativeHeight}`);
+                    } else {
+                        // Fit to specified height (default behavior)
+                        size = [fitSize * aspect, fitSize];
+                        console.log(`📐 Importing fitted to height ${fitSize}: ${size[0]}x${size[1]}`);
+                    }
                 }
             } catch (error) {
                 console.warn('Failed to pre-load image dimensions:', error);
@@ -418,6 +448,12 @@ class DragDropManager {
             fileSize: file.size,
             mimeType: file.type
         };
+        
+        // Add native dimensions if we have them
+        if (nativeWidth && nativeHeight) {
+            properties.originalWidth = nativeWidth;
+            properties.originalHeight = nativeHeight;
+        }
         
         // Add server URL if we have a successful pre-upload
         if (uploadResult && !uploadResult.error) {

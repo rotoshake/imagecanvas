@@ -15,7 +15,7 @@ class NavigationStateManager {
         this.canvasNavigator = app.canvasNavigator;
         this.debounceTimer = null;
         this.lastSavedState = null;
-        this.saveDelay = 300; // 300ms debounce
+        this.saveDelay = 200; // 200ms debounce for better performance
         this.isRestoring = false; // Flag to prevent saving while restoring
         this.pendingRestore = null; // Track if we have a pending restore
         
@@ -45,6 +45,9 @@ class NavigationStateManager {
         // Hook into canvas switching
         this.setupCanvasSwitchListeners();
         
+        // Hook into drag end events
+        this.setupDragEndListeners();
+        
         console.log('📍 Navigation state manager ready');
     }
 
@@ -58,27 +61,44 @@ class NavigationStateManager {
             return;
         }
 
+        console.log('📍 Setting up viewport listeners...', {
+            hasViewport: !!this.canvas.viewport,
+            hasZoom: !!this.canvas.viewport.zoom,
+            viewportType: this.canvas.viewport.constructor.name
+        });
+
+        // Check if already hooked to prevent double-hooking
+        if (this.canvas.viewport._navigationHooked) {
+            console.warn('📍 Viewport already hooked by NavigationStateManager, skipping');
+            return;
+        }
+
         // Hook into existing viewport methods
         const originalZoom = this.canvas.viewport.zoom.bind(this.canvas.viewport);
         this.canvas.viewport.zoom = (...args) => {
-            console.log('📍 NavigationStateManager: viewport.zoom hook called with args:', args);
             const result = originalZoom(...args);
-            console.log('📍 NavigationStateManager: triggering onViewportChange after viewport.zoom');
             this.onViewportChange();
             return result;
         };
+        
+        // Mark as hooked
+        this.canvas.viewport._navigationHooked = true;
 
         const originalPan = this.canvas.viewport.pan.bind(this.canvas.viewport);
         this.canvas.viewport.pan = (...args) => {
             const result = originalPan(...args);
-            this.onViewportChange();
+            // Don't save during active dragging - wait for mouse up
+            if (!this.canvas.interactionState?.dragging?.canvas) {
+                this.onViewportChange();
+            }
             return result;
         };
 
         const originalZoomToFit = this.canvas.viewport.zoomToFit.bind(this.canvas.viewport);
         this.canvas.viewport.zoomToFit = (...args) => {
             const result = originalZoomToFit(...args);
-            this.onViewportChange();
+            // Don't call onViewportChange here - viewport's animateTo will handle it
+            // when the animation completes (see viewport.js line 202-204)
             return result;
         };
 
@@ -97,13 +117,10 @@ class NavigationStateManager {
         if (this.canvas.keyboardZoom) {
             const originalKeyboardZoom = this.canvas.keyboardZoom.bind(this.canvas);
             this.canvas.keyboardZoom = (...args) => {
-                console.log('📍 NavigationStateManager: keyboardZoom hook called with args:', args);
                 const result = originalKeyboardZoom(...args);
-                console.log('📍 NavigationStateManager: triggering onViewportChange after keyboardZoom');
                 this.onViewportChange();
                 return result;
             };
-            console.log('📍 NavigationStateManager: keyboardZoom hook installed');
         }
 
         console.log('📍 Viewport listeners established');
@@ -192,6 +209,35 @@ class NavigationStateManager {
     }
 
     /**
+     * Setup listeners for drag end events
+     */
+    setupDragEndListeners() {
+        if (!this.canvas.finishInteractions) {
+            console.warn('📍 finishInteractions not available');
+            return;
+        }
+
+        // Hook into finishInteractions which is called on mouse up
+        const originalFinishInteractions = this.canvas.finishInteractions.bind(this.canvas);
+        this.canvas.finishInteractions = () => {
+            const wasDraggingCanvas = this.canvas.interactionState?.dragging?.canvas;
+            
+            // Call original method
+            const result = originalFinishInteractions();
+            
+            // If we were dragging the canvas, save navigation state now
+            if (wasDraggingCanvas) {
+                console.log('📍 Canvas drag ended, saving navigation state');
+                this.onViewportChange();
+            }
+            
+            return result;
+        };
+
+        console.log('📍 Drag end listeners established');
+    }
+
+    /**
      * Called when viewport changes (pan/zoom)
      */
     onViewportChange() {
@@ -201,13 +247,11 @@ class NavigationStateManager {
             return;
         }
         
-        console.log('📍 NavigationStateManager: onViewportChange called');
-        const state = this.getCurrentNavigationState();
-        console.log('📍 Current viewport state:', state);
-        
-        // Log stack trace to see what triggered this change
-        if (state) {
-            console.log('📍 Viewport change triggered from:', new Error().stack.split('\n').slice(2, 5).join('\n'));
+        // Only log in debug mode
+        if (window.DEBUG_NAVIGATION) {
+            console.log('📍 NavigationStateManager: onViewportChange called');
+            const state = this.getCurrentNavigationState();
+            console.log('📍 Current viewport state:', state);
         }
         
         // Save to local cache immediately
@@ -304,7 +348,6 @@ class NavigationStateManager {
             const key = `navigation_state_${currentCanvasId}`;
             // Use localStorage instead of sessionStorage for persistence across reloads
             localStorage.setItem(key, JSON.stringify(state));
-            console.log('📍 Saved to local cache:', key, state);
         } catch (error) {
             console.error('📍 Failed to save to local cache:', error);
         }

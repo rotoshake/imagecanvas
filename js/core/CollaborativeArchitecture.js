@@ -152,6 +152,11 @@ class CollaborativeArchitecture {
      * Register custom commands
      */
     registerCustomCommands() {
+        // Ensure extended commands are registered
+        if (this.operationPipeline && this.operationPipeline.registerExtendedCommands) {
+            this.operationPipeline.registerExtendedCommands();
+        }
+        
         // Example: Register video toggle command
         class VideoToggleCommand extends Command {
             constructor(params, origin = 'local') {

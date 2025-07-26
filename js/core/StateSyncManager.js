@@ -332,6 +332,17 @@ class StateSyncManager {
             return;
         }
         
+        // Clear optimistic update flags for nodes updated by this operation
+        if (operationId && changes?.updated) {
+            changes.updated.forEach(nodeData => {
+                const node = this.app.graph.getNodeById(nodeData.id);
+                if (node && node._optimisticUpdate && node._optimisticUpdate.operationId === operationId) {
+                    console.log(`✅ Clearing optimistic update flag for node ${node.id} - server confirmed`);
+                    delete node._optimisticUpdate;
+                }
+            });
+        }
+        
         // For large updates, queue if we're already processing
         const isLargeUpdate = (changes?.added?.length > 20 || changes?.updated?.length > 20 || changes?.removed?.length > 20);
         
@@ -709,6 +720,19 @@ class StateSyncManager {
      * Update node from server data
      */
     updateNodeFromData(node, nodeData) {
+        // Check if this node has a recent optimistic update that should be preserved
+        if (node._optimisticUpdate) {
+            const age = Date.now() - node._optimisticUpdate.timestamp;
+            // Skip server updates for recent optimistic updates (within 2 seconds)
+            if (age < 2000) {
+                console.log(`⏭️ Skipping server update for node ${node.id} due to recent optimistic ${node._optimisticUpdate.type} update`);
+                return;
+            } else {
+                // Clear old optimistic update flag
+                delete node._optimisticUpdate;
+            }
+        }
+        
         // Update position and size together for rotated nodes
         const hasPositionUpdate = nodeData.pos && (
             Math.abs(node.pos[0] - nodeData.pos[0]) > 0.1 || 

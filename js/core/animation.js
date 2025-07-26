@@ -10,26 +10,26 @@ class AnimationSystem {
     }
     
     start() {
-        if (this.running) return;
         this.running = true;
-        this.lastTime = performance.now();
-        this.animate();
     }
     
     stop() {
         this.running = false;
     }
     
-    animate(currentTime = performance.now()) {
-        if (!this.running) return;
+    // Called by main render loop with deltaTime
+    updateAnimations(deltaTime) {
+        if (!this.running) return false;
         
-        const deltaTime = Math.min(currentTime - this.lastTime, 16.67); // Cap at 60fps
-        this.lastTime = currentTime;
+        // Cap delta time to prevent large jumps (8.33ms = 120 FPS capability)
+        const cappedDeltaTime = Math.min(deltaTime, 8.33);
         
         const toRemove = [];
+        let hasActiveAnimations = false;
         
         for (const [id, animation] of this.animations) {
-            const finished = this.updateAnimation(animation, deltaTime);
+            hasActiveAnimations = true;
+            const finished = this.updateAnimation(animation, cappedDeltaTime);
             if (finished) {
                 toRemove.push(id);
                 if (animation.onComplete) {
@@ -40,7 +40,8 @@ class AnimationSystem {
         
         toRemove.forEach(id => this.animations.delete(id));
         
-        requestAnimationFrame((time) => this.animate(time));
+        // Return true if there are still active animations (need continued updates)
+        return hasActiveAnimations && this.animations.size > 0;
     }
     
     updateAnimation(animation, deltaTime) {

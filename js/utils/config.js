@@ -42,10 +42,11 @@ const CONFIG = {
     CANVAS: {
         DEFAULT_SCALE: 1.0,
         MIN_SCALE: 0.05,
-        MAX_SCALE: 10.0,
+        MAX_SCALE: 20.0,
         GRID_SIZE: 20,
         MIN_GRID_SCALE: 0.5,
-        AUTO_SAVE_INTERVAL: 5000 // 5 seconds backup save
+        AUTO_SAVE_INTERVAL: 5000, // 5 seconds backup save
+        ZOOM_FACTOR: 1.2 // How much to zoom per scroll step (was 1.1, now 1.2 for faster zoom)
     },
     
     PERFORMANCE: {
@@ -89,6 +90,11 @@ const CONFIG = {
     THUMBNAILS: {
         SIZES: [64, 128, 256, 512],
         QUALITY: 'high'
+    },
+    
+    IMPORT: {
+        IMAGE_IMPORT_MODE: 'fit', // 'native' or 'fit'
+        FIT_SIZE: 200 // Height in pixels when using 'fit' mode
     }
 };
 

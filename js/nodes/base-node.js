@@ -124,11 +124,16 @@ class BaseNode {
         
         const centerX = this.size[0] / 2;
         const centerY = this.size[1] / 2;
-        const radius = Math.min(this.size[0], this.size[1]) * 0.15; // 15% of smallest dimension
         
-        // Make line width screen-space aware
+        // Calculate screen-space consistent line width (4px)
         const scale = this.graph?.canvas?.viewport?.scale || 1;
-        const lineWidth = 3 / scale; // Consistent thickness regardless of zoom
+        const lineWidth = 4 / scale;
+        
+        // Calculate radius with screen-space limits
+        const baseRadius = Math.min(this.size[0], this.size[1]) * 0.15; // 15% of smallest dimension
+        const minRadius = 20 / scale;  // 20px minimum in screen space
+        const maxRadius = 100 / scale; // 100px maximum in screen space
+        const radius = Math.max(minRadius, Math.min(baseRadius, maxRadius));
         
         // Draw background ring
         ctx.beginPath();

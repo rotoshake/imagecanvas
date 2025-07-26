@@ -2,6 +2,9 @@
  * Extended node commands for all operations
  */
 
+console.log('📄 NodeCommandsExtended.js loading...');
+console.log('🔍 Command base class available?', typeof Command);
+
 class ResizeNodeCommand extends Command {
     constructor(params, origin = 'local') {
         super('node_resize', params, origin);
@@ -91,6 +94,12 @@ class ResizeNodeCommand extends Command {
             // Update aspect ratio to match the new size
             // This preserves non-uniform scaling from remote clients
             node.aspectRatio = node.size[0] / node.size[1];
+            
+            // If aspect ratio is locked, update the locked ratio to the new one
+            // This ensures property panel edits maintain the new ratio after handle resizing
+            if (node.aspectRatioLocked !== false) {
+                node.lockedAspectRatio = node.size[0] / node.size[1];
+            }
             
             // Don't call onResize() for collaborative operations to preserve exact sizing
             // onResize() can interfere with non-uniform scaling by enforcing aspect ratios
@@ -652,6 +661,7 @@ class BatchPropertyUpdateCommand extends Command {
         
         this.executed = true;
         return { success: true };
+        }  // This was the missing closing brace
     }
     
     async undo(context) {
@@ -1190,13 +1200,26 @@ class PasteNodesCommand extends Command {
 
 // Register extended commands
 if (typeof window !== 'undefined') {
-    window.NodeCommandsExtended = {
-        ResizeNodeCommand,
-        ResetNodeCommand,
-        RotateNodeCommand,
-        VideoToggleCommand,
-        BatchPropertyUpdateCommand,
-        DuplicateNodesCommand,
-        PasteNodesCommand
-    };
+    try {
+        // Check if all classes are defined
+        const classes = {
+            ResizeNodeCommand: typeof ResizeNodeCommand !== 'undefined' ? ResizeNodeCommand : null,
+            ResetNodeCommand: typeof ResetNodeCommand !== 'undefined' ? ResetNodeCommand : null,
+            RotateNodeCommand: typeof RotateNodeCommand !== 'undefined' ? RotateNodeCommand : null,
+            VideoToggleCommand: typeof VideoToggleCommand !== 'undefined' ? VideoToggleCommand : null,
+            BatchPropertyUpdateCommand: typeof BatchPropertyUpdateCommand !== 'undefined' ? BatchPropertyUpdateCommand : null,
+            DuplicateNodesCommand: typeof DuplicateNodesCommand !== 'undefined' ? DuplicateNodesCommand : null,
+            PasteNodesCommand: typeof PasteNodesCommand !== 'undefined' ? PasteNodesCommand : null
+        };
+        
+        // Log which classes are available
+        console.log('🔍 Available command classes:', Object.entries(classes).filter(([k,v]) => v !== null).map(([k]) => k));
+        console.log('❌ Missing command classes:', Object.entries(classes).filter(([k,v]) => v === null).map(([k]) => k));
+        
+        window.NodeCommandsExtended = classes;
+        console.log('✅ NodeCommandsExtended registered to window');
+    } catch (error) {
+        console.error('❌ Failed to register NodeCommandsExtended:', error);
+        console.error('Stack:', error.stack);
+    }
 }
