@@ -674,7 +674,7 @@ class StateSyncManager {
         node.rotation = nodeData.rotation || 0;
         node.flags = { ...nodeData.flags };
         if (nodeData.title !== node.title) {
-            console.log(`🔄 Server updating title: "${node.title}" → "${nodeData.title}" for node ${nodeData.id}`);
+            // console.log(`🔄 Server updating title: "${node.title}" → "${nodeData.title}" for node ${nodeData.id}`);
         }
         node.title = nodeData.title;
         
@@ -698,11 +698,11 @@ class StateSyncManager {
             );
             
             // Log what we're creating
-            console.log(`🖼️ Creating image node ${node.id} with references:`, {
-                hash: nodeData.properties.hash?.substring(0, 8),
-                hasServerUrl: !!nodeData.properties.serverUrl,
-                filename: nodeData.properties.filename
-            });
+            // console.log(`🖼️ Creating image node ${node.id} with references:`, {
+            //     hash: nodeData.properties.hash?.substring(0, 8),
+            //     hasServerUrl: !!nodeData.properties.serverUrl,
+            //     filename: nodeData.properties.filename
+            // });
             
         } else if (node.type === 'media/video' && nodeData.properties.src) {
             // Don't await so loading state is visible

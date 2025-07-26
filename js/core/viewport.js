@@ -156,6 +156,32 @@ class ViewportManager {
         }
     }
     
+    panToCenter(graphX, graphY, animate = true) {
+        // Calculate target offset to center the given graph coordinates
+        const canvasWidth = this.canvas.width / this.dpr;
+        const canvasHeight = this.canvas.height / this.dpr;
+        
+        const targetOffsetX = canvasWidth / 2 - graphX * this.scale;
+        const targetOffsetY = canvasHeight / 2 - graphY * this.scale;
+        
+        if (animate && CONFIG.NAVIGATION.ENABLE_ANIMATION) {
+            this.animateTo(
+                [targetOffsetX, targetOffsetY],
+                this.scale, // Keep current scale
+                CONFIG.NAVIGATION.ANIMATION_DURATION
+            );
+        } else {
+            this.offset[0] = targetOffsetX;
+            this.offset[1] = targetOffsetY;
+            this.validateState();
+            
+            // Trigger navigation state save
+            if (window.navigationStateManager) {
+                window.navigationStateManager.onViewportChange();
+            }
+        }
+    }
+    
     animateTo(targetOffset, targetScale, duration = 400) {
         // Cancel any existing animation
         if (this.animationFrameId) {

@@ -303,7 +303,15 @@ class ImageCanvasServer {
                     return res.status(500).json({ error: 'Database not initialized' });
                 }
                 
-                const projectId = await this.db.createProject(name, ownerId, description);
+                // Get or create user by username
+                let user = await this.db.getUserByUsername(ownerId);
+                if (!user) {
+                    console.log(`📝 Creating new user: ${ownerId}`);
+                    const userId = await this.db.createUser(ownerId, ownerId);
+                    user = await this.db.getUserById(userId);
+                }
+                
+                const projectId = await this.db.createProject(name, user.id, description);
                 console.log('✅ Project created with ID:', projectId);
                 
                 const project = await this.db.getProject(projectId);

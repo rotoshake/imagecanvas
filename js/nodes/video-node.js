@@ -20,11 +20,20 @@ class VideoNode extends BaseNode {
         this.thumbnail = null; // Simple single thumbnail for small display
         this.userPaused = false;  // Keep for backward compatibility
         this.loadingProgress = 0; // 0-1 for unified progress tracking
-        this.loadingState = 'loading'; // Start as loading to show immediate feedback
+        this.loadingState = 'idle'; // Start as idle, not loading
+        this._loadingStarted = false; // Track if we've started loading
+        this._lastDrawTime = 0; // Track last draw to prevent flicker
+        this._primaryLoadCompleteTime = null; // Track when video finished loading
         
     }
     
     async setVideo(src, filename = null, hash = null) {
+        // Prevent multiple loading attempts
+        if (this._loadingStarted) {
+            return;
+        }
+        this._loadingStarted = true;
+        
         // Ensure loop property is always defined (fix for undefined from state restoration)
         if (this.properties.loop === undefined) {
             this.properties.loop = true;
@@ -86,6 +95,7 @@ class VideoNode extends BaseNode {
             
             // Set loading state after thumbnail creation
             this.loadingState = 'loaded';
+            this._primaryLoadCompleteTime = Date.now(); // Track when loading finished
             
             // Mark loading as complete in the progress tracking system
             if (this.properties.hash && window.imageProcessingProgress) {
@@ -207,18 +217,11 @@ class VideoNode extends BaseNode {
             canvas.width = thumbWidth;
             canvas.height = thumbHeight;
             
-            // Ensure video is at beginning and ready for thumbnail capture
-            const originalTime = this.video.currentTime;
-            this.video.currentTime = 0; // Seek to beginning for thumbnail
-            
-            // Wait for seek to complete, then draw thumbnail
+            // Don't seek if video is already playing - use current frame
             const drawThumbnail = () => {
                 try {
-                    // Draw video frame to thumbnail
+                    // Draw current video frame to thumbnail
                     ctx.drawImage(this.video, 0, 0, thumbWidth, thumbHeight);
-                    
-                    // Restore original playback position
-                    this.video.currentTime = originalTime;
                     
                 } catch (drawError) {
                     console.warn(`Failed to draw video thumbnail for ${this.id}:`, drawError);
@@ -288,12 +291,8 @@ class VideoNode extends BaseNode {
             
             // Add event listeners to handle looping and ensure canvas redraws
             video.addEventListener('ended', () => {
-                if (video.loop) {
-                    // Force restart if loop doesn't work automatically
-                    video.currentTime = 0;
-                    video.play().catch(console.warn);
-                }
-                // Force canvas redraw when video loops
+                // Trust the browser's loop implementation
+                // Only force redraw when video ends
                 this.markDirty();
             });
             
@@ -307,7 +306,7 @@ class VideoNode extends BaseNode {
                 this.markDirty();
             });
             
-            // Key fix: redraw when video loops
+            // Throttled redraw during playback
             video.addEventListener('timeupdate', () => {
                 // Only trigger redraw occasionally, not every frame
                 if (!this._lastUpdateTime || Date.now() - this._lastUpdateTime > 100) {
@@ -385,6 +384,23 @@ class VideoNode extends BaseNode {
         return this.thumbnail; // Return our simple thumbnail or null
     }
     
+    shouldShowLoadingRing() {
+        // Always show during primary loading
+        if (this.loadingState === 'loading' || (!this.video && this.loadingState !== 'error')) {
+            return true;
+        }
+        
+        // Don't show loading ring if primary loading just finished (prevents flicker)
+        if (this._primaryLoadCompleteTime) {
+            const timeSinceLoad = Date.now() - this._primaryLoadCompleteTime;
+            if (timeSinceLoad < 300) { // 300ms cooldown
+                return false;
+            }
+        }
+        
+        return false;
+    }
+    
     onResize() {
         const currentAspect = this.size[0] / this.size[1];
         const tolerance = 0.001; // Small tolerance for floating point comparison
@@ -402,13 +418,13 @@ class VideoNode extends BaseNode {
         this.validate();
         
         // Auto-start loading if we have a source but haven't started yet
-        if ((this.loadingState === 'idle' || this.loadingState === 'loading') && 
-            (this.properties.serverUrl || this.properties.hash || this.properties.src) && !this.video) {
+        if (this.loadingState === 'idle' && !this._loadingStarted && !this.video &&
+            (this.properties.serverUrl || this.properties.hash || this.properties.src)) {
             this.setVideo(this.properties.serverUrl || this.properties.src, this.properties.filename, this.properties.hash);
         }
         
-        // Show loading ring if loading, or if we're a new node without a video yet
-        if (this.loadingState === 'loading' || (!this.video && this.loadingState !== 'error')) {
+        // Show loading ring based on unified check
+        if (this.shouldShowLoadingRing()) {
             this.drawProgressRing(ctx, this.loadingProgress);
             return;
         }
@@ -418,7 +434,19 @@ class VideoNode extends BaseNode {
             return;
         }
         
-        if (!this.video) return;
+        // Don't try to draw video if it's not ready yet
+        if (!this.video || this.video.readyState < 2) {
+            // Show thumbnail if available while video loads
+            if (this.thumbnail) {
+                ctx.imageSmoothingEnabled = true;
+                ctx.imageSmoothingQuality = CONFIG.THUMBNAILS.QUALITY;
+                ctx.drawImage(this.thumbnail, 0, 0, this.size[0], this.size[1]);
+            } else if (this.loadingState === 'loaded') {
+                // If we're "loaded" but video isn't ready, show placeholder
+                this.drawPlaceholder(ctx, 'Loading...');
+            }
+            return;
+        }
         
         // Get scale from multiple possible sources
         const scale = this.graph?.canvas?.viewport?.scale || 
@@ -459,32 +487,37 @@ class VideoNode extends BaseNode {
     }
     
     drawVideo(ctx) {
-        if (this.video.readyState >= 2) {
+        // Only draw if video is truly ready with valid dimensions
+        if (this.video.readyState >= 2 && this.video.videoWidth > 0 && this.video.videoHeight > 0) {
             ctx.imageSmoothingEnabled = true;
             ctx.imageSmoothingQuality = CONFIG.THUMBNAILS.QUALITY;
             ctx.drawImage(this.video, 0, 0, this.size[0], this.size[1]);
+        } else if (this.thumbnail) {
+            // Fall back to thumbnail if video isn't fully ready
+            ctx.imageSmoothingEnabled = true;
+            ctx.imageSmoothingQuality = CONFIG.THUMBNAILS.QUALITY;
+            ctx.drawImage(this.thumbnail, 0, 0, this.size[0], this.size[1]);
         }
     }
     
     managePlayback() {
         if (!this.video) return;
         
-        // Continue video playback if not paused
-        if (!this.properties.paused && this.video.paused) {
+        // Only try to play if we should be playing but aren't
+        if (!this.properties.paused && this.video.paused && !this._needsUserInteraction) {
+            // Check if video is at the end and needs manual restart
+            if (this.video.ended && this.properties.loop) {
+                this.video.currentTime = 0;
+            }
             this.video.play().catch(() => {
                 // Autoplay might be blocked, that's okay
+                this._needsUserInteraction = true;
             });
         }
         
         // Ensure loop property is set correctly
         if (this.video.loop !== this.properties.loop) {
             this.video.loop = this.properties.loop;
-        }
-        
-        // If video has ended and should loop, restart it
-        if (this.video.ended && this.properties.loop && !this.properties.paused) {
-            this.video.currentTime = 0;
-            this.video.play().catch(console.warn);
         }
     }
     
@@ -556,7 +589,7 @@ class VideoNode extends BaseNode {
     play() {
         this.properties.paused = false;
         this.userPaused = false;  // Keep for backward compatibility
-        if (this.video) {
+        if (this.video && this.video.paused) {  // Only play if actually paused
             this.video.play().catch((error) => {
                 if (error.name === 'NotAllowedError') {
                     // Mark as needing user interaction

@@ -110,7 +110,17 @@ class UndoStateSync {
                 conflicts: conflicts.length > 0 ? conflicts : null
             };
             
-            // Broadcast to all user sessions (cross-tab sync)
+            // Broadcast state update to ALL clients (including the initiator)
+            // This ensures StateSyncManager handles the changes properly
+            this.io.to(`project_${projectId}`).emit('state_update', {
+                stateVersion: this.stateManager.stateVersions.get(projectId) || 0,
+                changes: stateChanges,
+                operationId: `undo_${Date.now()}`,
+                fromUserId: userId,
+                isUndo: true  // Flag to force update even for optimistic nodes
+            });
+            
+            // Broadcast undo confirmation to all user sessions (cross-tab sync)
             this.broadcastToUser(userId, 'undo_executed', {
                 projectId,
                 operations: operationIds,
@@ -183,7 +193,17 @@ class UndoStateSync {
                 undoState: undoState
             };
             
-            // Broadcast to all user sessions (cross-tab sync)
+            // Broadcast state update to ALL clients (including the initiator)
+            // This ensures StateSyncManager handles the changes properly
+            this.io.to(`project_${projectId}`).emit('state_update', {
+                stateVersion: this.stateManager.stateVersions.get(projectId) || 0,
+                changes: stateChanges,
+                operationId: `redo_${Date.now()}`,
+                fromUserId: userId,
+                isRedo: true  // Flag to force update even for optimistic nodes
+            });
+            
+            // Broadcast redo confirmation to all user sessions (cross-tab sync)
             this.broadcastToUser(userId, 'redo_executed', {
                 projectId,
                 operations: operationIds,
@@ -356,7 +376,7 @@ class UndoStateSync {
         // Handle node move operations with array format
         if (undoData.nodes && Array.isArray(undoData.nodes)) {
             for (const nodeData of undoData.nodes) {
-                const node = state.nodes.find(n => n.id === nodeData.id);
+                const node = state.nodes.find(n => n.id == nodeData.id);
                 if (node && nodeData.oldPosition) {
                     console.log(`🔄 Restoring node ${nodeData.id} position from [${node.pos}] to [${nodeData.oldPosition}]`);
                     node.pos = [...nodeData.oldPosition];
@@ -392,7 +412,7 @@ class UndoStateSync {
         if (undoData.previousState) {
             // Restore previous state for modified nodes
             for (const [nodeId, prevState] of Object.entries(undoData.previousState)) {
-                const node = state.nodes.find(n => n.id === nodeId);
+                const node = state.nodes.find(n => n.id == nodeId);
                 if (node) {
                     // Apply previous state
                     Object.assign(node, prevState);
@@ -404,8 +424,9 @@ class UndoStateSync {
         if (undoData.previousPositions) {
             // Restore previous positions
             for (const [nodeId, pos] of Object.entries(undoData.previousPositions)) {
-                const node = state.nodes.find(n => n.id === nodeId);
+                const node = state.nodes.find(n => n.id == nodeId); // Use loose equality for type conversion
                 if (node) {
+                    console.log(`🔄 Restoring node ${nodeId} position from [${node.pos}] to [${pos}]`);
                     node.pos = [...pos];
                     changes.updated.push(node);
                 }
@@ -415,7 +436,7 @@ class UndoStateSync {
         if (undoData.previousSizes) {
             // Restore previous sizes
             for (const [nodeId, size] of Object.entries(undoData.previousSizes)) {
-                const node = state.nodes.find(n => n.id === nodeId);
+                const node = state.nodes.find(n => n.id == nodeId); // Use loose equality for type conversion
                 if (node) {
                     node.size = [...size];
                     changes.updated.push(node);
@@ -426,7 +447,7 @@ class UndoStateSync {
         if (undoData.previousProperties) {
             // Restore previous properties
             for (const [nodeId, props] of Object.entries(undoData.previousProperties)) {
-                const node = state.nodes.find(n => n.id === nodeId);
+                const node = state.nodes.find(n => n.id == nodeId); // Use loose equality for type conversion
                 if (node) {
                     Object.assign(node.properties, props);
                     changes.updated.push(node);
@@ -444,7 +465,7 @@ class UndoStateSync {
         // First check if we have undo data with the created node ID
         if (operation.undoData && operation.undoData.nodeId) {
             const nodeId = operation.undoData.nodeId;
-            const index = state.nodes.findIndex(n => n.id === nodeId);
+            const index = state.nodes.findIndex(n => n.id == nodeId);
             if (index !== -1) {
                 state.nodes.splice(index, 1);
                 changes.removed.push(nodeId);
@@ -456,7 +477,7 @@ class UndoStateSync {
         // Fallback to params.id if available
         else if (operation.params.id) {
             const nodeId = operation.params.id;
-            const index = state.nodes.findIndex(n => n.id === nodeId);
+            const index = state.nodes.findIndex(n => n.id == nodeId);
             if (index !== -1) {
                 state.nodes.splice(index, 1);
                 changes.removed.push(nodeId);
@@ -488,7 +509,7 @@ class UndoStateSync {
     undoNodeMove(operation, state, changes) {
         if (operation.undoData && operation.undoData.previousPositions) {
             for (const [nodeId, pos] of Object.entries(operation.undoData.previousPositions)) {
-                const node = state.nodes.find(n => n.id === nodeId);
+                const node = state.nodes.find(n => n.id == nodeId);
                 if (node) {
                     node.pos = [...pos];
                     changes.updated.push(node);
@@ -504,7 +525,7 @@ class UndoStateSync {
     undoNodeResize(operation, state, changes) {
         if (operation.undoData && operation.undoData.previousSizes) {
             for (const [nodeId, size] of Object.entries(operation.undoData.previousSizes)) {
-                const node = state.nodes.find(n => n.id === nodeId);
+                const node = state.nodes.find(n => n.id == nodeId);
                 if (node) {
                     node.size = [...size];
                     if (operation.undoData.previousPositions && operation.undoData.previousPositions[nodeId]) {
@@ -526,7 +547,7 @@ class UndoStateSync {
     undoPropertyUpdate(operation, state, changes) {
         if (operation.undoData && operation.undoData.previousProperties) {
             for (const [nodeId, props] of Object.entries(operation.undoData.previousProperties)) {
-                const node = state.nodes.find(n => n.id === nodeId);
+                const node = state.nodes.find(n => n.id == nodeId);
                 if (node) {
                     Object.assign(node.properties, props);
                     changes.updated.push(node);
@@ -542,7 +563,7 @@ class UndoStateSync {
     undoNodeRotate(operation, state, changes) {
         if (operation.undoData && operation.undoData.previousRotations) {
             for (const [nodeId, rotation] of Object.entries(operation.undoData.previousRotations)) {
-                const node = state.nodes.find(n => n.id === nodeId);
+                const node = state.nodes.find(n => n.id == nodeId);
                 if (node) {
                     node.rotation = rotation;
                     if (operation.undoData.previousPositions && operation.undoData.previousPositions[nodeId]) {
@@ -561,7 +582,7 @@ class UndoStateSync {
     undoNodeReset(operation, state, changes) {
         if (operation.undoData && operation.undoData.previousState) {
             for (const [nodeId, prevState] of Object.entries(operation.undoData.previousState)) {
-                const node = state.nodes.find(n => n.id === nodeId);
+                const node = state.nodes.find(n => n.id == nodeId);
                 if (node) {
                     if (prevState.rotation !== undefined) {
                         node.rotation = prevState.rotation;
@@ -584,7 +605,7 @@ class UndoStateSync {
      */
     undoVideoToggle(operation, state, changes) {
         const nodeId = operation.params.nodeId;
-        const node = state.nodes.find(n => n.id === nodeId);
+        const node = state.nodes.find(n => n.id == nodeId);
         if (node && node.type === 'media/video') {
             // Toggle the paused state back
             node.properties.paused = !node.properties.paused;

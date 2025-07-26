@@ -76,6 +76,32 @@ class CollaborativeUndoRedoManager {
             this.network.on('remote_redo', (data) => {
                 this.handleRemoteRedo(data);
             });
+            
+            // Handle server undo/redo responses
+            this.network.on('undo_executed', (data) => {
+                console.log('📨 Received undo_executed event:', data);
+                // Update local state if needed
+                if (data.undoState) {
+                    this.updateUndoRedoState(data.undoState);
+                }
+            });
+            
+            this.network.on('redo_executed', (data) => {
+                console.log('📨 Received redo_executed event:', data);
+                // Update local state if needed
+                if (data.undoState) {
+                    this.updateUndoRedoState(data.undoState);
+                }
+            });
+            
+            // Handle undo/redo failures
+            this.network.on('undo_failed', (data) => {
+                console.log('📨 Received undo_failed event:', data);
+            });
+            
+            this.network.on('redo_failed', (data) => {
+                console.log('📨 Received redo_failed event:', data);
+            });
         }
     }
     
@@ -196,8 +222,17 @@ class CollaborativeUndoRedoManager {
             type: command.type,
             executed: command.executed,
             hasUndoData: !!command.undoData,
-            userId: this.userId
+            userId: this.userId,
+            isConnected: !!this.network?.isConnected,
+            hasStateSyncManager: !!this.app.stateSyncManager
         });
+        
+        // CRITICAL FIX: Skip recording if we're in server-connected mode
+        // This prevents double recording - operations are already recorded on server
+        if (this.network?.isConnected && this.app.stateSyncManager) {
+            console.log('🔄 Skipping client-side recording - using server-authoritative undo');
+            return;
+        }
         
         if (!command.executed || !command.undoData) {
             console.warn(`⚠️ Command missing undo data:`, {
@@ -207,6 +242,9 @@ class CollaborativeUndoRedoManager {
             });
             return;
         }
+        
+        // Only record for offline mode
+        console.log('📝 Recording operation in offline mode');
         
         // Add metadata
         command.userId = this.userId || 'local';
@@ -235,7 +273,7 @@ class CollaborativeUndoRedoManager {
             this.addToCurrentUserHistory(command);
         }
         
-        console.log(`📝 Captured operation:`, {
+        console.log(`📝 Captured operation for offline undo:`, {
             type: command.type,
             userId: command.userId,
             hasUndoData: !!command.undoData,
@@ -356,8 +394,58 @@ class CollaborativeUndoRedoManager {
         console.log('🔄 Undo called:', {
             historyLength: this.currentUserHistory.length,
             historyIndex: this.historyIndex,
-            userId: this.userId
+            userId: this.userId,
+            isConnected: !!this.network?.isConnected
         });
+        
+        // CRITICAL FIX: Route through server when connected
+        if (this.network?.isConnected && this.app.stateSyncManager) {
+            console.log('🔄 Using server-authoritative undo');
+            
+            // Send undo request to server
+            return new Promise((resolve, reject) => {
+                // Set up timeout
+                const timeout = setTimeout(() => {
+                    console.error('❌ Server undo timeout');
+                    this.showUndoError('Server response timeout');
+                    resolve(false);
+                }, 5000);
+                
+                // Set up response handlers
+                const cleanup = () => {
+                    clearTimeout(timeout);
+                    this.network.off('undo_executed', successHandler);
+                    this.network.off('undo_failed', failHandler);
+                };
+                
+                const successHandler = (data) => {
+                    cleanup();
+                    console.log('✅ Server undo successful:', data);
+                    // Server will handle state updates via state_update event
+                    resolve(true);
+                };
+                
+                const failHandler = (data) => {
+                    cleanup();
+                    console.log('❌ Server undo failed:', data);
+                    this.showUndoWarning(data.reason || 'Unable to undo');
+                    resolve(false);
+                };
+                
+                this.network.once('undo_executed', successHandler);
+                this.network.once('undo_failed', failHandler);
+                
+                // Send undo request
+                console.log('📤 Sending undo request to server');
+                this.network.emit('undo_operation', {
+                    userId: this.userId,
+                    projectId: this.app.projectId || this.network.currentProject?.id
+                });
+            });
+        }
+        
+        // Fallback to client-side undo for offline mode
+        console.log('📱 Using offline client-side undo');
         
         if (this.historyIndex < 0) {
             console.log('Nothing to undo');
@@ -375,7 +463,7 @@ class CollaborativeUndoRedoManager {
         }
         
         try {
-            console.log(`↩️ Undoing: ${operation.type}`);
+            console.log(`↩️ Undoing offline: ${operation.type}`);
             
             const context = {
                 app: this.app,
@@ -389,22 +477,13 @@ class CollaborativeUndoRedoManager {
             // Update history index
             this.historyIndex--;
             
-            // Broadcast undo if connected
-            if (this.network?.isConnected) {
-                this.network.emit('user_undo', {
-                    operationId: operation.operationId,
-                    userId: this.userId,
-                    type: operation.type
-                });
-            }
-            
             // Update canvas
             this.app.graphCanvas.dirty_canvas = true;
             
             return true;
             
         } catch (error) {
-            console.error('❌ Undo failed:', error);
+            console.error('❌ Offline undo failed:', error);
             this.showUndoError(error.message);
             return false;
         }
@@ -594,6 +673,62 @@ class CollaborativeUndoRedoManager {
      * Redo operation
      */
     async redo() {
+        console.log('🔄 Redo called:', {
+            historyLength: this.currentUserHistory.length,
+            historyIndex: this.historyIndex,
+            userId: this.userId,
+            isConnected: !!this.network?.isConnected
+        });
+        
+        // CRITICAL FIX: Route through server when connected
+        if (this.network?.isConnected && this.app.stateSyncManager) {
+            console.log('🔄 Using server-authoritative redo');
+            
+            // Send redo request to server
+            return new Promise((resolve, reject) => {
+                // Set up timeout
+                const timeout = setTimeout(() => {
+                    console.error('❌ Server redo timeout');
+                    this.showUndoError('Server response timeout');
+                    resolve(false);
+                }, 5000);
+                
+                // Set up response handlers
+                const cleanup = () => {
+                    clearTimeout(timeout);
+                    this.network.off('redo_executed', successHandler);
+                    this.network.off('redo_failed', failHandler);
+                };
+                
+                const successHandler = (data) => {
+                    cleanup();
+                    console.log('✅ Server redo successful:', data);
+                    // Server will handle state updates via state_update event
+                    resolve(true);
+                };
+                
+                const failHandler = (data) => {
+                    cleanup();
+                    console.log('❌ Server redo failed:', data);
+                    this.showUndoWarning(data.reason || 'Unable to redo');
+                    resolve(false);
+                };
+                
+                this.network.once('redo_executed', successHandler);
+                this.network.once('redo_failed', failHandler);
+                
+                // Send redo request
+                console.log('📤 Sending redo request to server');
+                this.network.emit('redo_operation', {
+                    userId: this.userId,
+                    projectId: this.app.projectId || this.network.currentProject?.id
+                });
+            });
+        }
+        
+        // Fallback to client-side redo for offline mode
+        console.log('📱 Using offline client-side redo');
+        
         if (this.historyIndex >= this.currentUserHistory.length - 1) {
             console.log('Nothing to redo');
             return false;
@@ -610,15 +745,6 @@ class CollaborativeUndoRedoManager {
             };
             
             await operation.execute(context);
-            
-            // Broadcast
-            if (this.network?.isConnected) {
-                this.network.emit('user_redo', {
-                    operationId: operation.operationId,
-                    userId: this.userId,
-                    type: operation.type
-                });
-            }
             
             this.app.graphCanvas.dirty_canvas = true;
             return true;
@@ -644,6 +770,24 @@ class CollaborativeUndoRedoManager {
     handleRemoteRedo(data) {
         // Update UI to show what was redone by whom
         console.log(`👤 User ${data.userId} redid ${data.type}`);
+    }
+    
+    /**
+     * Update local undo/redo state from server
+     */
+    updateUndoRedoState(undoState) {
+        console.log('📊 Updating undo/redo state from server:', undoState);
+        
+        // Update UI indicators
+        if (this.app.updateUndoRedoButtons) {
+            this.app.updateUndoRedoButtons({
+                canUndo: undoState.canUndo,
+                canRedo: undoState.canRedo
+            });
+        }
+        
+        // Store server state for reference
+        this.serverUndoState = undoState;
     }
     
     /**

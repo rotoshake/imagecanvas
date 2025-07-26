@@ -28,6 +28,9 @@ class ImageNode extends BaseNode {
         // Progressive loading state
         this.loadingState = 'loading'; // idle, loading, loaded, error - start as loading to show immediate feedback
         this.loadingProgress = 0; // 0-1 for unified progress tracking
+        this.thumbnailProgress = 0; // Separate progress for thumbnail generation
+        this.displayedProgress = 0; // Smoothed progress for display
+        this.primaryLoadCompleteTime = null; // Track when primary loading finished to prevent flicker
     }
     
     async setImage(src, filename = null, hash = null) {
@@ -50,6 +53,7 @@ class ImageNode extends BaseNode {
         if (!this.loadingState || this.loadingState === 'idle') {
             this.loadingState = 'loading';
             this.loadingProgress = 0.1; // 10% for starting load
+            this.thumbnailProgress = 0; // Reset thumbnail progress for new load
         }
         
         // console.log(`🖼️ setImage called - node:${this.id || 'pending'} loadingState:${this.loadingState} hash:${hash?.substring(0, 8) || 'none'}`)
@@ -85,6 +89,7 @@ class ImageNode extends BaseNode {
             // Load image with progress tracking
             this.img = await this.loadImageAsyncOptimized(imageSrc);
             this.loadingState = 'loaded';
+            this.primaryLoadCompleteTime = Date.now(); // Track completion time to prevent flicker
             // Progress is now handled in loadImageAsyncOptimized
             
             // Force immediate redraw to show loaded image
@@ -129,7 +134,7 @@ class ImageNode extends BaseNode {
                     hash, 
                     this.img, 
                     (progress) => {
-                        this.loadingProgress = progress;
+                        this.thumbnailProgress = progress;
                         // Trigger redraw for progress updates
                         if (this.graph?.canvas) {
                             this.graph.canvas.dirty_canvas = true;
@@ -451,50 +456,32 @@ class ImageNode extends BaseNode {
         }
     }
     
-    drawProgressRing(ctx, progress = 0) {
-        // Draw semi-transparent background
-        ctx.fillStyle = '#333';
-        ctx.fillRect(0, 0, this.size[0], this.size[1]);
-        
-        const centerX = this.size[0] / 2;
-        const centerY = this.size[1] / 2;
-        
-        // Calculate screen-space consistent line width (4px)
-        const scale = this.graph?.canvas?.viewport?.scale || 1;
-        const lineWidth = 4 / scale;
-        
-        // Calculate radius with screen-space limits
-        const baseRadius = Math.min(this.size[0], this.size[1]) * 0.15; // 15% of smallest dimension
-        const minRadius = 20 / scale;  // 20px minimum in screen space
-        const maxRadius = 100 / scale; // 100px maximum in screen space
-        const radius = Math.max(minRadius, Math.min(baseRadius, maxRadius));
-        
-        // Draw background ring
-        ctx.beginPath();
-        ctx.arc(centerX, centerY, radius, 0, Math.PI * 2);
-        ctx.strokeStyle = 'rgba(255, 255, 255, 0.2)';
-        ctx.lineWidth = lineWidth;
-        ctx.stroke();
-        
-        // Draw progress ring (radial fill)
-        if (progress > 0) {
-            ctx.beginPath();
-            // Start from top (-PI/2) and fill clockwise
-            const endAngle = -Math.PI / 2 + (progress * Math.PI * 2);
-            ctx.arc(centerX, centerY, radius, -Math.PI / 2, endAngle);
-            ctx.strokeStyle = 'rgba(255, 255, 255, 0.9)';
-            ctx.lineWidth = lineWidth;
-            ctx.stroke();
+    /**
+     * Check if loading ring should be shown (unified logic to prevent flickering)
+     */
+    shouldShowLoadingRing() {
+        // Always show during primary loading
+        if (this.loadingState === 'loading' || (!this.img && this.loadingState !== 'error')) {
+            return true;
         }
         
-        // Add percentage text in center
-        // if (progress > 0) {
-        //     ctx.fillStyle = 'rgba(255, 255, 255, 0.8)';
-        //     ctx.font = `${Math.max(12 / scale, 8)}px Arial`;
-        //     ctx.textAlign = 'center';
-        //     ctx.textBaseline = 'middle';
-        //     ctx.fillText(`${Math.round(progress * 100)}%`, centerX, centerY);
-        // }
+        // Don't show thumbnail loading ring if primary loading just finished (prevents flicker)
+        if (this.primaryLoadCompleteTime) {
+            const timeSinceLoad = Date.now() - this.primaryLoadCompleteTime;
+            if (timeSinceLoad < 300) { // 300ms cooldown
+                return false;
+            }
+        }
+        
+        // Show for thumbnail generation only if we have an image and need thumbnails
+        // AND thumbnail generation isn't already complete
+        if (this.img && this.properties.hash && window.thumbnailCache && 
+            !window.thumbnailCache.hasThumbnails(this.properties.hash) &&
+            this.thumbnailProgress < 1.0) {
+            return true;
+        }
+        
+        return false;
     }
     
     onDrawForeground(ctx) {
@@ -506,10 +493,37 @@ class ImageNode extends BaseNode {
             this.setImage(this.properties.serverUrl, this.properties.filename, this.properties.hash);
         }
         
-        // Show loading ring if loading, or if we're a new node without an image yet
-        if (this.loadingState === 'loading' || (!this.img && this.loadingState !== 'error')) {
-            // console.log(`🔄 Drawing loading ring for node:${this.id} state:${this.loadingState}`);
-            this.drawProgressRing(ctx, this.loadingProgress);
+        // Check unified loading ring condition
+        if (this.shouldShowLoadingRing()) {
+            // Determine which progress to show
+            let targetProgress = this.loadingProgress;
+            
+            // If we have an image and we're just waiting for thumbnails, show faded image behind ring
+            if (this.img && this.loadingState === 'loaded') {
+                // Use thumbnail progress for thumbnail generation phase
+                targetProgress = this.thumbnailProgress;
+                
+                ctx.save();
+                ctx.globalAlpha = 0.3; // Show faded image behind loading ring
+                ctx.imageSmoothingEnabled = true;
+                ctx.imageSmoothingQuality = CONFIG.THUMBNAILS.QUALITY;
+                ctx.drawImage(this.img, 0, 0, this.size[0], this.size[1]);
+                ctx.restore();
+            }
+            
+            // Smooth the progress display to prevent jittering
+            // Only allow progress to increase, never decrease
+            if (targetProgress > this.displayedProgress) {
+                // Quick catch-up for large jumps, smooth for small changes
+                const diff = targetProgress - this.displayedProgress;
+                if (diff > 0.3) {
+                    this.displayedProgress = targetProgress; // Jump for large changes
+                } else {
+                    this.displayedProgress = Math.min(targetProgress, this.displayedProgress + 0.05); // Smooth small changes
+                }
+            }
+            
+            this.drawProgressRing(ctx, this.displayedProgress);
             return;
         }
         
@@ -540,28 +554,10 @@ class ImageNode extends BaseNode {
                 ctx.imageSmoothingQuality = CONFIG.THUMBNAILS.QUALITY;
                 ctx.drawImage(thumbnail, 0, 0, this.size[0], this.size[1]);
             } else {
-                // Show radial progress if thumbnails are still generating
-                // Check if thumbnails exist for this hash
-                if (this.properties.hash && window.thumbnailCache && 
-                    !window.thumbnailCache.hasThumbnails(this.properties.hash)) {
-                    // Show loading ring with current progress
-                    this.drawProgressRing(ctx, this.loadingProgress);
-                    // But also draw the full image behind it if available
-                    if (this.img) {
-                        ctx.save();
-                        ctx.globalAlpha = 0.3; // Show faded image behind loading ring
-                        ctx.imageSmoothingEnabled = true;
-                        ctx.imageSmoothingQuality = CONFIG.THUMBNAILS.QUALITY;
-                        ctx.drawImage(this.img, 0, 0, this.size[0], this.size[1]);
-                        ctx.restore();
-                    }
-                    return;
-                } else {
-                    // Fall back to full image if no thumbnails available but image is loaded
-                    ctx.imageSmoothingEnabled = true;
-                    ctx.imageSmoothingQuality = CONFIG.THUMBNAILS.QUALITY;
-                    ctx.drawImage(this.img, 0, 0, this.size[0], this.size[1]);
-                }
+                // Fall back to full image if no thumbnails available but image is loaded
+                ctx.imageSmoothingEnabled = true;
+                ctx.imageSmoothingQuality = CONFIG.THUMBNAILS.QUALITY;
+                ctx.drawImage(this.img, 0, 0, this.size[0], this.size[1]);
             }
         } else {
             // Full resolution for 1:1 viewing

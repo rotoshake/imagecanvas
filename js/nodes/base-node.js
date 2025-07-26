@@ -125,15 +125,35 @@ class BaseNode {
         const centerX = this.size[0] / 2;
         const centerY = this.size[1] / 2;
         
-        // Calculate screen-space consistent line width (4px)
-        const scale = this.graph?.canvas?.viewport?.scale || 1;
+        // Get scale for screen-space calculations with fallbacks
+        const scale = this.graph?.canvas?.viewport?.scale || 
+                     window.app?.graphCanvas?.viewport?.scale ||
+                     1;
+        
+        // Screen-space consistent line width (4px on screen)
         const lineWidth = 4 / scale;
         
-        // Calculate radius with screen-space limits
-        const baseRadius = Math.min(this.size[0], this.size[1]) * 0.15; // 15% of smallest dimension
-        const minRadius = 20 / scale;  // 20px minimum in screen space
+        // Calculate radius with limits
+        const nodeMinDimension = Math.min(this.size[0], this.size[1]);
+        const baseRadius = nodeMinDimension * 0.15; // 15% of smallest dimension
+        
+        // Ensure ring fits within node (leave space for line width)
+        const maxRadiusForNode = (nodeMinDimension / 2) - (lineWidth * 2); // Leave room for stroke
+        
+        // Screen-space limits
+        const minRadius = 10 / scale;  // 20px minimum in screen space
         const maxRadius = 100 / scale; // 100px maximum in screen space
-        const radius = Math.max(minRadius, Math.min(baseRadius, maxRadius));
+        
+        // Apply all constraints: must fit in node, respect screen-space limits
+        const radius = Math.max(
+            Math.min(baseRadius, maxRadiusForNode, maxRadius),
+            Math.min(minRadius, maxRadiusForNode) // Don't exceed node bounds even for minimum
+        );
+        
+        // Don't draw ring if it would be too small or negative
+        if (radius <= lineWidth || maxRadiusForNode <= 0) {
+            return; // Node too small for ring
+        }
         
         // Draw background ring
         ctx.beginPath();

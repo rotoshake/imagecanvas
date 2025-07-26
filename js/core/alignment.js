@@ -8,6 +8,9 @@ class AutoAlignmentManager {
         this.viewport = canvas.viewport;
         this.selection = canvas.selection;
         
+        // Animation timing
+        this.lastUpdateTime = 0;
+        
         // Auto-align state
         this.autoAlignMode = false;
         this.autoAlignStart = [0, 0];
@@ -454,6 +457,11 @@ class AutoAlignmentManager {
     updateAnimations() {
         let needsRedraw = false;
         
+        // Calculate delta time for frame-rate independence
+        const currentTime = performance.now() / 1000; // Convert to seconds
+        const deltaTime = this.lastUpdateTime ? Math.min(currentTime - this.lastUpdateTime, 0.033) : 0.016; // Cap at ~30fps min
+        this.lastUpdateTime = currentTime;
+        
         // Update auto-align animations
         if (this.autoAlignAnimating && this.autoAlignAnimNodes && this.autoAlignAnimTargets) {
             needsRedraw = true;
@@ -469,11 +477,11 @@ class AutoAlignmentManager {
                 let done = true;
                 for (let i = 0; i < 2; i++) {
                     let x = node._animPos[i], v = node._animVel[i], t = target[i];
-                    let k = CONFIG.ALIGNMENT.SPRING_K, d = CONFIG.ALIGNMENT.SPRING_D, dt = CONFIG.ALIGNMENT.ANIMATION_DT;
+                    let k = CONFIG.ALIGNMENT.SPRING_K, d = CONFIG.ALIGNMENT.SPRING_D;
                     let dx = t - x;
                     let ax = k * dx - d * v;
-                    v += ax * dt;
-                    x += v * dt;
+                    v += ax * deltaTime;
+                    x += v * deltaTime;
                     node._animVel[i] = v;
                     node._animPos[i] = x;
                     if (Math.abs(t - x) > CONFIG.ALIGNMENT.ANIMATION_THRESHOLD || Math.abs(v) > CONFIG.ALIGNMENT.ANIMATION_THRESHOLD) done = false;
@@ -550,11 +558,11 @@ class AutoAlignmentManager {
                 let done = true;
                 for (let i = 0; i < 2; i++) {
                     let x = node._gridAnimPos[i], v = node._gridAnimVel[i], t = target[i];
-                    let k = CONFIG.ALIGNMENT.SPRING_K, d = CONFIG.ALIGNMENT.SPRING_D, dt = CONFIG.ALIGNMENT.ANIMATION_DT;
+                    let k = CONFIG.ALIGNMENT.SPRING_K, d = CONFIG.ALIGNMENT.SPRING_D;
                     let dx = t - x;
                     let ax = k * dx - d * v;
-                    v += ax * dt;
-                    x += v * dt;
+                    v += ax * deltaTime;
+                    x += v * deltaTime;
                     node._gridAnimVel[i] = v;
                     node._gridAnimPos[i] = x;
                     if (Math.abs(t - x) > CONFIG.ALIGNMENT.ANIMATION_THRESHOLD || Math.abs(v) > CONFIG.ALIGNMENT.ANIMATION_THRESHOLD) done = false;

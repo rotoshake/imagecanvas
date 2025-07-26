@@ -2183,7 +2183,7 @@ Mode: ${this.fpsTestMode}`;
                     if (fromNode) {
                         // Select this node first
                         this.selection.selectNode(fromNode, true);
-                        this.navigateToNode(fromNode);
+                        this.centerOnSelection();
                         return true;
                     }
                 }
@@ -2196,8 +2196,8 @@ Mode: ${this.fpsTestMode}`;
                         this.selection.clear();
                         // Select the target node
                         this.selection.selectNode(targetNode, true);
-                        // Navigate to it with animation
-                        this.navigateToNode(targetNode);
+                        // Center on the node without zooming
+                        this.centerOnSelection();
                     }
                 }
                 return true;
@@ -2671,6 +2671,19 @@ Mode: ${this.fpsTestMode}`;
         }
     }
     
+    centerOnSelection() {
+        const bbox = this.selection.getBoundingBox();
+        if (bbox) {
+            // Calculate center of selection bounding box
+            const centerX = bbox[0] + bbox[2] / 2;
+            const centerY = bbox[1] + bbox[3] / 2;
+            
+            // Pan to center without changing zoom
+            this.viewport.panToCenter(centerX, centerY, true); // Enable animation
+            this.dirty_canvas = true;
+        }
+    }
+    
     keyboardZoom(factor) {
         // Get canvas center as zoom pivot point
         const canvasWidth = this.canvas.width / this.viewport.dpr;
@@ -2804,8 +2817,8 @@ Mode: ${this.fpsTestMode}`;
             // Select the next node
             this.selection.select(nextNode);
             
-            // Zoom to fit the selected node with animation
-            this.zoomToFitSelection();
+            // Center on the selected node with animation (no zoom)
+            this.centerOnSelection();
             
             // Mark dirty for redraw
             this.dirty_canvas = true;
