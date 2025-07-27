@@ -594,6 +594,19 @@ class StateSyncManager {
                             rotation: node.rotation
                         };
                         
+                        // For forced updates (undo/redo), clear optimistic flag to ensure update is applied
+                        if (forceUpdate && node._optimisticUpdate) {
+                            console.log(`🔄 Clearing optimistic flag for forced update on node ${node.id}`);
+                            delete node._optimisticUpdate;
+                        }
+                        
+                        console.log(`📊 About to update node ${nodeData.id} with data:`, {
+                            hasRotation: 'rotation' in nodeData,
+                            rotation: nodeData.rotation,
+                            currentRotation: node.rotation,
+                            forceUpdate
+                        });
+                        
                         this.updateNodeFromData(node, nodeData);
                         
                         if (forceUpdate) {
@@ -849,6 +862,7 @@ class StateSyncManager {
         
         // Update other attributes
         if (nodeData.rotation !== undefined) {
+            console.log(`🔄 updateNodeFromData changing rotation: ${node.rotation} → ${nodeData.rotation} for node ${node.id}`);
             node.rotation = nodeData.rotation;
         }
         

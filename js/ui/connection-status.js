@@ -49,7 +49,7 @@ class ConnectionStatus {
                 color: white;
                 padding: 8px 12px;
                 border-radius: 6px;
-                font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+                font-family: ${FONT_CONFIG.APP_FONT};
                 font-size: 12px;
                 z-index: 10000;
                 cursor: pointer;
@@ -137,7 +137,7 @@ class ConnectionStatus {
                 color: white;
                 padding: 16px;
                 border-radius: 8px;
-                font-family: monospace;
+                font-family: ${FONT_CONFIG.MONO_FONT};
                 font-size: 11px;
                 z-index: 10001;
                 max-width: 300px;
@@ -160,7 +160,7 @@ class ConnectionStatus {
                 margin: 0 0 12px 0;
                 font-size: 13px;
                 color: #4CAF50;
-                font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+                font-family: ${FONT_CONFIG.APP_FONT};
             }
             
             .status-details .detail-row {

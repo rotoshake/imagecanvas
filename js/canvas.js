@@ -307,7 +307,7 @@ class LGraphCanvas {
                     
                     // Draw simple FPS indicator
                     ctx.fillStyle = '#4af';
-                    ctx.font = '16px monospace';
+                    ctx.font = `16px ${FONT_CONFIG.MONO_FONT_CANVAS}`;
                     ctx.fillText(`MINIMAL MODE - FPS: ${this.fps}`, 10, 30);
                     break;
                     
@@ -602,6 +602,9 @@ Mode: ${this.fpsTestMode}`;
         if (this.handleAutoAlign(e)) return;
         if (this.handleSelection(e)) return;
         
+        // If nothing was clicked, cancel any pending interaction
+        window.app.undoManager.cancelInteraction();
+
         e.preventDefault();
     }
     
@@ -633,7 +636,9 @@ Mode: ${this.fpsTestMode}`;
         }
         
         // Regular interaction updates
-        this.updateInteractions(e);
+        if (this.mouseState.down) {
+            this.updateInteractions(e);
+        }
         this.updateCursor();
         
         this.mouseState.last = [x, y];
@@ -716,90 +721,22 @@ Mode: ${this.fpsTestMode}`;
         // Check for double-click on handles first
         const rotationHandle = this.handleDetector.getRotationHandle(...this.mouseState.canvas);
         if (rotationHandle) {
-            // If multiple nodes are selected, reset all their rotations
-            if (this.selection.size() > 1) {
-                const selectedNodes = this.selection.getSelectedNodes();
-                const nodeIds = selectedNodes.map(n => n.id);
-                const values = selectedNodes.map(() => 0);
-                
-                if (window.app?.operationPipeline) {
-                    window.app.operationPipeline.execute('node_reset', {
-                        nodeIds: nodeIds,
-                        resetRotation: true,
-                        resetAspectRatio: false,
-                        source: 'multi_select_reset'
-                    });
-                } else {
-                    // Fallback
-                    for (const node of selectedNodes) {
-                        node.rotation = 0;
-                    }
-                    this.dirty_canvas = true;
-                }
-                
-                this.pushUndoState();
-            } else {
-                // Single node selected
-                this.resetRotation(rotationHandle);
-            }
-            
-            // Save navigation state after rotation reset
-            if (window.navigationStateManager) {
-                console.log('📍 Saving navigation state after rotation reset');
-                window.navigationStateManager.onViewportChange();
+            const nodes = this.selection.getSelectedNodes();
+            if (nodes.length > 0) {
+                window.app.undoManager.beginInteraction(nodes);
+                const finalValues = nodes.map(() => 0);
+                window.app.undoManager.endInteraction('node_reset', { resetRotation: true, values: finalValues });
             }
             return;
         }
         
         const resizeHandle = this.handleDetector.getResizeHandle(...this.mouseState.canvas);
         if (resizeHandle) {
-            console.log(`Double-click on resize handle: type=${resizeHandle.type}, selection size=${this.selection.size()}`);
-            // If multiple nodes are selected, reset all their aspect ratios
-            if (this.selection.size() > 1) {
-                const selectedNodes = this.selection.getSelectedNodes();
-                const nodeIds = [];
-                const originalAspects = [];
-                
-                for (const node of selectedNodes) {
-                    if (node.originalAspect) {
-                        nodeIds.push(node.id);
-                        originalAspects.push(node.originalAspect);
-                    } else {
-                        console.warn(`Node ${node.id} (${node.type}) missing originalAspect property`);
-                    }
-                }
-                
-                console.log(`Multi-node aspect ratio reset: ${nodeIds.length} nodes with originalAspect`, nodeIds, originalAspects);
-                
-                if (window.app?.operationPipeline && nodeIds.length > 0) {
-                    window.app.operationPipeline.execute('node_reset', {
-                        nodeIds: nodeIds,
-                        resetAspectRatio: true,
-                        resetRotation: false,
-                        values: originalAspects
-                    });
-                } else {
-                    // Fallback
-                    for (const node of selectedNodes) {
-                        if (node.originalAspect) {
-                            node.aspectRatio = node.originalAspect;
-                            node.size[1] = node.size[0] / node.originalAspect;
-                            if (node.onResize) node.onResize();
-                        }
-                    }
-                    this.dirty_canvas = true;
-                }
-                
-                this.pushUndoState();
-            } else {
-                // Single node selected
-                this.resetAspectRatio(resizeHandle);
-            }
-            
-            // Save navigation state after aspect ratio reset
-            if (window.navigationStateManager) {
-                console.log('📍 Saving navigation state after aspect ratio reset');
-                window.navigationStateManager.onViewportChange();
+            const nodes = this.selection.getSelectedNodes();
+            if (nodes.length > 0) {
+                 window.app.undoManager.beginInteraction(nodes);
+                 const finalValues = nodes.map(n => n.originalAspect || 1);
+                 window.app.undoManager.endInteraction('node_reset', { resetAspectRatio: true, values: finalValues });
             }
             return;
         }
@@ -1035,13 +972,17 @@ Mode: ${this.fpsTestMode}`;
             this.interactionState.dragging.node = node;
         }
         
+        const nodesForInteraction = this.selection.getSelectedNodes();
+        if (nodesForInteraction.length > 0) {
+            window.app.undoManager.beginInteraction(nodesForInteraction);
+        }
+        
         // Reset movement tracking
         this.interactionState.dragging.hasMoved = false;
         
         // Capture initial positions for undo before any movement
-        const selectedNodes = this.selection.getSelectedNodes();
         this.interactionState.dragging.initialPositions = new Map();
-        for (const selectedNode of selectedNodes) {
+        for (const selectedNode of nodesForInteraction) {
             this.interactionState.dragging.initialPositions.set(
                 selectedNode.id, 
                 [...selectedNode.pos]
@@ -1049,7 +990,7 @@ Mode: ${this.fpsTestMode}`;
         }
         
         // Calculate offsets for all selected nodes
-        for (const selectedNode of selectedNodes) {
+        for (const selectedNode of nodesForInteraction) {
             const offset = [
                 selectedNode.pos[0] - this.mouseState.graph[0],
                 selectedNode.pos[1] - this.mouseState.graph[1]
@@ -1064,6 +1005,9 @@ Mode: ${this.fpsTestMode}`;
         this.interactionState.resizing.node = resizeHandle.node;
         this.interactionState.resizing.nodes = new Set(resizeHandle.nodes || [resizeHandle.node]);
         this.interactionState.resizing.isMultiContext = resizeHandle.isMultiContext || false;
+        
+        const nodesToCapture = Array.from(this.interactionState.resizing.nodes);
+        window.app.undoManager.beginInteraction(nodesToCapture);
         
         // Store initial bounding box for multi-resize or single-resize in multi-context
         if (resizeHandle.type === 'multi-resize' || resizeHandle.isMultiContext) {
@@ -1091,6 +1035,18 @@ Mode: ${this.fpsTestMode}`;
             this.mouseState.graph[1] - rotationHandle.center[1],
             this.mouseState.graph[0] - rotationHandle.center[0]
         );
+        
+        // For single-rotation in multi-selection context, capture all selected nodes
+        let nodesToCapture;
+        if (rotationHandle.type === 'single-rotation' && this.selection.size() > 1) {
+            nodesToCapture = this.selection.getSelectedNodes();
+            // Update rotating.nodes to include all selected nodes
+            this.interactionState.rotating.nodes = new Set(nodesToCapture);
+        } else {
+            nodesToCapture = Array.from(this.interactionState.rotating.nodes);
+        }
+        
+        window.app.undoManager.beginInteraction(nodesToCapture);
         
         // Store initial state for all relevant nodes
         const nodesToStore = this.selection.size() > 1 ? this.selection.getSelectedNodes() : [rotationHandle.node];
@@ -1633,440 +1589,62 @@ Mode: ${this.fpsTestMode}`;
     
     finishInteractions() {
         const wasInteracting = this.isInteracting();
-        
-        // Canvas pan (navigation - intentionally NOT synced to other users)
+        const undoManager = window.app?.undoManager;
+
+        // Canvas pan
         if (this.interactionState.dragging.canvas) {
             this.interactionState.dragging.canvas = false;
-            // Navigation state is saved by NavigationStateManager through viewport hooks
         }
-        
+
         // Node drag
-        if (this.interactionState.dragging.node) {
-            const wasDuplication = this.interactionState.dragging.isDuplication;
-            const hasMoved = this.interactionState.dragging.hasMoved;
-            
-            // Capture initial positions before clearing drag state
-            const capturedInitialPositions = this.interactionState.dragging.initialPositions ? 
-                new Map(this.interactionState.dragging.initialPositions) : null;
-            
-            // Broadcast move operation for collaboration
-            // Skip move operations for duplicated nodes, temporary nodes, or if no movement occurred
-            if (window.app?.operationPipeline && wasInteracting && !wasDuplication && hasMoved) {
-                const selectedNodes = this.selection.getSelectedNodes();
-                // Filter out temporary nodes that don't exist on server yet
-                const collaborativeNodes = selectedNodes.filter(n => {
-                    // Exclude temporary nodes
-                    if (n._isTemporary || n._localId || n._pendingSync) {
-                        return false;
-                    }
-                    // Exclude nodes with invalid IDs
-                    if (!n.id || typeof n.id !== 'number') {
-                        return false;
-                    }
-                    // Exclude nodes that previously failed sync
-                    if (n._syncFailed) {
-                        return false;
-                    }
-                    return true;
-                });
-                
-                if (collaborativeNodes.length === 1) {
-                    const node = collaborativeNodes[0];
-                    const moveData = {
-                        nodeId: node.id,
-                        position: [...node.pos]
-                    };
-                    
-                    // Include initial position if this was a drag operation
-                    if (capturedInitialPositions) {
-                        const initialPos = capturedInitialPositions.get(node.id);
-                        if (initialPos) {
-                            moveData.initialPosition = initialPos;
-                        }
-                    }
-                    
-                    // For move operations, we don't need to send media properties
-                    // The server already has this data and positions are the only thing changing
-                    
-                    window.app.operationPipeline.execute('node_move', moveData);
-                } else if (collaborativeNodes.length > 1) {
-                    // For very large selections, chunk the move operations
-                    if (collaborativeNodes.length > 50) {
-                        console.log(`📦 Chunking move operation for ${collaborativeNodes.length} nodes`);
-                        
-                        const chunkSize = 20;
-                        const chunks = [];
-                        
-                        for (let i = 0; i < collaborativeNodes.length; i += chunkSize) {
-                            chunks.push(collaborativeNodes.slice(i, i + chunkSize));
-                        }
-                        
-                        // Execute chunks asynchronously to avoid blocking
-                        (async () => {
-                            for (let i = 0; i < chunks.length; i++) {
-                                const chunk = chunks[i];
-                                let moveData = {
-                                    nodeIds: chunk.map(n => n.id),
-                                    positions: chunk.map(n => [...n.pos])
-                                };
-                                
-                                // Include initial positions for chunk if this was a drag operation
-                                if (capturedInitialPositions) {
-                                    const initialPositions = {};
-                                    for (const node of chunk) {
-                                        const initialPos = capturedInitialPositions.get(node.id);
-                                        if (initialPos) {
-                                            initialPositions[node.id] = initialPos;
-                                        }
-                                    }
-                                    if (Object.keys(initialPositions).length > 0) {
-                                        moveData.initialPositions = initialPositions;
-                                    }
-                                }
-                                
-                                // REMOVED: Validation - let server handle missing nodes gracefully
-                                
-                                try {
-                                    await window.app.operationPipeline.execute('node_move', moveData);
-                                    
-                                    // Small delay between chunks to avoid overwhelming server
-                                    if (i < chunks.length - 1) {
-                                        await new Promise(resolve => setTimeout(resolve, 50));
-                                    }
-                                } catch (error) {
-                                    console.error(`Move chunk ${i + 1}/${chunks.length} failed:`, error);
-                                    // Continue with other chunks
-                                }
-                            }
-                        })();
-                    } else {
-                        // Small batch can go directly
-                        let moveData = {
-                            nodeIds: collaborativeNodes.map(n => n.id),
-                            positions: collaborativeNodes.map(n => [...n.pos])
-                        };
-                        
-                        // Include initial positions if this was a drag operation
-                        if (capturedInitialPositions) {
-                            const initialPositions = {};
-                            for (const node of collaborativeNodes) {
-                                const initialPos = capturedInitialPositions.get(node.id);
-                                if (initialPos) {
-                                    initialPositions[node.id] = initialPos;
-                                }
-                            }
-                            if (Object.keys(initialPositions).length > 0) {
-                                moveData.initialPositions = initialPositions;
-                            }
-                        }
-                        
-                        // REMOVED: Validation - let server handle missing nodes gracefully
-                        
-                        window.app.operationPipeline.execute('node_move', moveData);
-                    }
-                }
-                // No warning for empty collaborative nodes - this is expected for duplication
+        if (this.interactionState.dragging.node && this.interactionState.dragging.hasMoved && !this.interactionState.dragging.isDuplication) {
+            const nodes = this.selection.getSelectedNodes();
+            if (nodes.length > 0) {
+                const finalPositions = nodes.map(n => [...n.pos]);
+                window.app.undoManager.endInteraction('node_move', { positions: finalPositions });
             }
-            
-            this.interactionState.dragging.node = null;
-            this.interactionState.dragging.offsets.clear();
-            this.interactionState.dragging.hasMoved = false;
-            if (this.interactionState.dragging.initialPositions) {
-                this.interactionState.dragging.initialPositions.clear();
-                this.interactionState.dragging.initialPositions = null;
-            }
-            
-            // For Alt+drag duplication, sync the nodes through collaborative system
-            // but keep the local nodes visible for seamless transition
-            if (wasDuplication && window.app?.operationPipeline) {
-                const duplicatedNodes = this.selection.getSelectedNodes();
-                if (duplicatedNodes.length > 0) {
-                    // Generate operation ID for tracking
-                    const operationId = `alt-drag-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
-                    
-                    // Collect temporary nodes for tracking
-                    const tempNodeMap = new Map();
-                    const tempNodeIds = [];
-                    duplicatedNodes.forEach(node => {
-                        if (node._isTemporary) {
-                            tempNodeMap.set(node.id, node);
-                            tempNodeIds.push(node.id);
-                            // Add operation ID to node for correlation
-                            node._operationId = operationId;
-                            console.log(`🏷️ Tracking temporary node: ${node.id} at [${node.pos[0]}, ${node.pos[1]}] with operation ${operationId}`);
-                        }
-                    });
-                    
-                    // Create node data for all duplicates at their final positions
-                    const nodeDataArray = duplicatedNodes.map(node => {
-                        // Use BulkOperationManager's optimization if available
-                        if (window.app?.bulkOperationManager) {
-                            return window.app.bulkOperationManager.optimizeNodeData(node);
-                        }
-                        
-                        // Fallback to inline optimization
-                        const nodeData = {
-                            type: node.type,
-                            pos: [...node.pos], // Final position after drag
-                            size: [...node.size],
-                            properties: { ...node.properties },
-                            flags: { ...node.flags },
-                            title: node.title,
-                            rotation: node.rotation || 0,
-                            aspectRatio: node.aspectRatio
-                        };
-                        
-                        // For cached images, only send hash and server URL, not the full data
-                        if (node.type === 'media/image' && node.properties.hash) {
-                            console.log(`📤 Preparing Alt+drag node data - hash:${node.properties.hash.substring(0,8)} serverUrl:${!!node.properties.serverUrl}`);
-                            
-                            // If we have a serverUrl, use minimal data
-                            if (node.properties.serverUrl) {
-                                nodeData.properties = {
-                                    hash: node.properties.hash,
-                                    filename: node.properties.filename,
-                                    serverUrl: node.properties.serverUrl,
-                                    serverFilename: node.properties.serverFilename
-                                };
-                                // Don't include the large src data URL
-                                delete nodeData.properties.src;
-                            }
-                            // Otherwise, we need to send the src for the server to upload
-                            else {
-                                console.log(`⚠️ No serverUrl for cached image, keeping src data`);
-                            }
-                        }
-                        
-                        return nodeData;
-                    });
-                    
-                    // Create through collaborative system WITHOUT removing local nodes
-                    let operationPromise;
-                    
-                    // For Alt+drag with many nodes, chunk the operation manually
-                    if (nodeDataArray.length > 20) {
-                        // Split into smaller chunks and execute sequentially
-                        const chunkSize = 10;
-                        const chunks = [];
-                        for (let i = 0; i < nodeDataArray.length; i += chunkSize) {
-                            chunks.push(nodeDataArray.slice(i, i + chunkSize));
-                        }
-                        
-                        console.log(`📦 Alt+drag: Splitting ${nodeDataArray.length} nodes into ${chunks.length} chunks`);
-                        
-                        // Execute chunks sequentially
-                        operationPromise = (async () => {
-                            const results = [];
-                            for (let i = 0; i < chunks.length; i++) {
-                                const chunk = chunks[i];
-                                console.log(`📤 Sending chunk ${i + 1}/${chunks.length} with ${chunk.length} nodes`);
-                                
-                                try {
-                                    const result = await window.app.operationPipeline.execute('node_duplicate', {
-                                        nodeIds: [],
-                                        nodeData: chunk,
-                                        offset: [0, 0]
-                                    });
-                                    
-                                    if (result && result.result && result.result.nodes) {
-                                        results.push(...result.result.nodes);
-                                    }
-                                    
-                                    // Small delay between chunks
-                                    if (i < chunks.length - 1) {
-                                        await new Promise(resolve => setTimeout(resolve, 100));
-                                    }
-                                } catch (error) {
-                                    console.error(`❌ Chunk ${i + 1} failed:`, error);
-                                    // Continue with other chunks
-                                }
-                            }
-                            
-                            return { result: { nodes: results } };
-                        })();
-                    } else {
-                        // Track operation in StateSyncManager's OperationTracker
-                        if (window.app?.operationPipeline?.stateSyncManager?.operationTracker) {
-                            window.app.operationPipeline.stateSyncManager.operationTracker.trackOperation(operationId, {
-                                type: 'node_duplicate',
-                                tempNodeIds: tempNodeIds,
-                                nodeData: nodeDataArray
-                            });
-                        }
-                        
-                        // Small operations can go directly
-                        operationPromise = window.app.operationPipeline.execute('node_duplicate', {
-                            nodeIds: [], // Empty since we're providing explicit node data
-                            nodeData: nodeDataArray, // Explicit node data with final positions
-                            offset: [0, 0], // No offset, already positioned
-                            operationId: operationId // Include operation ID for correlation
-                        });
-                    }
-                    
-                    operationPromise.then(result => {
-                        console.log('🔄 Alt+drag duplicate server response received');
-                        
-                        // Clear selection
-                        this.selection.clear();
-                        
-                        // For optimistic updates, select the nodes immediately
-                        if (window.app?.operationPipeline?.stateSyncManager?.optimisticEnabled) {
-                            if (result && result.result && result.result.nodes) {
-                                result.result.nodes.forEach(nodeData => {
-                                    // Find the actual node in the graph by ID
-                                    const node = this.graph.getNodeById(nodeData.id);
-                                    if (node) {
-                                        this.selection.selectNode(node, true);
-                                    }
-                                });
-                            }
-                        } else {
-                            // For non-optimistic, store node IDs to select when they arrive from server
-                            if (result && result.result && result.result.nodes) {
-                                this._pendingSelectionNodeIds = result.result.nodes.map(n => n.id);
-                            }
-                        }
-                        
-                        // Force redraw to ensure any loading states are visible
-                        this.dirty_canvas = true;
-                        
-                    }).catch(error => {
-                        console.error('❌ Alt+drag duplicate failed:', error);
-                        // On error, just remove the temporary flag
-                        tempNodeMap.forEach(node => {
-                            delete node._isTemporary;
-                            delete node._temporaryCreatedAt;
-                        });
-                    });
-                }
-            }
-            
-            this.interactionState.dragging.isDuplication = false;
-            
-            // Save navigation state after node drag operations
-            if (wasInteracting && window.navigationStateManager) {
-                console.log('📍 Saving navigation state after node drag');
-                window.navigationStateManager.onViewportChange();
-            }
-            
-            // For duplication: always create undo state (even without movement)
-            // For regular drag: only create undo state if there was interaction
-            // DISABLED: Undo state is now handled by the OperationPipeline through node_move operations
-            // This prevents duplicate undo entries for drag operations
-            // if (wasDuplication || wasInteracting) {
-            //     this.pushUndoState();
-            // }
         }
-        
+
         // Resize
         if (this.interactionState.resizing.active) {
-            // Broadcast resize operation for collaboration
-            if (window.app?.operationPipeline && wasInteracting) {
-                const selectedNodes = this.selection.getSelectedNodes();
-                console.log(`🎯 Finishing resize operation for ${selectedNodes.length} nodes`);
-                
-                if (selectedNodes.length === 1) {
-                    const node = selectedNodes[0];
-                    // For rotated nodes, include position to maintain center
-                    const params = {
-                        nodeIds: [node.id],
-                        sizes: [[node.size[0], node.size[1]]]
-                    };
-                    if (node.rotation && Math.abs(node.rotation) > 0.001) {
-                        params.positions = [[node.pos[0], node.pos[1]]];
-                    }
-                    console.log('📐 Executing node_resize:', params);
-                    window.app.operationPipeline.execute('node_resize', params);
-                } else if (selectedNodes.length > 1) {
-                    const params = {
-                        nodeIds: selectedNodes.map(n => n.id),
-                        sizes: selectedNodes.map(n => [...n.size]),
-                        source: 'multi_scale'
-                    };
-                    // Multi-node resize ALWAYS needs positions because nodes scale relative to bounding box
-                    // This is true for both uniform and non-uniform scaling
-                    params.positions = selectedNodes.map(n => [...n.pos]);
-                    console.log('📐 Executing multi-node node_resize:', params);
-                    window.app.operationPipeline.execute('node_resize', params);
-                }
+            const nodes = Array.from(this.interactionState.resizing.nodes);
+            if (nodes.length > 0) {
+                const finalSizes = nodes.map(n => [...n.size]);
+                const finalPositions = nodes.map(n => [...n.pos]);
+                window.app.undoManager.endInteraction('node_resize', { sizes: finalSizes, positions: finalPositions });
             }
-            
-            this.interactionState.resizing.active = false;
-            this.interactionState.resizing.node = null;
-            this.interactionState.resizing.nodes.clear();
-            this.interactionState.resizing.initial.clear();
-            this.interactionState.resizing.initialBBox = null; // Clear initial bbox on finish
-            
-            // Save navigation state after resize operations
-            if (wasInteracting && window.navigationStateManager) {
-                console.log('📍 Saving navigation state after resize');
-                window.navigationStateManager.onViewportChange();
-            }
-            
-            // DISABLED: Undo state is now handled by the OperationPipeline through node_resize operations
-            // if (wasInteracting) this.pushUndoState();
         }
-        
+
         // Rotation
         if (this.interactionState.rotating.active) {
-            // Send rotation update through OperationPipeline
-            if (window.app?.operationPipeline && wasInteracting) {
-                const selectedNodes = this.selection.getSelectedNodes();
-                if (selectedNodes.length === 1) {
-                    const node = selectedNodes[0];
-                    window.app.operationPipeline.execute('node_rotate', {
-                        nodeId: node.id,
-                        angle: node.rotation || 0
-                    });
-                } else if (selectedNodes.length > 1) {
-                    // For multi-selection rotation, we need to update both rotation AND position
-                    // since we're rotating around the group center, not individual centers
-                    
-                    // Check if this was a multi-rotation (around group center)
-                    const isMultiRotation = this.interactionState.rotating.type === 'multi-rotation';
-                    
-                    if (isMultiRotation) {
-                        // For multi-rotation around group center, send a single batch operation
-                        // This includes both rotations and positions in one message
-                        window.app.operationPipeline.execute('node_rotate', {
-                            nodeIds: selectedNodes.map(n => n.id),
-                            angles: selectedNodes.map(n => n.rotation || 0),
-                            positions: selectedNodes.map(n => [...n.pos]),
-                            source: 'group_rotation'
-                        });
-                    } else {
-                        // Single rotation handle in multi-selection context
-                        // Only rotations change, not positions - use batch operation
-                        window.app.operationPipeline.execute('node_rotate', {
-                            nodeIds: selectedNodes.map(n => n.id),
-                            angles: selectedNodes.map(n => n.rotation || 0),
-                            source: 'multi_select_rotation'
-                        });
-                    }
-                }
+            const nodes = Array.from(this.interactionState.rotating.nodes);
+            if (nodes.length > 0) {
+                const finalRotations = nodes.map(n => n.rotation || 0);
+                const finalPositions = nodes.map(n => [...n.pos]);
+                window.app.undoManager.endInteraction('node_rotate', { 
+                    angles: finalRotations, 
+                    positions: finalPositions 
+                });
             }
-            
-            this.interactionState.rotating.active = false;
-            this.interactionState.rotating.node = null;
-            this.interactionState.rotating.nodes.clear();
-            this.interactionState.rotating.initial.clear();
-            
-            // Save navigation state after rotation operations
-            if (wasInteracting && window.navigationStateManager) {
-                console.log('📍 Saving navigation state after rotation');
-                window.navigationStateManager.onViewportChange();
-            }
-            
-            // DISABLED: Undo state is now handled by the OperationPipeline through node_rotate operations
-            // if (wasInteracting) this.pushUndoState();
         }
-        
-        // Selection
+
+        // Reset all interaction states
+        this.interactionState.dragging.node = null;
+        this.interactionState.dragging.offsets.clear();
+        this.interactionState.dragging.hasMoved = false;
+        this.interactionState.dragging.initialPositions = null;
+        this.interactionState.resizing.active = false;
+        this.interactionState.resizing.nodes.clear();
+        this.interactionState.resizing.initial.clear();
+        this.interactionState.rotating.active = false;
+        this.interactionState.rotating.nodes.clear();
+        this.interactionState.rotating.initial.clear();
+
         if (this.interactionState.selecting.active) {
             this.selection.finishSelection(this.graph.nodes);
             this.interactionState.selecting.active = false;
         }
-        
+
         this.dirty_canvas = true;
     }
     
@@ -2121,7 +1699,19 @@ Mode: ${this.fpsTestMode}`;
         }
         
         // Undo/Redo - Let ClientUndoManager handle these shortcuts
-        // The ClientUndoManager always handles keyboard shortcuts, so we skip these here
+        // Return true to prevent default handling and avoid double processing
+        if (ctrl && key === 'z') {
+            // Undo/Redo handled by ClientUndoManager
+            return true;
+        }
+        if (ctrl && shift && key === 'z') {
+            // Redo handled by ClientUndoManager
+            return true;
+        }
+        if (ctrl && key === 'y') {
+            // Redo (Windows style) handled by ClientUndoManager
+            return true;
+        }
         
         // Copy/Cut/Paste
         if (ctrl && key === 'c') {
@@ -2656,44 +2246,20 @@ Mode: ${this.fpsTestMode}`;
     async deleteSelected() {
         const selected = this.selection.getSelectedNodes();
         if (selected.length === 0) return;
-        
-        // Use OperationPipeline for collaborative deletion
-        if (window.app?.operationPipeline) {
-            try {
-                const nodeIds = selected.map(node => node.id);
-                await window.app.operationPipeline.execute('node_delete', {
-                    nodeIds: nodeIds
-                });
-                // The operation pipeline handles the actual deletion and selection clearing
-                // No need to manually remove nodes or clear selection
-                this.dirty_canvas = true;
-                
-                // Save navigation state after deletion
-                if (window.navigationStateManager) {
-                    console.log('📍 Saving navigation state after node deletion');
-                    window.navigationStateManager.onViewportChange();
-                }
-            } catch (error) {
-                console.error('Failed to delete nodes:', error);
-            }
-        } else {
-            // Fallback to local deletion if no operation pipeline
-            this.deleteSelectedLocal();
+
+        const undoManager = window.app?.undoManager;
+        if (selected.length > 1) {
+            undoManager?.beginTransaction('delete_multiple_nodes');
         }
-    }
-    
-    deleteSelectedLocal() {
-        const selected = this.selection.getSelectedNodes();
-        if (selected.length === 0) return;
-        
-        this.pushUndoState();
-        
-        for (const node of selected) {
-            this.graph.remove(node);
+
+        const nodeIds = selected.map(node => node.id);
+        await window.app.operationPipeline.execute('node_delete', { nodeIds });
+
+        if (selected.length > 1) {
+            undoManager?.commitTransaction();
         }
-        
+
         this.selection.clear();
-        this.dirty_canvas = true;
     }
     
     selectAll() {
@@ -2881,65 +2447,25 @@ Mode: ${this.fpsTestMode}`;
     alignSelected(axis) {
         const selected = this.selection.getSelectedNodes();
         if (selected.length < 2) return;
-        
-        this.pushUndoState();
-        if (this.alignmentAnimator) {
-            // Perform alignment
-            this.alignmentAnimator.alignNodes(selected, axis);
-            
-            // Send the resulting positions through OperationPipeline
-            if (window.app?.operationPipeline) {
-                // Collect the new positions after alignment
-                const nodeIds = selected.map(n => n.id);
-                const positions = selected.map(n => [...n.pos]);
-                
-                // Send as a single batch move operation with alignment source
-                window.app.operationPipeline.execute('node_move', {
-                    nodeIds: nodeIds,
-                    positions: positions
-                }, { source: 'alignment' });
-            }
-        }
+
+        window.app.undoManager.beginInteraction(selected);
+        window.app.undoManager.endInteraction('node_align', { axis });
     }
-    
+
     moveSelectedUp() {
         const selected = this.selection.getSelectedNodes();
         if (selected.length === 0) return;
-        
-        this.pushUndoState();
-        
-        if (selected.length === 1) {
-            // Single node: smart overlapping detection
-            this.moveNodeUpSmart(selected[0]);
-        } else {
-            // Multiple nodes: group layer movement
-            this.moveGroupUp(selected);
-        }
-        
-        // Broadcast layer order change for collaboration
-        this.broadcastLayerOrderChange(selected, 'up');
-        
-        this.dirty_canvas = true;
+
+        const nodeIds = selected.map(node => node.id);
+        window.app.operationPipeline.execute('node_layer_order', { nodeIds, direction: 'up' });
     }
     
     moveSelectedDown() {
         const selected = this.selection.getSelectedNodes();
         if (selected.length === 0) return;
-        
-        this.pushUndoState();
-        
-        if (selected.length === 1) {
-            // Single node: smart overlapping detection
-            this.moveNodeDownSmart(selected[0]);
-        } else {
-            // Multiple nodes: group layer movement
-            this.moveGroupDown(selected);
-        }
-        
-        // Broadcast layer order change for collaboration
-        this.broadcastLayerOrderChange(selected, 'down');
-        
-        this.dirty_canvas = true;
+
+        const nodeIds = selected.map(node => node.id);
+        window.app.operationPipeline.execute('node_layer_order', { nodeIds, direction: 'down' });
     }
     
     // ===================================
@@ -3380,7 +2906,7 @@ Mode: ${this.fpsTestMode}`;
         input.style.outline = 'none';
         input.style.background = 'rgba(0, 0, 0, 0.8)';
         input.style.color = '#ffffff';
-        input.style.fontFamily = 'Arial';
+        input.style.fontFamily = FONT_CONFIG.APP_FONT;
         input.style.padding = '2px 4px';
         input.style.borderRadius = '4px';
         input.style.minWidth = '150px';
@@ -3817,10 +3343,7 @@ Mode: ${this.fpsTestMode}`;
     // ===================================
     
     forceRedraw() {
-        // Force redraw on next frame
         this.dirty_canvas = true;
-        // Don't call draw() directly - let the render loop handle it
-        // This prevents conflicting requestAnimationFrame loops
     }
     
     invalidateVisibilityCache() {
@@ -4242,7 +3765,7 @@ Mode: ${this.fpsTestMode}`;
         // Set font size that scales with zoom but has reasonable limits
         const baseFontSize = 14;
         const fontSize = baseFontSize / screenScale;
-        ctx.font = `${fontSize}px Arial`;
+        ctx.font = `${fontSize}px ${FONT_CONFIG.APP_FONT_CANVAS}`;
         ctx.textAlign = 'left';
         ctx.textBaseline = 'bottom';
         
@@ -4407,7 +3930,7 @@ Mode: ${this.fpsTestMode}`;
         ctx.fillRect(margin, yPos, statsWidth, statsHeight);
         
         // Stats text
-        ctx.font = '12px monospace';
+        ctx.font = `12px ${FONT_CONFIG.MONO_FONT_CANVAS}`;
         ctx.fillStyle = '#fff';
         
         // Count unique cached assets on the canvas
@@ -4464,18 +3987,7 @@ Mode: ${this.fpsTestMode}`;
     }
     
     getConfig(path, defaultValue) {
-        // Helper to safely get config values
-        try {
-            const keys = path.split('.');
-            let value = window.CONFIG || {};
-            for (const key of keys) {
-                value = value[key];
-                if (value === undefined) return defaultValue;
-            }
-            return value;
-        } catch (e) {
-            return defaultValue;
-        }
+        return window.CONFIG?.[path] || defaultValue;
     }
     
     // ===================================
@@ -4483,29 +3995,36 @@ Mode: ${this.fpsTestMode}`;
     // ===================================
     
     cleanup() {
-        // Stop animation system
+        // Stop render loop
         if (this.animationSystem) {
             this.animationSystem.stop();
         }
         
-        // Cleanup viewport
-        if (this.viewport) {
-            this.viewport.cleanup();
-        }
-        
-        // Clear timeouts
-        if (this._saveTimeout) {
-            clearTimeout(this._saveTimeout);
-        }
-        
         // Remove event listeners
-        this.canvas.removeEventListener('mousedown', this.onMouseDown);
-        this.canvas.removeEventListener('mousemove', this.onMouseMove);
-        this.canvas.removeEventListener('mouseup', this.onMouseUp);
-        this.canvas.removeEventListener('wheel', this.onMouseWheel);
-        this.canvas.removeEventListener('dblclick', this.onDoubleClick);
-        document.removeEventListener('keydown', this.onKeyDown);
-        window.removeEventListener('resize', this.debouncedResize);
+        this.canvas.removeEventListener('mousedown', this.onMouseDown.bind(this));
+        this.canvas.removeEventListener('mousemove', this.onMouseMove.bind(this));
+        this.canvas.removeEventListener('mouseup', this.onMouseUp.bind(this));
+        this.canvas.removeEventListener('wheel', this.onMouseWheel.bind(this));
+        this.canvas.removeEventListener('contextmenu', e => e.preventDefault());
+        this.canvas.removeEventListener('dblclick', this.onDoubleClick.bind(this));
+        
+        document.removeEventListener('keydown', this.onKeyDown.bind(this));
+        
+        if (this.debouncedResize) {
+            window.removeEventListener('resize', this.debouncedResize);
+        }
+        
+        if (this.selection) {
+            this.selection.removeCallback(this.onSelectionChanged.bind(this));
+        }
+        
+        // Clear references
+        this.graph = null;
+        this.viewport = null;
+        this.selection = null;
+        this.handleDetector = null;
+        this.animationSystem = null;
+        this.alignmentManager = null;
         
         console.log('LGraphCanvas cleaned up');
     }
@@ -4516,26 +4035,15 @@ Mode: ${this.fpsTestMode}`;
     
     getDebugInfo() {
         return {
-            viewport: this.viewport.getDebugInfo ? this.viewport.getDebugInfo() : 'N/A',
-            selection: this.selection.getDebugInfo ? this.selection.getDebugInfo() : 'N/A',
-            graph: this.graph.getDebugInfo ? this.graph.getDebugInfo() : 'N/A',
-            performance: {
-                fps: this.fps,
-                dirty: this.dirty_canvas,
-                frameCounter: this.frameCounter
-            },
-            interactions: {
-                dragging: this.interactionState.dragging.canvas || !!this.interactionState.dragging.node,
-                resizing: this.interactionState.resizing.active,
-                rotating: this.interactionState.rotating.active,
-                selecting: this.interactionState.selecting.active
-            },
-            mouse: {
-                canvas: this.mouseState.canvas,
-                graph: this.mouseState.graph,
-                down: this.mouseState.down,
-                button: this.mouseState.button
-            }
+            fps: this.fps,
+            nodes: this.graph?.nodes?.length || 0,
+            selected: this.selection?.size() || 0,
+            viewport: this.viewport?.getDebugInfo(),
+            interaction: this.interactionState,
+            mouse: this.mouseState,
+            loadingQueue: this.loadingQueue.size,
+            preloadQueue: this.preloadQueue.size,
+            concurrentLoads: this.currentLoads
         };
     }
     
@@ -4590,94 +4098,103 @@ Mode: ${this.fpsTestMode}`;
     // ===================================
     
     findNodeClosestToViewportCenter() {
-        const nodes = this.graph.nodes;
-        if (nodes.length === 0) return null;
-        
-        // Get viewport center coordinates
-        const viewport = this.viewport.getViewport();
-        const centerX = viewport.x + viewport.width / 2;
-        const centerY = viewport.y + viewport.height / 2;
+        const centerX = this.canvas.width / 2;
+        const centerY = this.canvas.height / 2;
+        const graphCenter = this.viewport.convertCanvasToGraph(centerX, centerY);
         
         let closestNode = null;
-        let closestDistance = Infinity;
+        let minDistance = Infinity;
         
-        for (const node of nodes) {
-            const [nodeX, nodeY] = node.getCenter();
-            const distance = Utils.distance(centerX, centerY, nodeX, nodeY);
+        for (const node of this.graph.nodes) {
+            const nodeCenterX = node.pos[0] + node.size[0] / 2;
+            const nodeCenterY = node.pos[1] + node.size[1] / 2;
+            const distance = Math.sqrt(
+                Math.pow(nodeCenterX - graphCenter[0], 2) +
+                Math.pow(nodeCenterY - graphCenter[1], 2)
+            );
             
-            if (distance < closestDistance) {
-                closestDistance = distance;
+            if (distance < minDistance) {
+                minDistance = distance;
                 closestNode = node;
             }
         }
         
         return closestNode;
     }
-
+    
     findNodeInDirection(fromNode, direction) {
-        const nodes = this.graph.nodes;
-        if (nodes.length <= 1) return null;
+        let bestCandidate = null;
+        let minScore = Infinity;
         
-        const [fromX, fromY] = fromNode.getCenter();
-        let bestNode = null;
-        let bestScore = Infinity;
+        const fromCenter = [
+            fromNode.pos[0] + fromNode.size[0] / 2,
+            fromNode.pos[1] + fromNode.size[1] / 2
+        ];
         
-        // Define direction angles (in radians)
-        const directionAngles = {
-            'right': 0,
-            'down': Math.PI / 2,
-            'left': Math.PI,
-            'up': -Math.PI / 2
-        };
-        
-        const targetAngle = directionAngles[direction];
-        const angleTolerance = Utils.degToRad(CONFIG.NAVIGATION.DIRECTION_ANGLE_TOLERANCE);
-        
-        for (const node of nodes) {
-            // Skip the source node
-            if (node === fromNode) continue;
+        for (const targetNode of this.graph.nodes) {
+            if (targetNode.id === fromNode.id) continue;
             
-            const [toX, toY] = node.getCenter();
+            const targetCenter = [
+                targetNode.pos[0] + targetNode.size[0] / 2,
+                targetNode.pos[1] + targetNode.size[1] / 2
+            ];
             
-            // Calculate angle to this node
-            const angle = Utils.angleFromTo(fromX, fromY, toX, toY);
+            const dx = targetCenter[0] - fromCenter[0];
+            const dy = targetCenter[1] - fromCenter[1];
             
-            // Calculate angular difference, normalized to [-π, π]
-            let angleDiff = angle - targetAngle;
-            while (angleDiff > Math.PI) angleDiff -= 2 * Math.PI;
-            while (angleDiff < -Math.PI) angleDiff += 2 * Math.PI;
+            let isCandidate = false;
+            let primaryDistance = 0;
+            let secondaryDistance = 0;
             
-            // Skip nodes that aren't in the general direction
-            if (Math.abs(angleDiff) > angleTolerance) continue;
+            switch (direction) {
+                case 'right':
+                    if (dx > 0) {
+                        isCandidate = true;
+                        primaryDistance = dx;
+                        secondaryDistance = Math.abs(dy);
+                    }
+                    break;
+                case 'left':
+                    if (dx < 0) {
+                        isCandidate = true;
+                        primaryDistance = -dx;
+                        secondaryDistance = Math.abs(dy);
+                    }
+                    break;
+                case 'down':
+                    if (dy > 0) {
+                        isCandidate = true;
+                        primaryDistance = dy;
+                        secondaryDistance = Math.abs(dx);
+                    }
+                    break;
+                case 'up':
+                    if (dy < 0) {
+                        isCandidate = true;
+                        primaryDistance = -dy;
+                        secondaryDistance = Math.abs(dx);
+                    }
+                    break;
+            }
             
-            // Calculate distance
-            const distance = Utils.distance(fromX, fromY, toX, toY);
-            
-            // Score based on distance and angular deviation
-            // Prefer closer nodes and those more aligned with the direction
-            const angleWeight = 0.3;
-            const distanceWeight = 0.7;
-            const score = distance * distanceWeight + Math.abs(angleDiff) * 1000 * angleWeight;
-            
-            if (score < bestScore) {
-                bestScore = score;
-                bestNode = node;
+            if (isCandidate) {
+                // Score prioritizes being in the correct direction and then being aligned
+                const score = primaryDistance + secondaryDistance * 2;
+                if (score < minScore) {
+                    minScore = score;
+                    bestCandidate = targetNode;
+                }
             }
         }
         
-        return bestNode;
+        return bestCandidate;
     }
     
     navigateToNode(node) {
         if (!node) return;
         
-        // Get the node's bounding box
-        const bbox = node.getBoundingBox();
-        
-        // Zoom to fit the node with animation
-        this.viewport.zoomToFit(bbox, 80, true);
-        
-        // Mark canvas as dirty
-        this.dirty_canvas = true;
+        this.selection.clear();
+        this.selection.selectNode(node, true);
+        this.centerOnSelection();
     }
 }

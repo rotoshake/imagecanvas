@@ -8,9 +8,6 @@ class OperationPipeline {
         this.commandRegistry = new Map();
         this.executionQueue = [];
         this.executing = false;
-        this.history = [];
-        this.historyIndex = -1;
-        this.maxHistorySize = 50;
         
         // Track executed operations to prevent duplicates
         this.executedOperations = new Set();
@@ -25,6 +22,14 @@ class OperationPipeline {
         
         // Register built-in commands
         this.registerBuiltinCommands();
+        
+        // Register canvas commands
+        if (window.CanvasCommands?.NodeLayerOrderCommand) {
+            this.registerCommand('node_layer_order', window.CanvasCommands.NodeLayerOrderCommand);
+        }
+        if (window.CanvasCommands?.NodeAlignCommand) {
+            this.registerCommand('node_align', window.CanvasCommands.NodeAlignCommand);
+        }
         
         console.log('🚀 OperationPipeline initialized');
         console.log('📝 Registered commands:', Array.from(this.commandRegistry.keys()));
@@ -110,6 +115,17 @@ class OperationPipeline {
     createCommand(type, params, origin = 'local') {
         let CommandClass = this.commandRegistry.get(type);
         
+        // Lazy registration for commands that might not be ready at initialization
+        if (!CommandClass) {
+            if (type === 'node_align' && window.CanvasCommands?.NodeAlignCommand) {
+                this.registerCommand('node_align', window.CanvasCommands.NodeAlignCommand);
+                CommandClass = window.CanvasCommands.NodeAlignCommand;
+            } else if (type === 'node_layer_order' && window.CanvasCommands?.NodeLayerOrderCommand) {
+                this.registerCommand('node_layer_order', window.CanvasCommands.NodeLayerOrderCommand);
+                CommandClass = window.CanvasCommands.NodeLayerOrderCommand;
+            }
+        }
+
         // If command not found, try registering extended commands as a fallback
         if (!CommandClass && (type === 'node_resize' || type === 'node_rotate' || type === 'node_reset')) {
             console.warn(`⚠️ Command ${type} not found, attempting to register extended commands...`);
@@ -153,6 +169,11 @@ class OperationPipeline {
             });
         }
         
+        // Pass initial state to the command
+        if (options.initialState) {
+            command.initialState = options.initialState;
+        }
+
         // Check for duplicate remote operations
         if (command.origin === 'remote' && this.executedOperations.has(command.id)) {
             console.log(`⏭️ Skipping duplicate operation: ${command.id}`);
@@ -243,37 +264,9 @@ class OperationPipeline {
                 // Route through StateSyncManager for server-authoritative execution
                 console.log('🔄 Using server-authoritative state sync');
                 
-                // For certain UI operations, execute locally first for immediate feedback
-                const optimisticOperations = ['node_reset', 'node_rotate'];
-                if (optimisticOperations.includes(command.type)) {
-                    console.log('⚡ Executing optimistic update for immediate feedback');
-                    const context = {
-                        app: this.app,
-                        graph: this.app.graph,
-                        canvas: this.app.graphCanvas
-                    };
-                    
-                    // Execute locally for immediate visual feedback
-                    try {
-                        await command.execute(context);
-                        
-                        // Mark affected nodes as having optimistic updates to prevent server overwrites
-                        const nodeIds = this.extractNodeIds(command);
-                        nodeIds.forEach(nodeId => {
-                            const node = this.app.graph.getNodeById(nodeId);
-                            if (node) {
-                                node._optimisticUpdate = {
-                                    operationId: command.id,
-                                    timestamp: Date.now(),
-                                    type: command.type
-                                };
-                            }
-                        });
-                    } catch (error) {
-                        console.error('Optimistic update failed:', error);
-                        // Continue with server sync anyway
-                    }
-                }
+                // StateSyncManager already handles optimistic updates properly
+                // We should NOT execute commands here as it interferes with undo data preparation
+                // The command will be executed by StateSyncManager.applyOptimistic()
                 
                 // Let transaction manager process the operation
                 if (this.app.transactionManager) {
@@ -317,10 +310,7 @@ class OperationPipeline {
                     }
                 }
                 
-                // Add to history (local commands only)
-                if (command.origin === 'local' && !options.skipHistory) {
-                    this.addToHistory(command);
-                }
+                // No longer adding to local history
                 
                 // No longer using legacy broadcast - state sync handles all network communication
                 
@@ -389,120 +379,9 @@ class OperationPipeline {
     }
     
     /**
-     * Add command to history
-     */
-    addToHistory(command) {
-        // Remove any commands after current index (when new action after undo)
-        if (this.historyIndex < this.history.length - 1) {
-            this.history = this.history.slice(0, this.historyIndex + 1);
-        }
-        
-        // Add new command
-        this.history.push(command);
-        this.historyIndex++;
-        
-        // Limit history size
-        if (this.history.length > this.maxHistorySize) {
-            this.history.shift();
-            this.historyIndex--;
-        }
-        
-        console.log(`📚 Added to history: ${command.type} (index: ${this.historyIndex})`);
-    }
-    
-    /**
-     * Undo last operation
-     */
-    async undo() {
-        if (this.historyIndex < 0) {
-            console.log('Nothing to undo');
-            return false;
-        }
-        
-        const command = this.history[this.historyIndex];
-        
-        try {
-            const context = {
-                app: this.app,
-                graph: this.app.graph,
-                canvas: this.app.graphCanvas
-            };
-            
-            await command.undo(context);
-            this.historyIndex--;
-            
-            // Broadcast undo
-            if (this.app.networkLayer?.isConnected) {
-                this.app.networkLayer.broadcast({
-                    type: 'undo',
-                    params: { commandId: command.id }
-                });
-            }
-            
-            // Mark canvas dirty
-            if (this.app.graphCanvas) {
-                this.app.graphCanvas.dirty_canvas = true;
-            }
-            
-            console.log(`↩️ Undid: ${command.type}`);
-            return true;
-            
-        } catch (error) {
-            console.error('Undo failed:', error);
-            return false;
-        }
-    }
-    
-    /**
-     * Redo operation
-     */
-    async redo() {
-        if (this.historyIndex >= this.history.length - 1) {
-            console.log('Nothing to redo');
-            return false;
-        }
-        
-        this.historyIndex++;
-        const command = this.history[this.historyIndex];
-        
-        try {
-            const context = {
-                app: this.app,
-                graph: this.app.graph,
-                canvas: this.app.graphCanvas
-            };
-            
-            await command.execute(context);
-            
-            // Broadcast redo
-            if (this.app.networkLayer?.isConnected) {
-                this.app.networkLayer.broadcast({
-                    type: 'redo',
-                    params: { commandId: command.id }
-                });
-            }
-            
-            // Mark canvas dirty
-            if (this.app.graphCanvas) {
-                this.app.graphCanvas.dirty_canvas = true;
-            }
-            
-            console.log(`↪️ Redid: ${command.type}`);
-            return true;
-            
-        } catch (error) {
-            console.error('Redo failed:', error);
-            this.historyIndex--;
-            return false;
-        }
-    }
-    
-    /**
      * Clear history
      */
     clearHistory() {
-        this.history = [];
-        this.historyIndex = -1;
         this.executedOperations.clear();
         console.log('🗑️ History cleared');
     }
@@ -575,10 +454,10 @@ class OperationPipeline {
      */
     getHistoryInfo() {
         return {
-            size: this.history.length,
-            index: this.historyIndex,
-            canUndo: this.historyIndex >= 0,
-            canRedo: this.historyIndex < this.history.length - 1
+            size: this.executedOperations.size,
+            index: -1, // No longer tracking local history index
+            canUndo: false, // No longer supporting local undo
+            canRedo: false // No longer supporting local redo
         };
     }
 }

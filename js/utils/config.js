@@ -61,7 +61,16 @@ const CONFIG = {
         SPRING_K: 1550,  // Spring constant (stiffness) - frame-rate independent
         SPRING_D: 44.0,   // Damping coefficient - frame-rate independent  
         TOLERANCE: 10,
-        ANIMATION_THRESHOLD: 2.0  // Higher = tighter/faster finish, lower = smoother/longer tail
+        ANIMATION_THRESHOLD: 2.0,  // Higher = tighter/faster finish, lower = smoother/longer tail
+        ANIMATION_DURATION: 150,   // Duration in milliseconds for ease animations
+        
+        // Performance optimizations for large node counts
+        LARGE_SCALE_THRESHOLD: 100,  // Switch to optimized mode above this many nodes
+        LARGE_SCALE_SPRING_K: 2500,  // Higher stiffness for faster convergence with many nodes
+        LARGE_SCALE_SPRING_D: 70.0,  // Higher damping to prevent oscillation
+        LARGE_SCALE_THRESHOLD_MULTIPLIER: 5.0,  // Looser threshold for large scales
+        MAX_ANIMATION_BATCH_SIZE: 100,  // Process this many nodes per frame maximum
+        FRAME_BUDGET_MS: 4  // Maximum milliseconds to spend on alignment animation per frame
     },
     
     NAVIGATION: {

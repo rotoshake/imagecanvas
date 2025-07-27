@@ -4,6 +4,7 @@
 
 class ImageCanvasApp {
     constructor(canvasElement) {
+        console.log('[STARTUP_TRACE] ImageCanvasApp constructor started');
         this.canvas = canvasElement;
         this.graph = new LGraph();
         this.graphCanvas = new LGraphCanvas(this.canvas, this.graph);
@@ -13,6 +14,7 @@ class ImageCanvasApp {
         this.backgroundSyncManager = null; // Will be initialized after network layer
         
         this.init();
+        console.log('[STARTUP_TRACE] ImageCanvasApp constructor finished');
     }
     
     async init() {
@@ -794,6 +796,7 @@ window.LiteGraph = {
 // ===================================
 
 async function initApp() {
+    console.log('[STARTUP_TRACE] initApp started');
     const canvasElement = document.getElementById('mycanvas');
     if (!canvasElement) {
         console.error('Canvas element not found');
@@ -801,13 +804,23 @@ async function initApp() {
     }
     
     try {
+        // Create the app instance
         app = new ImageCanvasApp(canvasElement);
         
         // Make app globally accessible for debugging
         window.app = app;
         window.lcanvas = app.graphCanvas;
         
-        // Initialize Canvas Navigator
+        // Initialize the collaborative architecture BEFORE other components
+        console.log('[STARTUP_TRACE] Initializing collaborative architecture...');
+        if (window.AutoInit) {
+            window.AutoInit.initialize();
+            console.log('[STARTUP_TRACE] Collaborative architecture initialized');
+        } else {
+            console.error('[STARTUP_TRACE] AutoInit not available!');
+        }
+        
+        // Now initialize Canvas Navigator (guaranteed to have network layer)
         app.canvasNavigator = new CanvasNavigator(app);
         window.canvasNavigator = app.canvasNavigator;
         
@@ -837,6 +850,13 @@ async function initApp() {
         app.galleryViewManager = new GalleryViewManager(app);
         window.galleryViewManager = app.galleryViewManager;
         app.graphCanvas.galleryViewManager = app.galleryViewManager;
+        
+        // Initialize Undo Debug HUD (if available)
+        if (window.UndoDebugHUD) {
+            app.undoDebugHUD = new window.UndoDebugHUD(app);
+            window.undoDebugHUD = app.undoDebugHUD; // Global access for debugging
+            console.log('🐛 Undo Debug HUD initialized');
+        }
         
         // Load last canvas or create default
         // Use more robust initialization that doesn't strictly depend on collaborative architecture
@@ -912,6 +932,7 @@ async function initApp() {
             checkAndLoad();
         }, 500);
         
+        console.log('[STARTUP_TRACE] initApp finished');
     } catch (error) {
         console.error('Failed to initialize application:', error);
     }

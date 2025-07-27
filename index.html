@@ -13,113 +13,84 @@
     </style>
 </head>
 <body>
-    <canvas id="mycanvas"></canvas>
-    
-    <!-- Core utilities -->
-    <script src="js/utils/config.js"></script>
-    <script src="js/utils/utils.js"></script>
-    <script src="js/core/GraphCircularReferenceResolver.js"></script>
-    <script src="js/utils/cache.js"></script>
-    <script src="js/utils/state.js"></script>
-    <script src="js/utils/undo-optimization.js"></script>
-    
-    <!-- Core systems -->
-    <script src="js/core/animation.js"></script>
-    <script src="js/core/viewport.js"></script>
-    <script src="js/core/selection.js"></script>
-    <script src="js/core/handles.js"></script>
-    <script src="js/core/alignment.js"></script>
-    
-    <!-- Node classes -->
-    <script src="js/nodes/base-node.js"></script>
-    <script src="js/nodes/image-node.js"></script>
-    <script src="js/nodes/video-node.js"></script>
-    <script src="js/nodes/text-node.js"></script>
-    
-    <!-- Main application -->
-    <script src="js/graph.js"></script>
-    <!-- CanvasActionManager removed - actions now handled by OperationPipeline -->
-    
-    <!-- Performance optimization components (Phase 3) -->
-    <script src="js/actions/OperationBatcher.js"></script>
-    <script src="js/actions/IncrementalStateSynchronizer.js"></script>
-    <script src="js/actions/CompressionManager.js"></script>
-    <script src="js/actions/PerformanceWorker.js"></script>
-    
-    <script src="js/canvas.js"></script>
-    <script src="js/dragdrop.js"></script>
-    
-    <!-- Collaborative features (Phase 2) -->
-    <script>
-        // Try to load Socket.IO from the collaborative server
-        (function() {
-            const script = document.createElement('script');
-            script.src = CONFIG.SERVER.API_BASE + '/socket.io/socket.io.js';
-            script.onerror = function() {
-                console.warn('Collaborative server not available. Running in standalone mode.');
-                window.COLLABORATIVE_MODE = false;
-            };
-            script.onload = function() {
-                console.log('Socket.IO loaded successfully. Collaborative mode enabled.');
-                window.COLLABORATIVE_MODE = true;
-            };
-            document.head.appendChild(script);
-        })();
-    </script>
-    <script src="js/actions/ConnectionStateMachine.js"></script>
-    <script src="js/actions/ResourceManager.js"></script>
-    <script src="js/actions/ErrorBoundary.js"></script>
-    <!-- Legacy collaborative systems removed - now using new architecture -->
-    
-    <!-- New Collaborative Architecture -->
-    <script src="js/commands/Command.js"></script>
-    <script src="js/commands/NodeCommands.js"></script>
-    <script src="js/commands/NodeCommandsExtended.js"></script>
-    <script src="js/commands/BulkCommand.js"></script>
-    <script src="js/commands/ImageUploadCompleteCommand.js"></script>
-    <script src="js/core/CleanupManager.js"></script>
-    <script src="js/core/OperationDependencyTracker.js"></script>
-    <script src="js/core/OperationPipeline.js"></script>
-    <script src="js/core/NetworkLayer.js"></script>
-    <!-- MigrationAdapter no longer needed after full migration -->
-    <script src="js/core/PersistenceHandler.js"></script>
-    <script src="js/core/StateSyncManager.js"></script>
-    <script src="js/core/NavigationStateManager.js"></script>
-    <script src="js/core/GalleryViewManager.js"></script>
-    <script src="js/core/OperationTracker.js"></script>
-    <script src="js/core/BulkOperationManager.js"></script>
-    <script src="js/core/BackgroundSyncManager.js"></script>
-    <script src="js/core/LocalFirstOperations.js"></script>
-    <!-- Only load ClientUndoManager to prevent conflicts -->
-    <!-- <script src="js/core/HybridUndoRedoManager.js"></script> -->
-    <!-- <script src="js/core/CollaborativeUndoRedoManager.js"></script> -->
-    <script src="js/core/ClientUndoManager.js"></script>
-    <script src="js/core/TransactionManager.js"></script>
-    <!-- UniversalOperationRouter no longer needed after full migration -->
-    <script src="js/core/CollaborativeArchitecture.js"></script>
-    <script src="js/core/CanvasIntegration.js"></script>
-    <script src="js/core/ImageUploadManager.js"></script>
-    <script src="js/core/ImageProcessingProgressManager.js"></script>
-    <script src="js/core/ImageUploadCoordinator.js"></script>
-    <script src="js/core/ImageResourceCache.js"></script>
-    <script src="js/core/AutoInit.js"></script>
-    
-    <!-- UI Components -->
-    <script src="js/ui/unified-notifications.js"></script>
-    <script src="js/ui/canvas-navigator.js"></script>
-    <script src="js/ui/floating-properties-inspector.js"></script>
-    
-    <script src="js/app.js"></script>
-    
-    <!-- DisableLegacySystems no longer needed after full migration -->
-    
-    <!-- Initialize global error boundary -->
-    <script>
-        // Initialize global error boundary after all scripts are loaded
-        if (typeof GlobalErrorBoundary !== 'undefined') {
-            window.globalErrorBoundary = new GlobalErrorBoundary();
-            console.log('🛡️ Global error boundary initialized');
-        }
-    </script>
-</body>
+        <canvas id='mycanvas' width='1000' height='1000'></canvas>
+
+        <!-- Third-party libraries -->
+        <script type="text/javascript" src="js/libs/litegraph.js"></script>
+        
+        <!-- Configuration -->
+        <script type="text/javascript" src="js/utils/config.js"></script>
+        <script type="text/javascript" src="js/utils/font-config.js"></script>
+
+        <!-- Utilities -->
+        <script type="text/javascript" src="js/utils/utils.js"></script>
+        <script type="text/javascript" src="js/utils/state.js"></script>
+        <script type="text/javascript" src="js/utils/cache.js"></script>
+        <script type="text/javascript" src="js/utils/undo-optimization.js"></script>
+        <script type="text/javascript" src="js/utils/ImageLoadManager.js"></script>
+        <script type="text/javascript" src="js/utils/IndexedDBThumbnailStore.js"></script>
+
+        <!-- Main application base -->
+        <script type="text/javascript" src="js/graph.js"></script>
+        <script type="text/javascript" src="js/canvas.js"></script>
+        <script type="text/javascript" src="js/dragdrop.js"></script>
+
+        <!-- Core Systems -->
+        <script type="text/javascript" src="js/core/animation.js"></script>
+        <script type="text/javascript" src="js/core/viewport.js"></script>
+        <script type="text/javascript" src="js/core/selection.js"></script>
+        <script type="text/javascript" src="js/core/handles.js"></script>
+        <script type="text/javascript" src="js/core/alignment.js"></script>
+        <script type="text/javascript" src="js/core/BulkOperationManager.js"></script>
+        <script type="text/javascript" src="js/core/GraphCircularReferenceResolver.js"></script>
+        <script type="text/javascript" src="js/core/ImageResourceCache.js"></script>
+        <script type="text/javascript" src="js/core/LocalFirstOperations.js"></script>
+        <script type="text/javascript" src="js/core/NavigationStateManager.js"></script>
+        <script type="text/javascript" src="js/core/OperationPersistence.js"></script>
+        <script type="text/javascript" src="js/core/OperationTracker.js"></script>
+        <script type="text/javascript" src="js/core/TransactionManager.js"></script>
+        <script type="text/javascript" src="js/core/PersistenceHandler.js"></script>
+        <script type="text/javascript" src="js/core/CleanupManager.js"></script>
+        <script type="text/javascript" src="js/core/OperationDependencyTracker.js"></script>
+        <script type="text/javascript" src="js/core/ImageUploadManager.js"></script>
+        <script type="text/javascript" src="js/core/ImageProcessingProgressManager.js"></script>
+        <script type="text/javascript" src="js/core/ImageUploadCoordinator.js"></script>
+        <script type="text/javascript" src="js/core/GalleryViewManager.js"></script>
+        <script type="text/javascript" src="js/core/BackgroundSyncManager.js"></script>
+
+        <!-- Node classes -->
+        <script type="text/javascript" src="js/nodes/base-node.js"></script>
+        <script type="text/javascript" src="js/nodes/image-node.js"></script>
+        <script type="text/javascript" src="js/nodes/video-node.js"></script>
+        <script type="text/javascript" src="js/nodes/text-node.js"></script>
+
+        <!-- Commands (must be loaded before OperationPipeline) -->
+        <script type="text/javascript" src="js/commands/Command.js"></script>
+        <script type="text/javascript" src="js/commands/BulkCommand.js"></script>
+        <script type="text/javascript" src="js/commands/NodeCommands.js"></script>
+        <script type="text/javascript" src="js/commands/NodeCommandsExtended.js"></script>
+        <script type="text/javascript" src="js/commands/CanvasCommands.js"></script>
+        <script type="text/javascript" src="js/commands/ImageUploadCompleteCommand.js"></script>
+        
+        <!-- Core Systems that depend on Commands -->
+        <script type="text/javascript" src="js/core/OperationPipeline.js"></script>
+        <script type="text/javascript" src="js/core/StateSyncManager.js"></script>
+
+        <!-- New Collaborative Architecture -->
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.5/socket.io.js"></script>
+        <script type="text/javascript" src="js/core/NetworkLayer.js"></script>
+        <script type="text/javascript" src="js/core/ClientUndoManager.js"></script>
+        <script type="text/javascript" src="js/core/CollaborativeArchitecture.js"></script>
+        <script type="text/javascript" src="js/core/AutoInit.js"></script>
+
+        <!-- UI Components -->
+        <script type="text/javascript" src="js/ui/canvas-navigator.js"></script>
+        <script type="text/javascript" src="js/ui/connection-status.js"></script>
+        <script type="text/javascript" src="js/ui/floating-properties-inspector.js"></script>
+        <script type="text/javascript" src="js/ui/UndoDebugHUD.js"></script>
+        <script type="text/javascript" src="js/ui/unified-notifications.js"></script>
+        
+        <!-- App Startup -->
+        <script type="text/javascript" src="js/app.js"></script>
+    </body>
 </html>

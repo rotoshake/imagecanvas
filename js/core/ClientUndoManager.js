@@ -34,6 +34,9 @@ class ClientUndoManager {
         // Track last operation time to prevent premature undo requests
         this.lastOperationTime = 0;
         
+        // State for the current undoable interaction
+        this.interactionInitialState = null;
+
         // Setup network handlers
         this.setupNetworkHandlers();
         
@@ -55,8 +58,9 @@ class ClientUndoManager {
         // User identification
         this.networkLayer.on('connected', (data) => {
             const oldUserId = this.userId;
-            this.userId = data.userId || data.sessionId;
+            this.userId = data.userId || data.sessionId || data.id;
             console.log(`👤 Undo manager user ID set: ${this.userId} (was: ${oldUserId})`);
+            console.log('📊 Connected data:', data);
             console.log('📊 Connected data:', data);
             
             // Request initial undo state after a short delay to ensure server is ready
@@ -153,7 +157,78 @@ class ClientUndoManager {
             this.currentTransaction = null;
         });
     }
+
+    /**
+     * Begins an undoable interaction by capturing the initial state of the affected nodes.
+     * @param {Array<LGraphNode>} nodes The nodes involved in the interaction.
+     */
+    beginInteraction(nodes) {
+        if (this.interactionInitialState) {
+            console.warn("An interaction is already in progress. Finishing the previous one.");
+            this.cancelInteraction(); // Use cancelInteraction instead of endInteraction
+        }
+
+        this.interactionInitialState = {
+            nodes: new Map()
+        };
+
+        nodes.forEach(node => {
+            this.interactionInitialState.nodes.set(node.id, {
+                pos: [...node.pos],
+                size: [...node.size],
+                rotation: node.rotation || 0,
+                properties: JSON.parse(JSON.stringify(node.properties))
+            });
+        });
+
+        console.log(`[UndoManager] Interaction started for ${nodes.length} nodes.`);
+    }
+
+    /**
+     * Ends an undoable interaction, creates a command, and sends it for execution.
+     * @param {string} commandType The type of command to execute.
+     * @param {object} finalParams The final parameters for the command.
+     */
+    endInteraction(commandType, finalParams) {
+        if (!this.interactionInitialState) {
+            console.warn("endInteraction called without a beginning.");
+            if (commandType && finalParams) {
+                 window.app.operationPipeline.execute(commandType, finalParams);
+            }
+            return;
+        }
+
+        const initialNodesState = Array.from(this.interactionInitialState.nodes.values());
+        const nodeIds = Array.from(this.interactionInitialState.nodes.keys());
+        
+        const initialState = {
+            positions: initialNodesState.map(s => s.pos),
+            sizes: initialNodesState.map(s => s.size),
+            rotations: initialNodesState.map(s => s.rotation),
+            properties: initialNodesState.map(s => s.properties)
+        };
+
+        const params = {
+            ...finalParams,
+            nodeIds: nodeIds
+        };
+
+        window.app.operationPipeline.execute(commandType, params, { initialState });
+
+        this.interactionInitialState = null;
+        console.log(`[UndoManager] Interaction ended, command ${commandType} executed.`);
+    }
     
+    /**
+     * Cancels an undoable interaction if no change was made.
+     */
+    cancelInteraction() {
+        if (this.interactionInitialState) {
+            console.log('[UndoManager] Interaction cancelled.');
+            this.interactionInitialState = null;
+        }
+    }
+
     /**
      * Setup keyboard shortcuts
      */

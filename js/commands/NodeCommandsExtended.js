@@ -34,6 +34,14 @@ class ResizeNodeCommand extends Command {
             previousSizes: {},
             previousPositions: {}
         };
+
+        if (this.initialState) {
+            this.params.nodeIds.forEach((nodeId, index) => {
+                this.undoData.previousSizes[nodeId] = this.initialState.sizes[index];
+                this.undoData.previousPositions[nodeId] = this.initialState.positions[index];
+            });
+            return;
+        }
         
         this.params.nodeIds.forEach(nodeId => {
             const node = graph.getNodeById(nodeId);
@@ -55,19 +63,11 @@ class ResizeNodeCommand extends Command {
         //     sizes: this.params.sizes
         // });
         
-        this.undoData = { 
-            previousSizes: {},
-            previousPositions: {}
-        };
-        
         this.params.nodeIds.forEach((nodeId, index) => {
             const node = graph.getNodeById(nodeId);
             if (!node) return;
             
             const newSize = [...this.params.sizes[index]];
-            
-            this.undoData.previousSizes[nodeId] = [...node.size];
-            this.undoData.previousPositions[nodeId] = [...node.pos];
             
             // Update size
             node.size[0] = newSize[0];
@@ -169,6 +169,20 @@ class ResetNodeCommand extends Command {
     
     async prepareUndoData(context) {
         const { graph } = context;
+
+        if (this.initialState) {
+            this.undoData = {
+                nodes: this.params.nodeIds.map((nodeId, index) => ({
+                    id: nodeId,
+                    operations: [
+                        { type: 'rotation', oldValue: this.initialState.rotations[index] },
+                        { type: 'aspectRatio', oldSize: this.initialState.sizes[index] }
+                    ]
+                }))
+            };
+            return;
+        }
+
         this.undoData = { nodes: [] };
         
         this.params.nodeIds.forEach((nodeId, index) => {
@@ -218,33 +232,18 @@ class ResetNodeCommand extends Command {
         // // console.log(`🚀 ResetNodeCommand: Resetting ${this.params.nodeIds.length} nodes`);
         const startTime = performance.now();
         
-        this.undoData = { nodes: [] };
-        
         // First pass: Apply all changes locally immediately for instant feedback
         this.params.nodeIds.forEach((nodeId, index) => {
             const node = graph.getNodeById(nodeId);
             if (!node) return;
             
-            const undoInfo = {
-                id: node.id,
-                operations: []
-            };
-            
             // Handle new boolean format
             if (this.params.resetRotation) {
-                undoInfo.operations.push({
-                    type: 'rotation',
-                    oldValue: node.rotation || 0
-                });
                 node.rotation = this.params.values ? this.params.values[index] : 0;
             }
             
             if (this.params.resetAspectRatio) {
                 if (node.originalAspect) {
-                    undoInfo.operations.push({
-                        type: 'aspectRatio',
-                        oldSize: [...node.size]
-                    });
                     const value = this.params.values ? this.params.values[index] : node.originalAspect;
                     node.size[1] = node.size[0] / value;
                     if (node.onResize) node.onResize();
@@ -255,37 +254,23 @@ class ResetNodeCommand extends Command {
             if (this.params.resetType) {
                 switch (this.params.resetType) {
                     case 'rotation':
-                        undoInfo.operations.push({
-                            type: 'rotation',
-                            oldValue: node.rotation || 0
-                        });
                         node.rotation = this.params.values ? this.params.values[index] : 0;
                         break;
                         
                     case 'scale':
                         if (node.properties.scale !== undefined) {
-                            undoInfo.operations.push({
-                                type: 'scale',
-                                oldValue: node.properties.scale
-                            });
                             node.properties.scale = this.params.values ? this.params.values[index] : 1;
                         }
                         break;
                         
                     case 'aspectRatio':
                         if (node.originalAspect) {
-                            undoInfo.operations.push({
-                                type: 'aspectRatio',
-                                oldSize: [...node.size]
-                            });
                             node.size[1] = node.size[0] / node.originalAspect;
                             if (node.onResize) node.onResize();
                         }
                         break;
                 }
             }
-            
-            this.undoData.nodes.push(undoInfo);
         });
         
         // Immediate canvas update for instant visual feedback
@@ -405,6 +390,14 @@ class RotateNodeCommand extends Command {
             previousRotations: {},
             previousPositions: {}
         };
+
+        if (this.initialState) {
+            this.params.nodeIds.forEach((nodeId, index) => {
+                this.undoData.previousRotations[nodeId] = this.initialState.rotations[index];
+                this.undoData.previousPositions[nodeId] = this.initialState.positions[index];
+            });
+            return;
+        }
         
         // Single node rotation
         if (this.params.nodeId) {
@@ -443,12 +436,6 @@ class RotateNodeCommand extends Command {
                 throw new Error('Node not found');
             }
             
-            this.undoData = {
-                previousRotations: {},
-                previousPositions: {}
-            };
-            this.undoData.previousRotations[node.id] = node.rotation || 0;
-            
             node.rotation = this.params.angle;
             
             this.executed = true;
@@ -457,17 +444,9 @@ class RotateNodeCommand extends Command {
         
         // Multi-node rotation
         if (this.params.nodeIds) {
-            this.undoData = {
-                previousRotations: {},
-                previousPositions: {}
-            };
-            
             this.params.nodeIds.forEach((nodeId, index) => {
                 const node = graph.getNodeById(nodeId);
                 if (!node) return;
-                
-                this.undoData.previousRotations[nodeId] = node.rotation || 0;
-                this.undoData.previousPositions[nodeId] = [...node.pos];
                 
                 // Update rotation
                 node.rotation = this.params.angles[index];

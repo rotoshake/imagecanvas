@@ -4,6 +4,7 @@
  */
 class CollaborativeArchitecture {
     constructor(app) {
+        console.log('[STARTUP_TRACE] CollaborativeArchitecture constructor');
         this.app = app;
         this.initialized = false;
         
@@ -19,90 +20,41 @@ class CollaborativeArchitecture {
     /**
      * Initialize the new architecture
      */
-    async initialize() {
-        if (this.initialized) {
-            console.log('Architecture already initialized');
-            return;
-        }
+    initialize() {
+        console.log('[STARTUP_TRACE] CollaborativeArchitecture.initialize started');
         
-        try {
-            console.log('🚀 Initializing new collaborative architecture...');
-            
-            // 1. Create Operation Pipeline
-            this.operationPipeline = new OperationPipeline(this.app);
-            this.app.operationPipeline = this.operationPipeline;
-            
-            // 2. Create Network Layer
-            this.networkLayer = new NetworkLayer(this.app);
-            this.app.networkLayer = this.networkLayer;
-            
-            // Migration adapter no longer needed after full migration
-            
-            // 4. Create Persistence Handler
-            this.persistenceHandler = new PersistenceHandler(this.app);
-            this.app.persistenceHandler = this.persistenceHandler;
-            
-            // 5. Create State Sync Manager (depends on network layer)
-            this.stateSyncManager = new StateSyncManager(this.app, this.networkLayer);
-            this.app.stateSyncManager = this.stateSyncManager;
-            
-            // 5a. Create Background Sync Manager
-            if (typeof BackgroundSyncManager !== 'undefined') {
-                this.app.backgroundSyncManager = new BackgroundSyncManager(this.networkLayer, this.stateSyncManager);
-                this.app.bulkOperationManager.backgroundSync = this.app.backgroundSyncManager;
-                console.log('✅ Background sync manager initialized');
-            }
-            
-            // 6. Connect components
-            await this.connectComponents();
-            
-            
-            // 6. Initialize persistence handler
-            this.persistenceHandler.initialize();
-            
-            // Universal operation router no longer needed after full migration
-            
-            // 6. Connect to server
-            try {
-                await this.networkLayer.connect();
-            } catch (error) {
-                console.warn('Failed to connect to server:', error);
-                // Continue in offline mode
-            }
-            
-            // 7. Initialize client undo manager (single source of truth)
-            if (typeof ClientUndoManager !== 'undefined') {
-                this.app.undoManager = new ClientUndoManager(this.app);
-                console.log('✅ Client undo manager initialized as single source of truth');
-                
-                // Initialize transaction manager
-                if (typeof TransactionManager !== 'undefined') {
-                    this.app.transactionManager = new TransactionManager(this.app.undoManager);
-                    console.log('✅ Transaction manager initialized');
-                }
-            } else {
-                console.error('❌ ClientUndoManager not available - undo system will not work');
-                throw new Error('ClientUndoManager is required for undo functionality');
-            }
-            
-            // Keep backward compatibility
-            if (this.app.undoManager) {
-                this.app.undoRedoManager = this.app.undoManager;
-            }
-            
-            // 8. Setup keyboard shortcuts for undo/redo
-            this.setupKeyboardShortcuts();
-            
-            this.initialized = true;
-            console.log('✅ New collaborative architecture initialized');
-            
-            // Show status
-            this.showStatus();
-            
-        } catch (error) {
-            console.error('Failed to initialize architecture:', error);
-            throw error;
-        }
+        // 1. Network Layer (must be first)
+        this.networkLayer = new NetworkLayer(this.app);
+        this.app.networkLayer = this.networkLayer;
+        console.log('[STARTUP_TRACE] NetworkLayer created and assigned to app');
+        
+        // 2. Operation Pipeline
+        this.operationPipeline = new OperationPipeline(this.app);
+        this.app.operationPipeline = this.operationPipeline;
+        
+        // 3. State Sync Manager
+        this.stateSyncManager = new StateSyncManager(this.app, this.networkLayer);
+        this.app.stateSyncManager = this.stateSyncManager;
+        
+        // 4. Undo Manager
+        this.undoManager = new ClientUndoManager(this.app);
+        this.app.undoManager = this.undoManager;
+        window.undoManager = this.undoManager; // Global access for debugging
+
+        // 5. Transaction Manager
+        this.transactionManager = new TransactionManager(this.undoManager);
+        this.app.transactionManager = this.transactionManager;
+        
+        // 6. Persistence Handler
+        this.persistenceHandler = new PersistenceHandler(this.app);
+        this.app.persistenceHandler = this.persistenceHandler;
+        
+        // Finalize initialization
+        this.networkLayer.initialize();
+        this.initialized = true;
+
+        console.log('[STARTUP_TRACE] CollaborativeArchitecture.initialize finished');
+        return this.networkLayer; // Return the network layer instance
     }
     
     /**

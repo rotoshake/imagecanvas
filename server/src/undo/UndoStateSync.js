@@ -382,6 +382,7 @@ class UndoStateSync {
                     node.rotation = rotation;
                     console.log(`✅ Node ${nodeId} rotation changed: ${oldRotation} -> ${node.rotation}`);
                     if (!updatedNodeIds.has(node.id)) {
+                        // Push the actual node - the state will be saved correctly
                         changes.updated.push(node);
                         updatedNodeIds.add(node.id);
                     }

@@ -31,6 +31,21 @@ class MoveNodeCommand extends Command {
     
     async prepareUndoData(context) {
         const { graph } = context;
+
+        if (this.initialState) {
+            this.undoData = {
+                previousPositions: {}
+            };
+            this.params.nodeIds.forEach((nodeId, index) => {
+                this.undoData.previousPositions[nodeId] = this.initialState.positions[index];
+            });
+            this.undoData.nodes = this.params.nodeIds.map((nodeId, index) => ({
+                id: nodeId,
+                oldPosition: this.initialState.positions[index]
+            }));
+            return;
+        }
+
         this.undoData = { 
             previousPositions: {},
             nodes: [] // Keep for backward compatibility
@@ -78,12 +93,6 @@ class MoveNodeCommand extends Command {
     async execute(context) {
         const { graph } = context;
         const movedNodes = [];
-        
-        // Undo data should already be prepared by prepareUndoData()
-        if (!this.undoData) {
-            // This shouldn't happen with the new flow, but provide a fallback
-            this.undoData = { nodes: [], previousPositions: {} };
-        }
         
         // Single node move
         if (this.params.nodeId) {
@@ -342,8 +351,12 @@ class CreateNodeCommand extends Command {
             
             // Force immediate canvas redraw to show loading state
             if (graph.canvas) {
-                graph.canvas.dirty_canvas = true;
-                requestAnimationFrame(() => graph.canvas.draw());
+                if (graph.canvas.forceRedraw) {
+                    graph.canvas.forceRedraw();
+                } else {
+                    graph.canvas.dirty_canvas = true;
+                    graph.canvas.draw();
+                }
             }
             
             // Store for undo - this is the actual node that will persist
@@ -837,6 +850,21 @@ class UpdateNodePropertyCommand extends Command {
     
     async prepareUndoData(context) {
         const { graph } = context;
+
+        if (this.initialState) {
+            this.undoData = {
+                previousProperties: {}
+            };
+            this.params.nodeIds.forEach((nodeId, index) => {
+                const isDirectProperty = ['title'].includes(this.params.property);
+                const oldValue = isDirectProperty ? this.initialState.nodes[index][this.params.property] : this.initialState.nodes[index].properties[this.params.property];
+                this.undoData.previousProperties[nodeId] = {
+                    [this.params.property]: oldValue
+                };
+            });
+            return;
+        }
+
         const node = graph.getNodeById(this.params.nodeId);
         
         if (node) {
@@ -874,43 +902,25 @@ class UpdateNodePropertyCommand extends Command {
     
     async execute(context) {
         const { graph } = context;
-        const node = graph.getNodeById(this.params.nodeId);
-        
-        if (!node) {
-            throw new Error('Node not found');
-        }
-        
-        // Store old value for undo
-        const isDirectProperty = ['title'].includes(this.params.property);
-        const oldValue = isDirectProperty ? node[this.params.property] : node.properties[this.params.property];
-        
-        // Use server format for undo data
-        this.undoData = {
-            previousProperties: {}
-        };
-        
-        this.undoData.previousProperties[node.id] = {
-            [this.params.property]: oldValue
-        };
-        
-        // Update property
-        if (isDirectProperty) {
-            const oldValue = node[this.params.property];
-            node[this.params.property] = this.params.value;
-            if (this.params.property === 'title') {
-                console.log(`📝 Title updated: "${oldValue}" → "${this.params.value}" for node ${node.id}`);
+
+        for (const nodeId of this.params.nodeIds) {
+            const node = graph.getNodeById(nodeId);
+            if (!node) continue;
+
+            const isDirectProperty = ['title'].includes(this.params.property);
+            if (isDirectProperty) {
+                node[this.params.property] = this.params.value;
+            } else {
+                node.properties[this.params.property] = this.params.value;
             }
-        } else {
-            node.properties[this.params.property] = this.params.value;
+
+            if (node.updateProperty) {
+                node.updateProperty(this.params.property, this.params.value);
+            }
         }
-        
-        // Handle special properties that need additional processing
-        if (node.updateProperty) {
-            node.updateProperty(this.params.property, this.params.value);
-        }
-        
+
         this.executed = true;
-        return { node };
+        return { success: true };
     }
     
     async undo(context) {

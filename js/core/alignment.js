@@ -11,6 +11,10 @@ class AutoAlignmentManager {
         // Animation timing
         this.lastUpdateTime = 0;
         
+        // Performance tracking for large-scale animations
+        this.animationFrameStartTime = 0;
+        this.animationNodeIndex = 0;  // For batched processing
+        
         // Auto-align state
         this.autoAlignMode = false;
         this.autoAlignStart = [0, 0];
@@ -50,6 +54,7 @@ class AutoAlignmentManager {
     startAutoAlign(startPos) {
         if (this.selection.size() < 2) return false;
         
+        console.log('[ALIGN_DEBUG] startAutoAlign');
         this.autoAlignMode = true;
         this.autoAlignStart = [...startPos];
         this.autoAlignOriginalClick = [...startPos];
@@ -63,6 +68,12 @@ class AutoAlignmentManager {
         this.autoAlignCommitPoint = [...startPos];
         this.autoAlignIsReorderMode = false;
         
+        // Check if nodes start aligned - this determines if first drag can reorder
+        this.nodesStartedAligned = {
+            horizontal: this.areImagesAlignedOnAxis('horizontal'),
+            vertical: this.areImagesAlignedOnAxis('vertical')
+        };
+        
         // Store original positions
         this.autoAlignOriginals = {};
         const selectedNodes = this.selection.getSelectedNodes();
@@ -72,11 +83,13 @@ class AutoAlignmentManager {
             if (!node._animVel) node._animVel = [0, 0];
         }
         
+        window.app.undoManager.beginInteraction(selectedNodes);
         return true;
     }
     
     updateAutoAlign(currentPos) {
         if (!this.autoAlignMode) return;
+        console.log('[ALIGN_DEBUG] updateAutoAlign');
         
         const threshold = 40 / this.viewport.scale;
         const dx = currentPos[0] - this.autoAlignStart[0];
@@ -113,12 +126,9 @@ class AutoAlignmentManager {
                 this.autoAlignCommittedAxis = commitAxis;
                 this.autoAlignCommittedDirection = commitDir;
                 
-                // Check if images are already aligned on this axis
-                if (this.areImagesAlignedOnAxis(commitAxis)) {
-                    this.autoAlignIsReorderMode = true;
-                } else {
-                    this.autoAlignIsReorderMode = false;
-                }
+                // Don't check for reorder mode on initial commit
+                // Reorder mode should only activate after mouse up and re-drag
+                this.autoAlignIsReorderMode = false;
                 
                 this.triggerAutoAlign(commitAxis);
                 this.autoAlignCommittedTargets = this.autoAlignAnimTargets;
@@ -156,11 +166,15 @@ class AutoAlignmentManager {
                 (Math.abs(cdx) > directionThreshold && Math.sign(cdx) !== this.autoAlignCommittedDirection) ||
                 (Math.abs(cdy) > directionThreshold && Math.sign(cdy) !== this.autoAlignCommittedDirection))) {
                 
-                const switchingToReorder = this.areImagesAlignedOnAxis(currentAxis);
+                // Only enable reorder mode if:
+                // 1. Nodes started aligned on this axis (before any drag)
+                // 2. We're now dragging along that same axis
+                // This prevents reorder during initial alignment
+                const switchingToReorder = this.nodesStartedAligned && 
+                                         this.nodesStartedAligned[currentAxis];
+                this.autoAlignIsReorderMode = switchingToReorder;
                 if (switchingToReorder) {
-                    this.autoAlignIsReorderMode = true;
-                } else {
-                    this.autoAlignIsReorderMode = false;
+                    console.log('[ALIGN_DEBUG] Enabling reorder mode for axis:', currentAxis);
                 }
                 
                 this.autoAlignCommittedAxis = currentAxis;
@@ -179,6 +193,26 @@ class AutoAlignmentManager {
     }
     
     finishAutoAlign() {
+        console.log('[ALIGN_DEBUG] finishAutoAlign');
+        console.log('[ALIGN_DEBUG] autoAlignCommittedAxis:', this.autoAlignCommittedAxis);
+        console.log('[ALIGN_DEBUG] autoAlignAnimTargets:', this.autoAlignAnimTargets);
+        
+        if (this.autoAlignCommittedAxis && this.autoAlignAnimTargets) {
+            // Send the target positions to server immediately
+            const nodeIds = Object.keys(this.autoAlignAnimTargets);
+            const positions = nodeIds.map(id => this.autoAlignAnimTargets[id]);
+            
+            console.log('[ALIGN_DEBUG] Sending target positions to server immediately:', { nodeIds, positions });
+            window.app.undoManager.endInteraction('node_align', { 
+                nodeIds, 
+                positions,
+                axis: this.autoAlignCommittedAxis 
+            });
+        } else {
+            console.log('[ALIGN_DEBUG] Cancelling interaction - no committed axis or targets');
+            window.app.undoManager.cancelInteraction();
+        }
+
         this.autoAlignMode = false;
         this.autoAlignAxis = null;
         this.autoAlignTargets = null;
@@ -190,12 +224,15 @@ class AutoAlignmentManager {
         this.autoAlignCommittedAxis = null;
         this.autoAlignCommittedTargets = null;
         this.autoAlignCommittedDirection = null;
+        this.nodesStartedAligned = null;
+        // Don't stop animation here - let it continue running visually
         this.canvas.dirty_canvas = true;
     }
     
     triggerAutoAlign(axis) {
         if (this.selection.size() < 2) return;
         
+        console.log(`[ALIGN_DEBUG] triggerAutoAlign: axis=${axis}`);
         // Store original positions if not already set
         if (!this.autoAlignOriginals) {
             this.autoAlignOriginals = {};
@@ -338,6 +375,7 @@ class AutoAlignmentManager {
     startGridAlign(startPos) {
         if (this.selection.size() === 0) return false;
         
+        console.log('[ALIGN_DEBUG] startGridAlign');
         this.gridAlignMode = true;
         this.gridAlignDragging = true;
         this.gridAlignAnchor = [...startPos];
@@ -348,11 +386,13 @@ class AutoAlignmentManager {
         this.gridAlignAnimNodes = null;
         this.gridAlignAnimTargets = null;
         
+        window.app.undoManager.beginInteraction(this.selection.getSelectedNodes());
         return true;
     }
     
     updateGridAlign(currentPos) {
         if (!this.gridAlignMode || !this.gridAlignDragging || !this.gridAlignAnchor) return;
+        console.log('[ALIGN_DEBUG] updateGridAlign');
         
         // Update bounding box
         const ax = this.gridAlignAnchor[0];
@@ -441,12 +481,48 @@ class AutoAlignmentManager {
     }
     
     finishGridAlign() {
+        console.log('[ALIGN_DEBUG] finishGridAlign');
+        if (this.gridAlignAnimTargets) {
+            // Get nodes in the order they appear in the grid
+            const selectedNodes = this.selection.getSelectedNodes();
+            const nodeIds = [];
+            const positions = [];
+            
+            // Use the exact target positions from gridAlignAnimTargets
+            for (const node of selectedNodes) {
+                if (this.gridAlignAnimTargets[node.id]) {
+                    nodeIds.push(node.id);
+                    positions.push(this.gridAlignAnimTargets[node.id]);
+                }
+            }
+            
+            console.log('[ALIGN_DEBUG] Grid align sending TARGET positions:', { 
+                nodeIds, 
+                positions,
+                nodeCount: nodeIds.length,
+                columns: this.gridAlignColumns
+            });
+            
+            // Log each node's target position for debugging
+            nodeIds.forEach((id, i) => {
+                const node = selectedNodes.find(n => n.id === id);
+                if (node) {
+                    console.log(`[ALIGN_DEBUG] Node ${id}: current=[${node.pos[0].toFixed(0)}, ${node.pos[1].toFixed(0)}] target=[${positions[i][0].toFixed(0)}, ${positions[i][1].toFixed(0)}]`);
+                }
+            });
+            
+            window.app.undoManager.endInteraction('node_move', { nodeIds, positions });
+        } else {
+            window.app.undoManager.cancelInteraction();
+        }
+
         this.gridAlignMode = false;
         this.gridAlignDragging = false;
         this.gridAlignAnchor = null;
         this.gridAlignBox = null;
         this.gridAlignColumns = 1;
         this.gridAlignTargets = null;
+        // Don't clear animation state here - let it complete naturally
         this.canvas.dirty_canvas = true;
     }
     
@@ -465,166 +541,237 @@ class AutoAlignmentManager {
         // Update auto-align animations
         if (this.autoAlignAnimating && this.autoAlignAnimNodes && this.autoAlignAnimTargets) {
             needsRedraw = true;
-            let allDone = true;
+            const nodeCount = this.autoAlignAnimNodes.length;
             
-            for (const node of this.autoAlignAnimNodes) {
-                const target = this.autoAlignAnimTargets[node.id];
-                if (!target) continue;
-                
-                if (!node._animPos) node._animPos = [...node.pos];
-                if (!node._animVel) node._animVel = [0, 0];
-                
-                let done = true;
-                for (let i = 0; i < 2; i++) {
-                    let x = node._animPos[i], v = node._animVel[i], t = target[i];
-                    let k = CONFIG.ALIGNMENT.SPRING_K, d = CONFIG.ALIGNMENT.SPRING_D;
-                    let dx = t - x;
-                    let ax = k * dx - d * v;
-                    v += ax * deltaTime;
-                    x += v * deltaTime;
-                    node._animVel[i] = v;
-                    node._animPos[i] = x;
-                    if (Math.abs(t - x) > CONFIG.ALIGNMENT.ANIMATION_THRESHOLD || Math.abs(v) > CONFIG.ALIGNMENT.ANIMATION_THRESHOLD) done = false;
-                }
-                
-                if (done) {
-                    node._animPos[0] = target[0];
-                    node._animPos[1] = target[1];
-                    node._animVel = [0, 0];
-                } else {
-                    allDone = false;
-                }
-            }
-            
-            if (allDone) {
-                // Animation complete
-                const nodeIds = [];
-                const finalPositions = [];
-                
-                for (const node of this.autoAlignAnimNodes) {
-                    if (node._animPos) {
-                        node.pos[0] = node._animPos[0];
-                        node.pos[1] = node._animPos[1];
-                        
-                        nodeIds.push(node.id);
-                        finalPositions.push([...node.pos]);
-                        
-                        delete node._animPos;
-                        delete node._animVel;
-                    }
-                }
-                
-                // Broadcast position updates for collaboration
-                if (nodeIds.length > 0 && window.app?.operationPipeline) {
-                    // Send batch move operation through unified pipeline
-                    window.app.operationPipeline.execute('node_move', {
-                        nodeIds: nodeIds,
-                        positions: finalPositions,
-                        source: 'alignment'
-                    });
-                }
-                
-                // Invalidate bounding box cache when animation completes
-                this.selection.invalidateBoundingBox();
-                
-                if (!this.autoAlignMode) {
-                    // DISABLED: Undo state is now handled by the OperationPipeline when drag completes
-                    // This prevents intermediate undo entries during alignment
-                    // this.canvas.pushUndoState();
-                    
-                    this.autoAlignOriginals = null;
-                    this.autoAlignMasterOrder = null;
-                    this.autoAlignDominantAxis = null;
-                    this.autoAlignIsReorderMode = false;
-                    this.autoAlignAnimating = false;
-                } else {
-                    this.autoAlignAnimating = false;
-                }
+            // Use optimized approach for large node counts
+            if (nodeCount >= CONFIG.ALIGNMENT.LARGE_SCALE_THRESHOLD) {
+                needsRedraw = this.updateLargeScaleAnimation(deltaTime, this.autoAlignAnimNodes, this.autoAlignAnimTargets, false) || needsRedraw;
+            } else {
+                needsRedraw = this.updateStandardAnimation(deltaTime, this.autoAlignAnimNodes, this.autoAlignAnimTargets, false) || needsRedraw;
             }
         }
         
         // Update grid-align animations
         if (this.gridAlignAnimating && this.gridAlignAnimNodes && this.gridAlignAnimTargets) {
             needsRedraw = true;
-            let allDone = true;
+            const nodeCount = this.gridAlignAnimNodes.length;
             
-            for (const node of this.gridAlignAnimNodes) {
-                const target = this.gridAlignAnimTargets[node.id];
-                if (!target) continue;
-                
-                if (!node._gridAnimPos) node._gridAnimPos = [...node.pos];
-                if (!node._gridAnimVel) node._gridAnimVel = [0, 0];
-                
-                let done = true;
-                for (let i = 0; i < 2; i++) {
-                    let x = node._gridAnimPos[i], v = node._gridAnimVel[i], t = target[i];
-                    let k = CONFIG.ALIGNMENT.SPRING_K, d = CONFIG.ALIGNMENT.SPRING_D;
-                    let dx = t - x;
-                    let ax = k * dx - d * v;
-                    v += ax * deltaTime;
-                    x += v * deltaTime;
-                    node._gridAnimVel[i] = v;
-                    node._gridAnimPos[i] = x;
-                    if (Math.abs(t - x) > CONFIG.ALIGNMENT.ANIMATION_THRESHOLD || Math.abs(v) > CONFIG.ALIGNMENT.ANIMATION_THRESHOLD) done = false;
-                }
-                
-                if (done) {
-                    node._gridAnimPos[0] = target[0];
-                    node._gridAnimPos[1] = target[1];
-                    node._gridAnimVel = [0, 0];
-                    
-                    // Snap node position if still dragging
-                    if (this.gridAlignDragging) {
-                        node.pos[0] = node._gridAnimPos[0];
-                        node.pos[1] = node._gridAnimPos[1];
-                    }
-                } else {
-                    allDone = false;
-                }
-            }
-            
-            if (allDone) {
-                const nodeIds = [];
-                const finalPositions = [];
-                
-                for (const node of this.gridAlignAnimNodes) {
-                    if (node._gridAnimPos) {
-                        node.pos[0] = node._gridAnimPos[0];
-                        node.pos[1] = node._gridAnimPos[1];
-                        
-                        nodeIds.push(node.id);
-                        finalPositions.push([...node.pos]);
-                        
-                        delete node._gridAnimPos;
-                        delete node._gridAnimVel;
-                    }
-                }
-                
-                // Broadcast position updates for collaboration
-                if (nodeIds.length > 0 && window.app?.operationPipeline) {
-                    // Send batch move operation through unified pipeline
-                    window.app.operationPipeline.execute('node_move', {
-                        nodeIds: nodeIds,
-                        positions: finalPositions,
-                        source: 'grid_align'
-                    });
-                }
-                
-                // Invalidate bounding box cache when grid alignment completes
-                this.selection.invalidateBoundingBox();
-                
-                this.gridAlignAnimating = false;
-                this.gridAlignAnimNodes = null;
-                this.gridAlignAnimTargets = null;
-                
-                // DISABLED: Undo state is now handled by the OperationPipeline when drag completes
-                // This prevents intermediate undo entries during alignment
-                // this.canvas.pushUndoState();
+            // Use optimized approach for large node counts
+            if (nodeCount >= CONFIG.ALIGNMENT.LARGE_SCALE_THRESHOLD) {
+                needsRedraw = this.updateLargeScaleAnimation(deltaTime, this.gridAlignAnimNodes, this.gridAlignAnimTargets, true) || needsRedraw;
+            } else {
+                needsRedraw = this.updateStandardAnimation(deltaTime, this.gridAlignAnimNodes, this.gridAlignAnimTargets, true) || needsRedraw;
             }
         }
         
         if (needsRedraw) {
             this.canvas.dirty_canvas = true;
+        }
+    }
+    
+    // ===================================
+    // STANDARD ANIMATION (Small node counts)
+    // ===================================
+    
+    updateStandardAnimation(deltaTime, animNodes, animTargets, isGridAlign) {
+        let needsRedraw = true;
+        let allDone = true;
+        const posKey = isGridAlign ? '_gridAnimPos' : '_animPos';
+        const velKey = isGridAlign ? '_gridAnimVel' : '_animVel';
+        
+        for (const node of animNodes) {
+            const target = animTargets[node.id];
+            if (!target) continue;
+            
+            if (!node[posKey]) node[posKey] = [...node.pos];
+            if (!node[velKey]) node[velKey] = [0, 0];
+            
+            let done = true;
+            for (let i = 0; i < 2; i++) {
+                let x = node[posKey][i], v = node[velKey][i], t = target[i];
+                let k = CONFIG.ALIGNMENT.SPRING_K, d = CONFIG.ALIGNMENT.SPRING_D;
+                let dx = t - x;
+                let ax = k * dx - d * v;
+                v += ax * deltaTime;
+                x += v * deltaTime;
+                node[velKey][i] = v;
+                node[posKey][i] = x;
+                if (Math.abs(t - x) > CONFIG.ALIGNMENT.ANIMATION_THRESHOLD || Math.abs(v) > CONFIG.ALIGNMENT.ANIMATION_THRESHOLD) done = false;
+            }
+            
+            if (done) {
+                node[posKey][0] = target[0];
+                node[posKey][1] = target[1];
+                node[velKey] = [0, 0];
+                
+                // Don't snap positions during drag - let animation complete naturally
+                // This was causing positions to be set prematurely
+            } else {
+                allDone = false;
+            }
+        }
+        
+        if (allDone) {
+            this.completeAnimation(animNodes, animTargets, isGridAlign);
+        }
+        
+        return needsRedraw;
+    }
+    
+    // ===================================
+    // LARGE SCALE ANIMATION (High performance for 100+ nodes)
+    // ===================================
+    
+    updateLargeScaleAnimation(deltaTime, animNodes, animTargets, isGridAlign) {
+        let needsRedraw = true;
+        this.animationFrameStartTime = performance.now();
+        
+        const posKey = isGridAlign ? '_gridAnimPos' : '_animPos';
+        const velKey = isGridAlign ? '_gridAnimVel' : '_animVel';
+        const maxBatchSize = CONFIG.ALIGNMENT.MAX_ANIMATION_BATCH_SIZE;
+        const frameBudget = CONFIG.ALIGNMENT.FRAME_BUDGET_MS;
+        
+        // Use adaptive spring constants for large scale
+        const k = CONFIG.ALIGNMENT.LARGE_SCALE_SPRING_K;
+        const d = CONFIG.ALIGNMENT.LARGE_SCALE_SPRING_D;
+        const threshold = CONFIG.ALIGNMENT.ANIMATION_THRESHOLD * CONFIG.ALIGNMENT.LARGE_SCALE_THRESHOLD_MULTIPLIER;
+        
+        // Reset node index if we're starting a new cycle
+        if (this.animationNodeIndex >= animNodes.length) {
+            this.animationNodeIndex = 0;
+        }
+        
+        let processedNodes = 0;
+        let allDone = true;
+        let currentNodeIndex = this.animationNodeIndex;
+        
+        // Process nodes in batches to maintain frame rate
+        while (processedNodes < maxBatchSize && 
+               currentNodeIndex < animNodes.length && 
+               (performance.now() - this.animationFrameStartTime) < frameBudget) {
+            
+            const node = animNodes[currentNodeIndex];
+            const target = animTargets[node.id];
+            
+            if (target) {
+                if (!node[posKey]) node[posKey] = [...node.pos];
+                if (!node[velKey]) node[velKey] = [0, 0];
+                
+                let done = true;
+                for (let i = 0; i < 2; i++) {
+                    let x = node[posKey][i], v = node[velKey][i], t = target[i];
+                    let dx = t - x;
+                    let ax = k * dx - d * v;
+                    v += ax * deltaTime;
+                    x += v * deltaTime;
+                    node[velKey][i] = v;
+                    node[posKey][i] = x;
+                    if (Math.abs(t - x) > threshold || Math.abs(v) > threshold) done = false;
+                }
+                
+                if (done) {
+                    node[posKey][0] = target[0];
+                    node[posKey][1] = target[1];
+                    node[velKey] = [0, 0];
+                    
+                    // Don't snap positions during drag - let animation complete naturally
+                } else {
+                    allDone = false;
+                }
+            }
+            
+            currentNodeIndex++;
+            processedNodes++;
+        }
+        
+        // Update our position in the node list
+        this.animationNodeIndex = currentNodeIndex;
+        
+        // Check if we need to continue processing or if we're done with all nodes
+        if (currentNodeIndex >= animNodes.length) {
+            // We've processed all nodes this cycle, check if any are still animating
+            let anyStillAnimating = false;
+            for (const node of animNodes) {
+                const target = animTargets[node.id];
+                if (target && node[posKey]) {
+                    for (let i = 0; i < 2; i++) {
+                        if (Math.abs(target[i] - node[posKey][i]) > threshold || 
+                            Math.abs(node[velKey][i]) > threshold) {
+                            anyStillAnimating = true;
+                            break;
+                        }
+                    }
+                    if (anyStillAnimating) break;
+                }
+            }
+            
+            if (!anyStillAnimating) {
+                this.completeAnimation(animNodes, animTargets, isGridAlign);
+            } else {
+                // Reset for next cycle
+                this.animationNodeIndex = 0;
+            }
+        }
+        
+        return needsRedraw;
+    }
+    
+    // ===================================
+    // ANIMATION COMPLETION
+    // ===================================
+    
+    completeAnimation(animNodes, animTargets, isGridAlign) {
+        console.log(`[ALIGN_DEBUG] completeAnimation: isGridAlign=${isGridAlign}`);
+        const nodeIds = [];
+        const finalPositions = [];
+        const posKey = isGridAlign ? '_gridAnimPos' : '_animPos';
+        const velKey = isGridAlign ? '_gridAnimVel' : '_animVel';
+        
+        for (const node of animNodes) {
+            if (node[posKey]) {
+                node.pos[0] = node[posKey][0];
+                node.pos[1] = node[posKey][1];
+                
+                nodeIds.push(node.id);
+                finalPositions.push([...node.pos]);
+                
+                delete node[posKey];
+                delete node[velKey];
+            }
+        }
+        
+        // Broadcast position updates for collaboration
+        // This is now handled by the endInteraction call in the canvas
+        /*
+        if (nodeIds.length > 0 && window.app?.operationPipeline) {
+            window.app.operationPipeline.execute('node_move', {
+                nodeIds: nodeIds,
+                positions: finalPositions,
+                source: isGridAlign ? 'grid_align' : 'alignment'
+            });
+        }
+        */
+        
+        // Invalidate bounding box cache when animation completes
+        this.selection.invalidateBoundingBox();
+        
+        // Reset animation state
+        this.animationNodeIndex = 0;
+        
+        if (isGridAlign) {
+            this.gridAlignAnimating = false;
+            this.gridAlignAnimNodes = null;
+            this.gridAlignAnimTargets = null;
+        } else {
+            if (!this.autoAlignMode) {
+                this.autoAlignOriginals = null;
+                this.autoAlignMasterOrder = null;
+                this.autoAlignDominantAxis = null;
+                this.autoAlignIsReorderMode = false;
+                this.autoAlignAnimating = false;
+            } else {
+                this.autoAlignAnimating = false;
+            }
         }
     }
     
@@ -715,6 +862,9 @@ class AutoAlignmentManager {
         this.gridAlignTargets = null;
         this.gridAlignAnimNodes = null;
         this.gridAlignAnimTargets = null;
+        
+        // Reset performance tracking
+        this.animationNodeIndex = 0;
         
         // Invalidate bounding box cache when stopping all alignment operations
         this.selection.invalidateBoundingBox();

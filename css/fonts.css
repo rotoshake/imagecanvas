@@ -1,0 +1,340 @@
+/* Helvetica Font Face Declarations */
+
+/* Regular */
+@font-face {
+    font-family: 'Helvetica';
+    font-style: normal;
+    font-weight: 400;
+    font-display: swap;
+    src: url('../fonts/helvetica/helvetica.woff') format('woff');
+}
+
+/* Bold */
+@font-face {
+    font-family: 'Helvetica';
+    font-style: normal;
+    font-weight: 700;
+    font-display: swap;
+    src: url('../fonts/helvetica/helvetica-bold.woff') format('woff');
+}
+
+/* Map other weights */
+/* Light (300) - use Regular */
+@font-face {
+    font-family: 'Helvetica';
+    font-style: normal;
+    font-weight: 300;
+    font-display: swap;
+    src: url('../fonts/helvetica/helvetica.woff') format('woff');
+}
+
+/* Semi-bold (600) - use Bold */
+@font-face {
+    font-family: 'Helvetica';
+    font-style: bold;
+    font-weight: 700;
+    font-display: swap;
+    src: url('../fonts/helvetica/helvetica-bold.woff') format('woff');
+}
+
+
+/* Roboto Font Face Declarations (keeping for reference) */
+
+/* Regular (400) */
+@font-face {
+    font-family: 'Roboto';
+    font-style: normal;
+    font-weight: 400;
+    font-display: swap;
+    src: url('../fonts/roboto/roboto-v48-latin-regular.woff2') format('woff2');
+}
+
+/* Italic */
+@font-face {
+    font-family: 'Roboto';
+    font-style: italic;
+    font-weight: 400;
+    font-display: swap;
+    src: url('../fonts/roboto/roboto-v48-latin-italic.woff2') format('woff2');
+}
+
+/* Light (300) */
+@font-face {
+    font-family: 'Roboto';
+    font-style: normal;
+    font-weight: 300;
+    font-display: swap;
+    src: url('../fonts/roboto/roboto-v48-latin-300.woff2') format('woff2');
+}
+
+/* Light Italic */
+@font-face {
+    font-family: 'Roboto';
+    font-style: italic;
+    font-weight: 300;
+    font-display: swap;
+    src: url('../fonts/roboto/roboto-v48-latin-300italic.woff2') format('woff2');
+}
+
+/* Semi-bold (600) */
+@font-face {
+    font-family: 'Roboto';
+    font-style: normal;
+    font-weight: 600;
+    font-display: swap;
+    src: url('../fonts/roboto/roboto-v48-latin-600.woff2') format('woff2');
+}
+
+/* Semi-bold Italic */
+@font-face {
+    font-family: 'Roboto';
+    font-style: italic;
+    font-weight: 600;
+    font-display: swap;
+    src: url('../fonts/roboto/roboto-v48-latin-600italic.woff2') format('woff2');
+}
+
+/* Bold (700) */
+@font-face {
+    font-family: 'Roboto';
+    font-style: normal;
+    font-weight: 700;
+    font-display: swap;
+    src: url('../fonts/roboto/roboto-v48-latin-700.woff2') format('woff2');
+}
+
+/* Bold Italic */
+@font-face {
+    font-family: 'Roboto';
+    font-style: italic;
+    font-weight: 700;
+    font-display: swap;
+    src: url('../fonts/roboto/roboto-v48-latin-700italic.woff2') format('woff2');
+}
+
+/* Black (900) */
+@font-face {
+    font-family: 'Roboto';
+    font-style: normal;
+    font-weight: 900;
+    font-display: swap;
+    src: url('../fonts/roboto/roboto-v48-latin-900.woff2') format('woff2');
+}
+
+/* Black Italic */
+@font-face {
+    font-family: 'Roboto';
+    font-style: italic;
+    font-weight: 900;
+    font-display: swap;
+    src: url('../fonts/roboto/roboto-v48-latin-900italic.woff2') format('woff2');
+}
+
+/* Roboto Mono for code/monospace */
+@font-face {
+    font-family: 'Roboto Mono';
+    font-style: normal;
+    font-weight: 400;
+    font-display: swap;
+    src: url('../fonts/roboto/robotomono-v48-latin-regular.woff2') format('woff2');
+}
+
+/* Univers Font Face Declarations */
+
+/* Regular */
+@font-face {
+    font-family: 'Univers';
+    font-style: normal;
+    font-weight: 400;
+    font-display: swap;
+    src: url('../fonts/univers/Univers.woff') format('woff');
+}
+
+/* Map other weights to Regular (since only one weight available) */
+/* Light (300) - use Regular */
+@font-face {
+    font-family: 'Univers';
+    font-style: normal;
+    font-weight: 300;
+    font-display: swap;
+    src: url('../fonts/univers/Univers.woff') format('woff');
+}
+
+/* Semi-bold (600) - use Regular */
+@font-face {
+    font-family: 'Univers';
+    font-style: normal;
+    font-weight: 600;
+    font-display: swap;
+    src: url('../fonts/univers/Univers.woff') format('woff');
+}
+
+/* Bold (700) - use Regular */
+@font-face {
+    font-family: 'Univers';
+    font-style: normal;
+    font-weight: 700;
+    font-display: swap;
+    src: url('../fonts/univers/Univers.woff') format('woff');
+}
+
+/* Black (900) - use Regular */
+@font-face {
+    font-family: 'Univers';
+    font-style: normal;
+    font-weight: 900;
+    font-display: swap;
+    src: url('../fonts/univers/Univers.woff') format('woff');
+}
+
+/* Mazzard Font Face Declarations */
+
+/* Regular */
+@font-face {
+    font-family: 'Mazzard';
+    font-style: normal;
+    font-weight: 400;
+    font-display: swap;
+    src: url('../fonts/mazzard/MazzardH-Regular.woff') format('woff');
+}
+
+/* Medium (500) */
+@font-face {
+    font-family: 'Mazzard';
+    font-style: normal;
+    font-weight: 500;
+    font-display: swap;
+    src: url('../fonts/mazzard/MazzardH-Medium.woff') format('woff');
+}
+
+/* Semi-bold (600) - use Medium */
+@font-face {
+    font-family: 'Mazzard';
+    font-style: normal;
+    font-weight: 600;
+    font-display: swap;
+    src: url('../fonts/mazzard/MazzardH-Medium.woff') format('woff');
+}
+
+/* Bold (700) - use Medium */
+@font-face {
+    font-family: 'Mazzard';
+    font-style: normal;
+    font-weight: 700;
+    font-display: swap;
+    src: url('../fonts/mazzard/MazzardH-Medium.woff') format('woff');
+}
+
+/* Black (900) - use Medium */
+@font-face {
+    font-family: 'Mazzard';
+    font-style: normal;
+    font-weight: 900;
+    font-display: swap;
+    src: url('../fonts/mazzard/MazzardH-Medium.woff') format('woff');
+}
+
+/* Light (300) - use Regular */
+@font-face {
+    font-family: 'Mazzard';
+    font-style: normal;
+    font-weight: 300;
+    font-display: swap;
+    src: url('../fonts/mazzard/MazzardH-Regular.woff') format('woff');
+}
+
+/* PeaberryMono Font Face Declarations */
+
+/* Regular */
+@font-face {
+    font-family: 'PeaberryMono';
+    font-style: normal;
+    font-weight: 400;
+    font-display: swap;
+    src: url('../fonts/peaberry/PeaberryMono.woff') format('woff');
+}
+
+/* Map all weights to Regular (monospace fonts typically have single weight) */
+@font-face {
+    font-family: 'PeaberryMono';
+    font-style: normal;
+    font-weight: 300;
+    font-display: swap;
+    src: url('../fonts/peaberry/PeaberryMono.woff') format('woff');
+}
+
+@font-face {
+    font-family: 'PeaberryMono';
+    font-style: normal;
+    font-weight: 500;
+    font-display: swap;
+    src: url('../fonts/peaberry/PeaberryMono.woff') format('woff');
+}
+
+@font-face {
+    font-family: 'PeaberryMono';
+    font-style: normal;
+    font-weight: 600;
+    font-display: swap;
+    src: url('../fonts/peaberry/PeaberryMono.woff') format('woff');
+}
+
+@font-face {
+    font-family: 'PeaberryMono';
+    font-style: normal;
+    font-weight: 700;
+    font-display: swap;
+    src: url('../fonts/peaberry/PeaberryMono.woff') format('woff');
+}
+
+/* PeaberryBase Font Face Declarations */
+
+/* Regular */
+@font-face {
+    font-family: 'PeaberryBase';
+    font-style: normal;
+    font-weight: 400;
+    font-display: swap;
+    src: url('../fonts/peaberry/PeaberryBase.woff') format('woff');
+}
+
+/* Map other weights to Regular */
+@font-face {
+    font-family: 'PeaberryBase';
+    font-style: normal;
+    font-weight: 300;
+    font-display: swap;
+    src: url('../fonts/peaberry/PeaberryBase.woff') format('woff');
+}
+
+@font-face {
+    font-family: 'PeaberryBase';
+    font-style: normal;
+    font-weight: 500;
+    font-display: swap;
+    src: url('../fonts/peaberry/PeaberryBase.woff') format('woff');
+}
+
+@font-face {
+    font-family: 'PeaberryBase';
+    font-style: normal;
+    font-weight: 600;
+    font-display: swap;
+    src: url('../fonts/peaberry/PeaberryBase.woff') format('woff');
+}
+
+@font-face {
+    font-family: 'PeaberryBase';
+    font-style: normal;
+    font-weight: 700;
+    font-display: swap;
+    src: url('../fonts/peaberry/PeaberryBase.woff') format('woff');
+}
+
+@font-face {
+    font-family: 'PeaberryBase';
+    font-style: normal;
+    font-weight: 900;
+    font-display: swap;
+    src: url('../fonts/peaberry/PeaberryBase.woff') format('woff');
+}

@@ -224,6 +224,30 @@ class BaseNode {
     onResize() {}
     onDrawForeground(ctx) {}
     onRemoved() {}
+
+    /**
+     * Prepares data for an undo operation by capturing the node's current state.
+     * This data can be used to restore the node to this state if an operation is undone.
+     */
+    prepareUndoData() {
+        this.undoData = this.getUndoData();
+    }
+
+    /**
+     * Retrieves a snapshot of the node's current state for undo purposes.
+     * @returns {object} An object containing the node's current state.
+     */
+    getUndoData() {
+        return {
+            id: this.id,
+            pos: [...this.pos],
+            size: [...this.size],
+            rotation: this.rotation,
+            properties: JSON.parse(JSON.stringify(this.properties)), // Deep copy
+            title: this.title,
+            aspectRatio: this.aspectRatio,
+        };
+    }
 }
 
 // Make BaseNode available globally for browser environments

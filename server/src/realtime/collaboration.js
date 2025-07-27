@@ -86,6 +86,10 @@ class CollaborationManager {
                 await this.handleRequestUndoState(socket, data);
             });
             
+            socket.on('get_undo_history', async (data) => {
+                await this.handleGetUndoHistory(socket, data);
+            });
+            
             socket.on('clear_undo_history', async (data) => {
                 await this.handleClearUndoHistory(socket, data);
             });
@@ -737,6 +741,157 @@ class CollaborationManager {
         } catch (error) {
             console.error('Error handling redo:', error);
             socket.emit('error', { message: 'Failed to redo operation' });
+        }
+    }
+    
+    /**
+     * Get detailed undo history for debug HUD
+     */
+    async handleGetUndoHistory(socket, data) {
+        console.log('📥 Server: Received get_undo_history request:', data);
+        
+        const session = this.socketSessions.get(socket.id);
+        if (!session) {
+            console.error('❌ Server: get_undo_history - No session found for socket:', socket.id);
+            socket.emit('error', { message: 'Not authenticated' });
+            return;
+        }
+        
+        console.log('✅ Server: Session found for get_undo_history:', {
+            userId: session.userId,
+            projectId: session.projectId
+        });
+        
+        const { limit = 10, showAllUsers = false } = data;
+        
+        try {
+            let undoOperations, redoOperations;
+            
+            if (showAllUsers) {
+                // Get operations from all users for debugging
+                undoOperations = this.operationHistory.getAllProjectOperations(
+                    session.projectId,
+                    limit,
+                    'undo'
+                );
+                
+                redoOperations = this.operationHistory.getAllProjectOperations(
+                    session.projectId,
+                    limit,
+                    'redo'
+                );
+            } else {
+                // Get operations for specific user
+                undoOperations = this.operationHistory.getUndoableOperations(
+                    session.userId,
+                    session.projectId,
+                    limit
+                );
+                
+                redoOperations = this.operationHistory.getRedoableOperations(
+                    session.userId,
+                    session.projectId,
+                    limit
+                );
+            }
+            
+            // Get detailed operation info
+            const undoDetails = undoOperations.map(item => {
+                if (item.type === 'transaction') {
+                    // Bundle of operations
+                    const ops = item.operationIds.map(id => this.operationHistory.operations.get(id)).filter(Boolean);
+                    return {
+                        type: 'bundled_operations',
+                        operationId: item.transactionId,
+                        timestamp: item.timestamp,
+                        operationCount: ops.length,
+                        operations: ops.map(op => ({
+                            type: op.type,
+                            params: op.params,
+                            undoData: op.undoData
+                        }))
+                    };
+                } else if (item.type === 'single') {
+                    // Single operation
+                    const op = this.operationHistory.operations.get(item.operationId);
+                    return op ? {
+                        type: op.type,
+                        operationId: op.id,
+                        timestamp: op.timestamp,
+                        params: op.params,
+                        undoData: op.undoData,
+                        userId: op.userId
+                    } : null;
+                } else {
+                    // Fallback for operations without type field
+                    const op = this.operationHistory.operations.get(item.operationId);
+                    return op ? {
+                        type: op.type,
+                        operationId: op.id,
+                        timestamp: op.timestamp,
+                        params: op.params,
+                        undoData: op.undoData,
+                        userId: op.userId
+                    } : null;
+                }
+            }).filter(Boolean);
+            
+            const redoDetails = redoOperations.map(item => {
+                if (item.type === 'transaction') {
+                    const ops = item.operationIds.map(id => this.operationHistory.operations.get(id)).filter(Boolean);
+                    return {
+                        type: 'bundled_operations',
+                        operationId: item.transactionId,
+                        timestamp: item.timestamp,
+                        operationCount: ops.length,
+                        operations: ops.map(op => ({
+                            type: op.type,
+                            params: op.params,
+                            undoData: op.undoData
+                        }))
+                    };
+                } else if (item.type === 'single') {
+                    const op = this.operationHistory.operations.get(item.operationId);
+                    return op ? {
+                        type: op.type,
+                        operationId: op.id,
+                        timestamp: op.timestamp,
+                        params: op.params,
+                        undoData: op.undoData,
+                        userId: op.userId
+                    } : null;
+                } else {
+                    // Fallback for operations without type field
+                    const op = this.operationHistory.operations.get(item.operationId);
+                    return op ? {
+                        type: op.type,
+                        operationId: op.id,
+                        timestamp: op.timestamp,
+                        params: op.params,
+                        undoData: op.undoData,
+                        userId: op.userId
+                    } : null;
+                }
+            }).filter(Boolean);
+            
+            const response = {
+                undoOperations: undoDetails,
+                redoOperations: redoDetails,
+                serverStateVersion: this.stateManager.stateVersions.get(session.projectId) || 0,
+                timestamp: Date.now()
+            };
+            
+            console.log('📤 Server: Sending undo_history response:', {
+                undoCount: undoDetails.length,
+                redoCount: redoDetails.length,
+                timestamp: response.timestamp
+            });
+            
+            socket.emit('undo_history', response);
+            
+        } catch (error) {
+            console.error('❌ Server: Error getting undo history:', error);
+            socket.emit('error', { message: 'Failed to get undo history' });
         }
     }
     

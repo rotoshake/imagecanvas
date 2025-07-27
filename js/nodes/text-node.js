@@ -13,7 +13,7 @@ class TextNode extends BaseNode {
             fontSize: 16,
             leadingFactor: 1.0,
             textColor: '#fff',
-            fontFamily: 'Arial',
+            fontFamily: FONT_CONFIG ? FONT_CONFIG.APP_FONT_CANVAS : 'Roboto',
             textAlign: 'left',
             padding: 10
         };
@@ -163,7 +163,7 @@ class TextNode extends BaseNode {
             this.properties.textAlign = 'left';
         }
         if (!this.properties.fontFamily) {
-            this.properties.fontFamily = 'Arial';
+            this.properties.fontFamily = FONT_CONFIG ? FONT_CONFIG.APP_FONT_CANVAS : 'Roboto';
         }
         if (typeof this.properties.fontSize !== 'number') {
             this.properties.fontSize = 16;
@@ -387,28 +387,28 @@ class TextNode extends BaseNode {
             title: {
                 fontSize: 24,
                 textColor: '#fff',
-                fontFamily: 'Arial',
+                fontFamily: FONT_CONFIG ? FONT_CONFIG.APP_FONT_CANVAS : 'Roboto',
                 textAlign: 'center',
                 leadingFactor: 1.2
             },
             subtitle: {
                 fontSize: 18,
                 textColor: '#ccc',
-                fontFamily: 'Arial',
+                fontFamily: FONT_CONFIG ? FONT_CONFIG.APP_FONT_CANVAS : 'Roboto',
                 textAlign: 'center',
                 leadingFactor: 1.1
             },
             body: {
                 fontSize: 14,
                 textColor: '#fff',
-                fontFamily: 'Arial',
+                fontFamily: FONT_CONFIG ? FONT_CONFIG.APP_FONT_CANVAS : 'Roboto',
                 textAlign: 'left',
                 leadingFactor: 1.4
             },
             caption: {
                 fontSize: 12,
                 textColor: '#999',
-                fontFamily: 'Arial',
+                fontFamily: FONT_CONFIG ? FONT_CONFIG.APP_FONT_CANVAS : 'Roboto',
                 textAlign: 'left',
                 leadingFactor: 1.3
             }

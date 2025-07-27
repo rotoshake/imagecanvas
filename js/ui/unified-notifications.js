@@ -59,7 +59,7 @@ class UnifiedNotifications {
                 display: flex;
                 align-items: center;
                 gap: 8px;
-                font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+                font-family: ${FONT_CONFIG.APP_FONT};
                 font-size: 12px;
                 line-height: 1.2;
                 opacity: 0;
@@ -206,7 +206,7 @@ class UnifiedNotifications {
             
             /* Text Progress Bar */
             .notification-progress-text {
-                font-family: monospace;
+                font-family: ${FONT_CONFIG.MONO_FONT};
                 font-size: 10px;
                 letter-spacing: -1px;
                 opacity: 0.8;

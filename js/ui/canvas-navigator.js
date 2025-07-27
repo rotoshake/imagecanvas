@@ -51,7 +51,7 @@ class CanvasNavigator {
         this.panel.className = 'canvas-navigator';
         this.panel.innerHTML = `
             <div class="navigator-header">
-                <h3>My Canvases</h3>
+                <h3>Image Canvas</h3>
                 <button class="close-btn" title="Close">×</button>
             </div>
             <div class="navigator-toolbar">
@@ -110,7 +110,7 @@ class CanvasNavigator {
                 z-index: 1000;
                 display: flex;
                 flex-direction: column;
-                font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+                font-family: ${FONT_CONFIG.APP_FONT};
             }
             
             .canvas-navigator.open {
@@ -130,7 +130,8 @@ class CanvasNavigator {
             .navigator-header h3 {
                 margin: 0;
                 font-size: 14px;
-                font-weight: 500;
+                font-weight: 700;
+                font-style: bold;
             }
             
             .close-btn {
@@ -267,7 +268,7 @@ class CanvasNavigator {
             
             .canvas-title {
                 font-size: 12px;
-                font-weight: 500;
+                font-weight: 300;
                 margin: 4px !important;
                 padding: 0;
                 color: #fff;

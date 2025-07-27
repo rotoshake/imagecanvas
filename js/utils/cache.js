@@ -183,11 +183,43 @@ class ThumbnailCache {
             return this.getThumbnails(hash);
         }
         
-        // NEW: Try to load from server thumbnails first
+        // NEW: Check IndexedDB first
+        if (window.indexedDBThumbnailStore && window.indexedDBThumbnailStore.isAvailable) {
+            try {
+                const storedThumbnails = await window.indexedDBThumbnailStore.getThumbnails(hash);
+                if (storedThumbnails) {
+                    // Convert object to Map format
+                    const thumbnailMap = new Map();
+                    Object.entries(storedThumbnails).forEach(([size, canvas]) => {
+                        thumbnailMap.set(parseInt(size), canvas);
+                    });
+                    
+                    // Cache in memory
+                    this.cache.set(hash, thumbnailMap);
+                    
+                    console.log(`💾 Loaded thumbnails for ${hash.substring(0, 8)}... from IndexedDB`);
+                    
+                    // Report completion
+                    if (progressCallback) progressCallback(1);
+                    if (window.imageProcessingProgress) {
+                        window.imageProcessingProgress.updateThumbnailProgress(hash, 1);
+                    }
+                    
+                    return thumbnailMap;
+                }
+            } catch (error) {
+                console.warn('Failed to load from IndexedDB:', error);
+            }
+        }
+        
+        // Try to load from server thumbnails
         const serverThumbnails = await this._loadServerThumbnails(hash, sourceImage);
         if (serverThumbnails && serverThumbnails.size > 0) {
             // Loaded thumbnails from server
             this.cache.set(hash, serverThumbnails);
+            
+            // Store in IndexedDB for next time
+            this._storeToIndexedDB(hash, serverThumbnails);
             
             // Report completion to unified progress system
             if (window.imageProcessingProgress) {
@@ -205,6 +237,8 @@ class ThumbnailCache {
         
         try {
             const result = await generationPromise;
+            // Store generated thumbnails to IndexedDB
+            this._storeToIndexedDB(hash, result);
             return result;
         } finally {
             this.generationQueues.delete(hash);
@@ -269,9 +303,6 @@ class ThumbnailCache {
     }
     
     _generateSingleThumbnail(sourceImage, size) {
-        const canvas = Utils.createCanvas(1, 1);
-        const ctx = canvas.getContext('2d');
-        
         // Calculate dimensions maintaining aspect ratio
         let width = sourceImage.width || sourceImage.videoWidth;
         let height = sourceImage.height || sourceImage.videoHeight;
@@ -288,9 +319,13 @@ class ThumbnailCache {
             height = Math.round(height * scale);
         }
         
+        // Create canvas with proper size from the start
+        const canvas = document.createElement('canvas');
         canvas.width = width;
         canvas.height = height;
+        const ctx = canvas.getContext('2d');
         
+        // Simply draw the image - canvas starts transparent by default
         ctx.imageSmoothingEnabled = true;
         ctx.imageSmoothingQuality = CONFIG.THUMBNAILS.QUALITY;
         ctx.drawImage(sourceImage, 0, 0, width, height);
@@ -341,6 +376,36 @@ class ThumbnailCache {
         this.cache.clear();
         this.generationQueues.clear();
         // Bundle tracking no longer needed - handled by unified progress system
+    }
+    
+    // Store thumbnails to IndexedDB
+    async _storeToIndexedDB(hash, thumbnails) {
+        if (!window.indexedDBThumbnailStore || !window.indexedDBThumbnailStore.isAvailable) {
+            return;
+        }
+        
+        try {
+            // Convert Map to object format
+            const thumbnailObj = {};
+            for (const [size, canvas] of thumbnails) {
+                thumbnailObj[size] = canvas;
+            }
+            
+            // Find server filename if available
+            let serverFilename = null;
+            if (window.app && window.app.graph) {
+                const imageNode = window.app.graph.nodes.find(node => 
+                    node.type === 'media/image' && node.properties?.hash === hash
+                );
+                if (imageNode?.properties?.serverFilename) {
+                    serverFilename = imageNode.properties.serverFilename;
+                }
+            }
+            
+            await window.indexedDBThumbnailStore.set(hash, thumbnailObj, serverFilename);
+        } catch (error) {
+            console.warn('Failed to store thumbnails to IndexedDB:', error);
+        }
     }
     
     // Get cache statistics
@@ -431,41 +496,93 @@ class ThumbnailCache {
     }
     
     /**
-     * Load a single thumbnail from server
+     * Load a single thumbnail from server with retry logic
      */
-    async _loadSingleServerThumbnail(size, nameWithoutExt) {
+    async _loadSingleServerThumbnail(size, nameWithoutExt, retryCount = 0) {
+        // Note: Server should generate WebP with alpha channel support (-exact flag in cwebp)
         const thumbnailUrl = `${CONFIG.SERVER.API_BASE}/thumbnails/${size}/${nameWithoutExt}.webp`;
         
+        try {
+            const result = await this._loadImageWithTimeout(thumbnailUrl, 10000); // 10 second timeout
+            if (result) {
+                return result;
+            }
+            
+            // Retry logic with exponential backoff
+            if (retryCount < 3) {
+                const delay = Math.pow(2, retryCount) * 1000; // 1s, 2s, 4s
+                console.log(`⏳ Retrying thumbnail ${size}px after ${delay}ms (attempt ${retryCount + 1}/3)`);
+                await new Promise(resolve => setTimeout(resolve, delay));
+                return this._loadSingleServerThumbnail(size, nameWithoutExt, retryCount + 1);
+            }
+            
+            return null;
+        } catch (error) {
+            console.warn(`Failed to load ${size}px thumbnail from server:`, error);
+            return null;
+        }
+    }
+    
+    /**
+     * Load image with timeout helper
+     */
+    async _loadImageWithTimeout(url, timeout = 10000) {
         return new Promise((resolve) => {
             const img = new Image();
             img.crossOrigin = 'anonymous';
             
+            let timeoutId = null;
+            let loaded = false;
+            
+            const cleanup = () => {
+                if (timeoutId) {
+                    clearTimeout(timeoutId);
+                    timeoutId = null;
+                }
+            };
+            
             img.onload = () => {
+                if (loaded) return;
+                loaded = true;
+                cleanup();
+                
                 try {
                     // Create canvas and draw the server thumbnail
                     const canvas = Utils.createCanvas(img.width, img.height);
-                    const ctx = canvas.getContext('2d');
+                    const ctx = canvas.getContext('2d', { alpha: true });
+                    
+                    // Ensure canvas is transparent before drawing
+                    ctx.clearRect(0, 0, canvas.width, canvas.height);
+                    
+                    // Draw image preserving alpha channel
                     ctx.drawImage(img, 0, 0);
+                    
+                    
                     resolve(canvas);
                 } catch (error) {
-                    console.warn(`Failed to create canvas for ${size}px thumbnail:`, error);
+                    console.warn(`Failed to create canvas:`, error);
                     resolve(null);
                 }
             };
             
             img.onerror = () => {
+                if (loaded) return;
+                loaded = true;
+                cleanup();
                 resolve(null);
             };
             
-            // Set a timeout to avoid hanging
-            setTimeout(() => {
-                if (!img.complete) {
+            // Set timeout
+            timeoutId = setTimeout(() => {
+                if (!loaded) {
+                    loaded = true;
                     img.src = ''; // Cancel load
+                    console.warn(`Timeout loading thumbnail from ${url}`);
                     resolve(null);
                 }
-            }, 2000); // 2 second timeout
+            }, timeout);
             
-            img.src = thumbnailUrl;
+            img.src = url;
         });
     }
     

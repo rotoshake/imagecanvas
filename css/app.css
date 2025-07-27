@@ -1,3 +1,17 @@
+/* Import fonts */
+@import url('fonts.css');
+
+/* Global font configuration - CHANGE FONT HERE */
+:root {
+    --app-font-family: 'Univers', sans-serif;
+    --app-font-mono: 'PeaberryMono', monospace;
+}
+
+/* Global font family */
+* {
+    font-family: var(--app-font-family);
+}
+
 /* Custom application styles */
 body, html { 
     margin: 0; 
@@ -5,7 +19,7 @@ body, html {
     width: 100%; 
     height: 100%; 
     overflow: hidden; 
-    font-family: Arial, sans-serif;
+    font-family: var(--app-font-family);
     background-color: #222;
 }
 
@@ -19,7 +33,7 @@ body, html {
 .litegraph {
     background: #222;
     color: #999;
-    font-family: Arial;
+    font-family: var(--app-font-family);
     font-size: 12px;
 }
 
@@ -56,7 +70,7 @@ body, html {
 }
 
 .properties-panel {
-    font-family: Arial, sans-serif;
+    font-family: var(--app-font-family);
     user-select: none;
 }
 
@@ -65,7 +79,7 @@ body, html {
 }
 
 .drop-overlay {
-    font-family: Arial, sans-serif;
+    font-family: var(--app-font-family);
 }
 
 /* Floating Properties Inspector */
@@ -85,4 +99,20 @@ body, html {
     color: #888;
     margin-top: 2px;
     font-style: italic;
+}
+
+/* Ensure buttons use Lexend */
+button, input, select, textarea {
+    font-family: var(--app-font-family);
+}
+
+/* Node titles and LiteGraph elements */
+.litenode-title,
+.litenode .title,
+.litegraph .litecontextmenu,
+.litegraph .litecontextmenu-entry,
+.litegraph .lgraphcanvas,
+.graph-input,
+.graph-output {
+    font-family: var(--app-font-family) !important;
 }

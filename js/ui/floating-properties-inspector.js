@@ -69,7 +69,7 @@ class FloatingPropertiesInspector {
                 border-radius: 8px;
                 box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5);
                 z-index: 1000;
-                font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+                font-family: ${FONT_CONFIG.APP_FONT};
                 font-size: 12px;
                 color: #e0e0e0;
                 min-width: 100px;
@@ -1438,12 +1438,16 @@ class FloatingPropertiesInspector {
         input.addEventListener('focus', () => {
             this.focusedInputs.add(input.id);
             originalValue = input.value; // Store value when focus starts
+            window.app.undoManager.beginInteraction(Array.from(this.currentNodes.values()));
         });
         
         input.addEventListener('blur', () => {
             this.focusedInputs.delete(input.id);
             // Commit change on blur
-            this.updateNodeProperty(prop, input.value);
+            const finalValue = input.value;
+            if (finalValue !== originalValue) {
+                window.app.undoManager.endInteraction('node_property_update', { property: prop, value: finalValue });
+            }
         });
         
         // Handle keyboard events
@@ -1517,12 +1521,16 @@ class FloatingPropertiesInspector {
         input.addEventListener('focus', () => {
             this.focusedInputs.add(input.id);
             originalValue = input.value; // Store value when focus starts
+            window.app.undoManager.beginInteraction(Array.from(this.currentNodes.values()));
         });
         
         input.addEventListener('blur', () => {
             this.focusedInputs.delete(input.id);
             // Commit change on blur
-            this.updateNodeProperty(prop, parseFloat(input.value) || 0);
+            const finalValue = parseFloat(input.value) || 0;
+            if (finalValue.toFixed(2) !== parseFloat(originalValue).toFixed(2)) {
+                window.app.undoManager.endInteraction('node_property_update', { property: prop, value: finalValue });
+            }
         });
         
         // Handle keyboard events
@@ -1886,17 +1894,20 @@ class FloatingPropertiesInspector {
     }
 
     updateNodeProperty(prop, value) {
-        // Debounce the update to avoid too many operations
-        const timerKey = `${prop}-update`;
+        const undoManager = window.app?.undoManager;
+        undoManager?.beginTransaction('property_change');
         
-        if (this.debounceTimers.has(timerKey)) {
-            clearTimeout(this.debounceTimers.get(timerKey));
+        this.executeNodePropertyUpdate(prop, value);
+
+        // Use a short timeout to commit the transaction, allowing multiple
+        // rapid changes to be bundled together.
+        if (this.commitTimeout) {
+            clearTimeout(this.commitTimeout);
         }
-        
-        this.debounceTimers.set(timerKey, setTimeout(() => {
-            this.debounceTimers.delete(timerKey);
-            this.executeNodePropertyUpdate(prop, value);
-        }, this.debounceDelay));
+        this.commitTimeout = setTimeout(() => {
+            undoManager?.commitTransaction();
+            this.commitTimeout = null;
+        }, 500);
     }
     
     executeRelativePropertyUpdate(prop, nodeIds, values, skipHistory = false) {
@@ -2029,122 +2040,38 @@ class FloatingPropertiesInspector {
     }
     
     executeNodePropertyUpdate(prop, value) {
-        // Access operation pipeline from global app object like the canvas does
-        if (!window.app?.operationPipeline) {
-            console.warn('Operation pipeline not available');
-            return;
-        }
-
         const nodes = Array.from(this.currentNodes.values());
-        
-        // Handle different property types with appropriate commands
+        const nodeIds = nodes.map(n => n.id);
+
+        let commandType;
+        let params = { nodeIds };
+
         if (prop === 'x' || prop === 'y') {
-            // Position update
-            if (nodes.length === 1) {
-                const node = nodes[0];
-                const newPos = [...node.pos];
+            commandType = 'node_move';
+            params.positions = nodes.map(n => {
+                const newPos = [...n.pos];
                 if (prop === 'x') newPos[0] = value;
                 else newPos[1] = value;
-                
-                window.app.operationPipeline.execute('node_move', {
-                    nodeId: node.id,
-                    position: newPos
-                });
-            } else {
-                // Multi-node move
-                const nodeIds = [];
-                const positions = [];
-                
-                nodes.forEach(node => {
-                    nodeIds.push(node.id);
-                    const newPos = [...node.pos];
-                    if (prop === 'x') newPos[0] = value;
-                    else newPos[1] = value;
-                    positions.push(newPos);
-                });
-                
-                window.app.operationPipeline.execute('node_move', {
-                    nodeIds,
-                    positions
-                });
-            }
-        } else if (prop === 'width' || prop === 'height') {
-            // Size update with validation
-            const nodeIds = [];
-            const sizes = [];
-            
-            nodes.forEach(node => {
-                const newSize = [...node.size];
-                // Ensure minimum size of 50px
-                const validatedValue = Math.max(50, value);
-                
-                // Check if aspect ratio is locked
-                // Important: When multi-selecting, the UI shows unlocked if ANY node is unlocked
-                // So we need to check the actual button state, not just the node property
-                const isUILocked = this.aspectRatioLockBtn && this.aspectRatioLockBtn.classList.contains('locked');
-                
-                if (isUILocked && node.aspectRatioLocked !== false) {
-                    // Use the locked aspect ratio (which is the ratio at the time of locking)
-                    const aspectRatio = node.lockedAspectRatio || (node.size[0] / node.size[1]);
-                    
-                    if (prop === 'width') {
-                        newSize[0] = validatedValue;
-                        newSize[1] = validatedValue / aspectRatio;
-                    } else {
-                        newSize[1] = validatedValue;
-                        newSize[0] = validatedValue * aspectRatio;
-                    }
-                    
-                    // Ensure both dimensions meet minimum size
-                    if (newSize[0] < 50 || newSize[1] < 50) {
-                        const scale = Math.max(50 / newSize[0], 50 / newSize[1]);
-                        newSize[0] *= scale;
-                        newSize[1] *= scale;
-                    }
-                } else {
-                    // Normal resize without aspect ratio lock - set exact dimensions
-                    if (prop === 'width') newSize[0] = validatedValue;
-                    else newSize[1] = validatedValue;
-                }
-                
-                nodeIds.push(node.id);
-                sizes.push(newSize);
+                return newPos;
             });
-            
-            window.app.operationPipeline.execute('node_resize', {
-                nodeIds,
-                sizes
+        } else if (prop === 'width' || prop === 'height') {
+            commandType = 'node_resize';
+            params.sizes = nodes.map(n => {
+                const newSize = [...n.size];
+                if (prop === 'width') newSize[0] = value;
+                else newSize[1] = value;
+                return newSize;
             });
         } else if (prop === 'rotation') {
-            // Rotation update
-            nodes.forEach(node => {
-                window.app.operationPipeline.execute('node_rotate', {
-                    nodeId: node.id,
-                    angle: value
-                });
-            });
-        } else if (prop === 'title') {
-            // Title update
-            nodes.forEach(node => {
-                window.app.operationPipeline.execute('node_property_update', {
-                    nodeId: node.id,
-                    property: 'title',
-                    value: value
-                });
-            });
-            
-            // Update property values after title change
-            setTimeout(() => this.updatePropertyValues(), 100);
+            commandType = 'node_rotate';
+            params.angles = nodes.map(() => value);
         } else {
-            // Generic property update
-            nodes.forEach(node => {
-                window.app.operationPipeline.execute('node_property_update', {
-                    nodeId: node.id,
-                    property: prop,
-                    value: value
-                });
-            });
+            commandType = 'node_property_update';
+            params.property = prop;
+            params.value = value;
         }
+
+        window.app.undoManager.endInteraction(commandType, params);
     }
 
     renderCanvasStats(container) {

@@ -208,8 +208,8 @@ class OperationHistory {
             const op = this.operations.get(opId);
             
             // Only consider operations from this user that are applied
-            // Use loose equality to handle string/number type mismatch
-            if (op && op.userId == userId && op.state === 'applied') {
+            // Use strict equality to prevent type coercion bugs
+            if (op && op.userId === userId && op.state === 'applied') {
                 console.log(`  ✅ Found undoable operation: ${opId}, userId: ${op.userId} (type: ${typeof op.userId})`);
                 
                 // Check if part of transaction
@@ -494,6 +494,73 @@ class OperationHistory {
         }
         
         return conflicts;
+    }
+    
+    /**
+     * Get all operations for a project (for debugging)
+     * @param {string} projectId - Project ID
+     * @param {number} limit - Maximum number of operations to return
+     * @param {string} type - 'undo' or 'redo'
+     * @returns {Array} List of operations
+     */
+    getAllProjectOperations(projectId, limit = 20, type = 'undo') {
+        const projectTimeline = this.timeline.get(projectId) || [];
+        const operations = [];
+        
+        console.log(`🔍 Getting all ${type} operations for project ${projectId}:`, {
+            timelineLength: projectTimeline.length,
+            limit: limit
+        });
+        
+        if (type === 'undo') {
+            // Get most recent applied operations
+            for (let i = projectTimeline.length - 1; i >= 0 && operations.length < limit; i--) {
+                const opId = projectTimeline[i];
+                const op = this.operations.get(opId);
+                
+                if (op && op.state === 'applied') {
+                    // Check if this is part of a transaction
+                    const transaction = this.findTransactionForOperation(opId);
+                    
+                    if (transaction && !operations.find(item => item.transactionId === transaction.id)) {
+                        // Add transaction
+                        operations.push({
+                            type: 'transaction',
+                            transactionId: transaction.id,
+                            operationIds: transaction.operationIds,
+                            timestamp: transaction.timestamp,
+                            userId: transaction.userId
+                        });
+                    } else if (!transaction) {
+                        // Single operation
+                        operations.push({
+                            type: 'single',
+                            operationId: opId,
+                            timestamp: op.timestamp,
+                            userId: op.userId
+                        });
+                    }
+                }
+            }
+        } else if (type === 'redo') {
+            // Get most recent undone operations
+            for (let i = projectTimeline.length - 1; i >= 0 && operations.length < limit; i--) {
+                const opId = projectTimeline[i];
+                const op = this.operations.get(opId);
+                
+                if (op && op.state === 'undone') {
+                    operations.push({
+                        type: 'single',
+                        operationId: opId,
+                        timestamp: op.timestamp,
+                        userId: op.userId
+                    });
+                }
+            }
+        }
+        
+        console.log(`📊 Found ${operations.length} ${type} operations for all users`);
+        return operations;
     }
     
     /**

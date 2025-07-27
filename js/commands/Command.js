@@ -37,6 +37,15 @@ class Command {
     async execute(context) {
         throw new Error(`Execute not implemented for ${this.type}`);
     }
+
+    /**
+     * Prepare undo data for the command
+     * @param {Object} context - Execution context { app, graph, canvas }
+     */
+    async prepareUndoData(context) {
+        // Default implementation does nothing.
+        // Subclasses should override this to capture necessary data for undo.
+    }
     
     /**
      * Undo the command

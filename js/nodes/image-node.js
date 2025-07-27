@@ -26,7 +26,7 @@ class ImageNode extends BaseNode {
         this.lockedAspectRatio = 1; // Will be updated when image loads
         
         // Progressive loading state
-        this.loadingState = 'loading'; // idle, loading, loaded, error - start as loading to show immediate feedback
+        this.loadingState = 'idle'; // idle, loading, loaded, error - start as idle
         this.loadingProgress = 0; // 0-1 for unified progress tracking
         this.thumbnailProgress = 0; // Separate progress for thumbnail generation
         this.displayedProgress = 0; // Smoothed progress for display
@@ -49,8 +49,11 @@ class ImageNode extends BaseNode {
             window.imageCache.set(hash, src);
             console.log(`💾 Cached image data for hash ${hash.substring(0, 8)}...`);
         }
-        // Only set loading state if not already set (preserve initial state)
-        if (!this.loadingState || this.loadingState === 'idle') {
+        // Check if we already have thumbnails
+        const hasThumbnails = hash && window.thumbnailCache && window.thumbnailCache.hasThumbnails(hash);
+        
+        // Only set loading state if we don't have thumbnails (no visual content yet)
+        if (!hasThumbnails && (!this.loadingState || this.loadingState === 'idle')) {
             this.loadingState = 'loading';
             this.loadingProgress = 0.1; // 10% for starting load
             this.thumbnailProgress = 0; // Reset thumbnail progress for new load
@@ -223,6 +226,38 @@ class ImageNode extends BaseNode {
     }
     
     loadImageAsyncOptimized(src) {
+        // Use ImageLoadManager for deduplication and throttling
+        if (this.properties.hash && window.imageLoadManager) {
+            // Progress callback to update this node's progress
+            const progressCallback = (progress) => {
+                this.loadingProgress = progress;
+                
+                // Trigger redraw for progress updates
+                const canvas = this.graph?.canvas || window.app?.graphCanvas;
+                if (canvas) {
+                    canvas.dirty_canvas = true;
+                    
+                    // Force redraw at key progress points
+                    if (progress >= 0.9 && canvas.forceRedraw) {
+                        canvas.forceRedraw();
+                    }
+                }
+            };
+            
+            // Use shared loading with deduplication
+            return window.imageLoadManager.loadShared(
+                this.properties.hash,
+                src,
+                progressCallback
+            );
+        }
+        
+        // Fallback to direct loading if no hash or manager
+        return this.loadImageDirect(src);
+    }
+    
+    // Original loading logic as fallback
+    loadImageDirect(src) {
         return new Promise((resolve, reject) => {
             const img = new Image();
             
@@ -460,37 +495,105 @@ class ImageNode extends BaseNode {
      * Check if loading ring should be shown (unified logic to prevent flickering)
      */
     shouldShowLoadingRing() {
-        // Always show during primary loading
-        if (this.loadingState === 'loading' || (!this.img && this.loadingState !== 'error')) {
-            return true;
+        // Only show loading ring if we have NO visual content at all
+        // If we have thumbnails, we can show them immediately without a loading ring
+        const hasThumbnails = this.properties.hash && window.thumbnailCache && 
+                             window.thumbnailCache.hasThumbnails(this.properties.hash);
+        
+        if (hasThumbnails) {
+            return false; // Never show loading ring if we have thumbnails
         }
         
-        // Don't show thumbnail loading ring if primary loading just finished (prevents flicker)
-        if (this.primaryLoadCompleteTime) {
-            const timeSinceLoad = Date.now() - this.primaryLoadCompleteTime;
-            if (timeSinceLoad < 300) { // 300ms cooldown
-                return false;
-            }
-        }
-        
-        // Show for thumbnail generation only if we have an image and need thumbnails
-        // AND thumbnail generation isn't already complete
-        if (this.img && this.properties.hash && window.thumbnailCache && 
-            !window.thumbnailCache.hasThumbnails(this.properties.hash) &&
-            this.thumbnailProgress < 1.0) {
+        // Only show loading ring during initial load when we have nothing to show
+        if (this.loadingState === 'loading' && !this.img) {
             return true;
         }
         
         return false;
     }
     
+    _triggerLazyLoad() {
+        // Only load if not already loading
+        if (!this._lazyLoadTriggered && !this.img && this.loadingState !== 'loading') {
+            this._lazyLoadTriggered = true;
+            console.log(`🔄 Lazy loading full image for ${this.properties.hash?.substring(0, 8)}...`);
+            this.setImage(this.properties.serverUrl, this.properties.filename, this.properties.hash);
+        }
+    }
+    
+    drawProgressRingOnly(ctx, progress = 0) {
+        const centerX = this.size[0] / 2;
+        const centerY = this.size[1] / 2;
+        
+        // Calculate screen-space consistent line width (4px)
+        const scale = this.graph?.canvas?.viewport?.scale || 1;
+        const lineWidth = 4 / scale;
+        
+        // Calculate radius with screen-space limits
+        const baseRadius = Math.min(this.size[0], this.size[1]) * 0.15; // 15% of smallest dimension
+        const minRadius = 20 / scale;  // 20px minimum in screen space
+        const maxRadius = 100 / scale; // 100px maximum in screen space
+        const radius = Math.max(minRadius, Math.min(baseRadius, maxRadius));
+        
+        // Draw background ring
+        ctx.beginPath();
+        ctx.arc(centerX, centerY, radius, 0, Math.PI * 2);
+        ctx.strokeStyle = 'rgba(255, 255, 255, 0.2)';
+        ctx.lineWidth = lineWidth;
+        ctx.stroke();
+        
+        // Draw progress ring (radial fill)
+        if (progress > 0) {
+            ctx.beginPath();
+            // Start from top (-PI/2) and fill clockwise
+            const endAngle = -Math.PI / 2 + (progress * Math.PI * 2);
+            ctx.arc(centerX, centerY, radius, -Math.PI / 2, endAngle);
+            ctx.strokeStyle = 'rgba(255, 255, 255, 0.9)';
+            ctx.lineWidth = lineWidth;
+            ctx.stroke();
+        }
+    }
+    
+    drawPlaceholderWithInfo(ctx) {
+        // Draw solid background
+        ctx.fillStyle = '#2a2a2a';
+        ctx.fillRect(0, 0, this.size[0], this.size[1]);
+        
+        // Draw border
+        ctx.strokeStyle = '#404040';
+        ctx.lineWidth = 1;
+        ctx.strokeRect(0, 0, this.size[0], this.size[1]);
+    }
+    
     onDrawForeground(ctx) {
         this.validate();
         
+        // Check if we have thumbnails available to show immediately
+        const hasThumbnails = this.properties.hash && window.thumbnailCache && 
+                             window.thumbnailCache.hasThumbnails(this.properties.hash);
+        
+        // If we have thumbnails, we're effectively "loaded" for display purposes
+        if (hasThumbnails && this.loadingState === 'idle') {
+            this.loadingState = 'loaded'; // Mark as loaded since we can display content
+        }
+        
         // Auto-start loading if we have a source but haven't started yet
-        if ((this.loadingState === 'idle' || this.loadingState === 'loading') && 
-            (this.properties.serverUrl || this.properties.hash) && !this.img) {
+        if (this.loadingState === 'idle' && 
+            (this.properties.serverUrl || this.properties.hash) && !this.img && !hasThumbnails) {
+            // No thumbnails available, need to load full image
             this.setImage(this.properties.serverUrl, this.properties.filename, this.properties.hash);
+        }
+        
+        // Schedule lazy load of full image if we only have thumbnails
+        if (hasThumbnails && !this.img && !this._lazyLoadScheduled) {
+            this._lazyLoadScheduled = true;
+            requestIdleCallback(() => {
+                if (!this.img && this.properties.hash) {
+                    console.log(`⏰ Background loading full image for ${this.properties.hash.substring(0, 8)}...`);
+                    // Load silently in background without changing loading state
+                    this.setImage(this.properties.serverUrl, this.properties.filename, this.properties.hash);
+                }
+            }, { timeout: 2000 });
         }
         
         // Check unified loading ring condition
@@ -499,7 +602,8 @@ class ImageNode extends BaseNode {
             let targetProgress = this.loadingProgress;
             
             // If we have an image and we're just waiting for thumbnails, show faded image behind ring
-            if (this.img && this.loadingState === 'loaded') {
+            const showingImageBehindRing = this.img && this.loadingState === 'loaded';
+            if (showingImageBehindRing) {
                 // Use thumbnail progress for thumbnail generation phase
                 targetProgress = this.thumbnailProgress;
                 
@@ -523,13 +627,49 @@ class ImageNode extends BaseNode {
                 }
             }
             
-            this.drawProgressRing(ctx, this.displayedProgress);
+            // Draw placeholder with info first for instant feedback
+            if (!showingImageBehindRing && !this.img) {
+                this.drawPlaceholderWithInfo(ctx);
+                // Draw just the progress ring on top
+                this.drawProgressRingOnly(ctx, this.displayedProgress);
+            } else if (!showingImageBehindRing) {
+                // Legacy behavior for when we have partial image data
+                this.drawProgressRing(ctx, this.displayedProgress);
+            } else {
+                // Draw just the ring without the background
+                this.drawProgressRingOnly(ctx, this.displayedProgress);
+            }
             return;
         }
         
         if (this.loadingState === 'error') {
             this.drawPlaceholder(ctx, 'Error');
             return;
+        }
+        
+        // Check if we can show thumbnails even without full image
+        if (!this.img && this.properties.hash && window.thumbnailCache) {
+            const thumbnail = this.getBestThumbnail(this.size[0], this.size[1]);
+            if (thumbnail) {
+                // Show thumbnail at full opacity - it's our primary display
+                ctx.save();
+                ctx.imageSmoothingEnabled = true;
+                ctx.imageSmoothingQuality = CONFIG.THUMBNAILS.QUALITY;
+                ctx.drawImage(thumbnail, 0, 0, this.size[0], this.size[1]);
+                ctx.restore();
+                
+                // Trigger lazy load if not already scheduled
+                if (!this._lazyLoadScheduled) {
+                    this._lazyLoadScheduled = true;
+                    requestIdleCallback(() => {
+                        if (!this.img && this.properties.hash) {
+                            console.log(`⏰ Background loading full image for ${this.properties.hash.substring(0, 8)}...`);
+                            this.setImage(this.properties.serverUrl, this.properties.filename, this.properties.hash);
+                        }
+                    }, { timeout: 2000 });
+                }
+                return;
+            }
         }
         
         if (!this.img) return;
@@ -545,24 +685,45 @@ class ImageNode extends BaseNode {
         // Draw image or thumbnail
         if (useThumbnail) {
             const thumbnail = this.getBestThumbnail(optimalSize, optimalSize);
+            
             if (thumbnail) {
-                // Simplified debug - only log significant quality mismatches occasionally
-                const actualSize = Math.max(thumbnail.width, thumbnail.height);
-                // LOD quality tracking disabled to reduce console spam
-                
+                ctx.save();
                 ctx.imageSmoothingEnabled = true;
                 ctx.imageSmoothingQuality = CONFIG.THUMBNAILS.QUALITY;
                 ctx.drawImage(thumbnail, 0, 0, this.size[0], this.size[1]);
-            } else {
+                ctx.restore();
+            } else if (this.img) {
                 // Fall back to full image if no thumbnails available but image is loaded
+                ctx.save();
                 ctx.imageSmoothingEnabled = true;
                 ctx.imageSmoothingQuality = CONFIG.THUMBNAILS.QUALITY;
                 ctx.drawImage(this.img, 0, 0, this.size[0], this.size[1]);
+                ctx.restore();
+            } else if (this.properties.hash && window.thumbnailCache) {
+                // No thumbnail or full image - trigger lazy load if needed
+                this._triggerLazyLoad();
             }
         } else {
-            // Full resolution for 1:1 viewing
-            ctx.imageSmoothingEnabled = false; // Preserve pixel-perfect quality
-            ctx.drawImage(this.img, 0, 0, this.size[0], this.size[1]);
+            // Full resolution for 1:1 viewing - need full image
+            if (this.img) {
+                ctx.save();
+                ctx.imageSmoothingEnabled = false; // Preserve pixel-perfect quality
+                ctx.drawImage(this.img, 0, 0, this.size[0], this.size[1]);
+                ctx.restore();
+            } else {
+                // Need to load full image for 1:1 viewing
+                this._triggerLazyLoad();
+                
+                // Show best available thumbnail while loading
+                const thumbnail = this.getBestThumbnail(this.size[0], this.size[1]);
+                if (thumbnail) {
+                    ctx.save();
+                    ctx.globalAlpha = 0.7; // Slightly faded to indicate it's not full res
+                    ctx.imageSmoothingEnabled = true;
+                    ctx.drawImage(thumbnail, 0, 0, this.size[0], this.size[1]);
+                    ctx.restore();
+                }
+            }
         }
         
         // Title rendering is handled at canvas level by drawNodeTitle()

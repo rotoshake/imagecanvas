@@ -21,9 +21,24 @@
             
             console.log('✅ Collaborative architecture auto-initialized');
             
-            // The CanvasIntegration will auto-initialize via its own script
-            
-            initialized = true;
+            // Initialize systems that depend on the collaborative architecture
+            if (window.app.collaborativeArchitecture) {
+                console.log('🚀 Initializing post-architecture systems...');
+                
+                // Initialize the canvas integration
+                // if (window.CanvasIntegration) {
+                //     window.app.canvasIntegration = new CanvasIntegration(window.app);
+                //     window.app.canvasIntegration.initialize();
+                //     console.log('✅ CanvasIntegration initialized and active');
+                // }
+                
+                // Initialize background sync manager
+                if (window.BackgroundSyncManager) {
+                    // The CanvasIntegration will auto-initialize via its own script
+                    
+                    initialized = true;
+                }
+            }
             
         } catch (error) {
             console.error('❌ Failed to auto-initialize architecture:', error);

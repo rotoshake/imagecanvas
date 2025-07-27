@@ -155,16 +155,24 @@ class DragDropManager {
             }
             
             // Process media files in batches to avoid overwhelming the server
-            const BATCH_SIZE = 3; // Upload 3 at a time (videos are larger)
+            const BATCH_SIZE = 10; // Increased from 3 to 10 for faster processing
             for (let i = 0; i < allMediaFiles.length; i += BATCH_SIZE) {
                 const batch = allMediaFiles.slice(i, i + BATCH_SIZE);
                 const uploadPromises = [];
                 
-                for (const file of batch) {
+                // Process batch files in parallel for hash generation
+                const processPromises = batch.map(async (file) => {
                     // Get data URL and hash
                     const dataURL = await this.fileToDataURL(file);
                     const hash = await HashUtils.hashImageData(dataURL);
                     
+                    return { file, dataURL, hash };
+                });
+                
+                const processedFiles = await Promise.all(processPromises);
+                
+                // Now upload all in parallel
+                for (const { file, dataURL, hash } of processedFiles) {
                     // Update progress tracking
                     if (batchId && window.imageProcessingProgress) {
                         window.imageProcessingProgress.updateFileHash(file.name, hash);
@@ -197,15 +205,18 @@ class DragDropManager {
         
         // Now create nodes for all files
         const allFiles = [...imageFiles, ...videoFiles];
-        for (let i = 0; i < allFiles.length; i++) {
-            const file = allFiles[i];
+        
+        // Create nodes in smaller chunks for better responsiveness
+        const NODE_CREATION_CHUNK_SIZE = 5;
+        for (let i = 0; i < allFiles.length; i += NODE_CREATION_CHUNK_SIZE) {
+            const chunk = allFiles.slice(i, i + NODE_CREATION_CHUNK_SIZE);
             
-            try {
-                // Yield control to keep UI responsive
-                await new Promise(resolve => requestAnimationFrame(resolve));
-                
-                const nodeData = await this.createNodeFromFile(file, dropPos, i * cascadeOffset, batchId, uploadedMedia);
-                if (nodeData) {
+            // Process chunk in parallel
+            const nodePromises = chunk.map(async (file, chunkIndex) => {
+                const globalIndex = i + chunkIndex;
+                try {
+                    const nodeData = await this.createNodeFromFile(file, dropPos, globalIndex * cascadeOffset, batchId, uploadedMedia);
+                    if (nodeData) {
                     // Don't mark load as complete yet - let the image node do it when actually loaded
                     // This ensures thumbnail progress is tracked properly
                     if (batchId && nodeData.properties.hash) {
@@ -348,12 +359,19 @@ class DragDropManager {
                         this.graph.canvas.dirty_canvas = true;
                     }
                     
-                    // Additional yield after adding each node for smoother experience
-                    await new Promise(resolve => requestAnimationFrame(resolve));
+                    }
+                    return nodeData;
+                } catch (error) {
+                    console.error('Failed to create node from file:', file.name, error);
+                    return null;
                 }
-            } catch (error) {
-                console.error('Failed to create node from file:', file.name, error);
-            }
+            });
+            
+            // Wait for chunk to complete
+            await Promise.all(nodePromises);
+            
+            // Yield control between chunks
+            await new Promise(resolve => requestAnimationFrame(resolve));
         }
         
         // Batch completion is handled by ImageProcessingProgressManager
@@ -400,6 +418,18 @@ class DragDropManager {
             
             // Cache the media locally
             window.imageCache.set(hash, dataURL);
+        }
+        
+        // For images, start thumbnail generation immediately in background
+        if (!isVideo && hash && window.thumbnailCache) {
+            // Create a temporary image element for thumbnail generation
+            const tempImg = new Image();
+            tempImg.onload = () => {
+                // Start generating thumbnails immediately
+                console.log(`🖼️ Starting early thumbnail generation for ${hash.substring(0, 8)}...`);
+                window.thumbnailCache.generateThumbnailsProgressive(hash, tempImg);
+            };
+            tempImg.src = dataURL;
         }
         
         // Pre-load media to get correct dimensions

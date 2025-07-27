@@ -164,6 +164,19 @@ class CanvasStateManager {
             case 'node_paste':
                 return this.applyNodePaste(operation.params, state, changes);
                 
+            case 'node_align':
+                operation.params.nodeIds.forEach((nodeId, index) => {
+                    const node = state.nodes.find(n => n.id === nodeId);
+                    if (node && operation.params.positions[index]) {
+                        // Update both X and Y coordinates from the provided positions
+                        // The client sends complete positions after alignment animation
+                        node.pos[0] = operation.params.positions[index][0];
+                        node.pos[1] = operation.params.positions[index][1];
+                        console.log(`[node_align] Updated node ${nodeId} to position [${node.pos[0]}, ${node.pos[1]}]`);
+                    }
+                });
+                break;
+
             case 'image_upload_complete':
                 return this.applyImageUploadComplete(operation.params, state, changes);
                 
@@ -171,6 +184,8 @@ class CanvasStateManager {
                 console.warn('Unhandled operation type:', operation.type);
                 return null;
         }
+        
+        return changes;
     }
     
     /**
@@ -787,6 +802,21 @@ class CanvasStateManager {
             if (!op.params.targetPosition || !Array.isArray(op.params.targetPosition) || op.params.targetPosition.length !== 2) {
                 return { valid: false, error: 'Invalid target position' };
             }
+            return { valid: true };
+        });
+        
+        validators.set('node_align', (op, state) => {
+            if (!op.params.nodeIds || !Array.isArray(op.params.nodeIds) || op.params.nodeIds.length < 2) {
+                return { valid: false, error: 'Missing or invalid nodeIds (need at least 2 nodes)' };
+            }
+            if (!op.params.axis || !['horizontal', 'vertical'].includes(op.params.axis)) {
+                return { valid: false, error: 'Missing or invalid axis' };
+            }
+            if (!op.params.positions || !Array.isArray(op.params.positions) || 
+                op.params.positions.length !== op.params.nodeIds.length) {
+                return { valid: false, error: 'Missing or invalid positions array' };
+            }
+            // Always valid - missing nodes will be silently ignored during apply
             return { valid: true };
         });
         

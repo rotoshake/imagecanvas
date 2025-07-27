@@ -51,6 +51,17 @@ class NetworkLayer {
     }
     
     /**
+     * Initialize the network layer and connect to server
+     */
+    initialize() {
+        console.log('🌐 NetworkLayer.initialize() called');
+        // Connect to the server
+        this.connect().catch(error => {
+            console.error('❌ Failed to connect during initialization:', error);
+        });
+    }
+    
+    /**
      * Connect to server
      */
     async connect() {
@@ -229,6 +240,12 @@ class NetworkLayer {
         
         this.socket.on('redo_failed', (data) => {
             this.emitLocal('redo_failed', data);
+        });
+        
+        // Undo history event for debug HUD
+        this.socket.on('undo_history', (data) => {
+            console.log('📨 NetworkLayer: Forwarding undo_history:', data);
+            this.emitLocal('undo_history', data);
         });
         
         // Error events
