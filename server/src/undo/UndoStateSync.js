@@ -21,6 +21,7 @@ class UndoStateSync {
             'node_paste': this.undoNodeCreate,
             'node_delete': this.undoNodeDelete,
             'node_move': this.undoNodeMove,
+            'node_align': this.undoNodeAlign,
             'node_resize': this.undoNodeResize,
             'node_property_update': this.undoPropertyUpdate,
             'node_batch_property_update': this.undoPropertyUpdate,
@@ -468,6 +469,22 @@ class UndoStateSync {
      * Undo node move
      */
     undoNodeMove(operation, state, changes) {
+        if (operation.undoData && operation.undoData.previousPositions) {
+            for (const [nodeId, pos] of Object.entries(operation.undoData.previousPositions)) {
+                const node = state.nodes.find(n => n.id == nodeId);
+                if (node) {
+                    node.pos = [...pos];
+                    changes.updated.push(node);
+                }
+            }
+        }
+        return changes;
+    }
+    
+    /**
+     * Undo node alignment
+     */
+    undoNodeAlign(operation, state, changes) {
         if (operation.undoData && operation.undoData.previousPositions) {
             for (const [nodeId, pos] of Object.entries(operation.undoData.previousPositions)) {
                 const node = state.nodes.find(n => n.id == nodeId);

@@ -80,16 +80,29 @@ class NodeAlignCommand extends Command {
 
     async prepareUndoData(context) {
         const { graph } = context;
-        const { nodeIds } = this.params;
+        
         this.undoData = {
-            originalPositions: nodeIds.map(nodeId => {
-                const node = graph.getNodeById(nodeId);
-                return { id: nodeId, pos: [...node.pos] };
-            })
+            previousPositions: {}
         };
+
+        if (this.initialState) {
+            // Use initialState from ClientUndoManager (preferred)
+            this.params.nodeIds.forEach((nodeId, index) => {
+                this.undoData.previousPositions[nodeId] = this.initialState.positions[index];
+            });
+        } else {
+            // Fallback: read current positions
+            this.params.nodeIds.forEach(nodeId => {
+                const node = graph.getNodeById(nodeId);
+                if (node) {
+                    this.undoData.previousPositions[nodeId] = [...node.pos];
+                }
+            });
+        }
+        
         console.log('[NodeAlignCommand] Prepared undo data:', {
             nodeIds: this.params.nodeIds,
-            originalPositions: this.undoData.originalPositions
+            previousPositions: this.undoData.previousPositions
         });
     }
 
@@ -138,20 +151,20 @@ class NodeAlignCommand extends Command {
 
     async undo(context) {
         const { graph } = context;
-        const { originalPositions } = this.undoData;
+        const { previousPositions } = this.undoData;
         console.log('[NodeAlignCommand] Undoing with data:', {
-            originalPositions: originalPositions
+            previousPositions: previousPositions
         });
-        originalPositions.forEach(({ id, pos }) => {
-            const node = graph.getNodeById(id);
+        for (const [nodeId, pos] of Object.entries(previousPositions)) {
+            const node = graph.getNodeById(nodeId);
             if (node) {
-                console.log(`[NodeAlignCommand] Restoring node ${id} to`, pos);
+                console.log(`[NodeAlignCommand] Restoring node ${nodeId} to`, pos);
                 node.pos = [...pos];
                 // Clear any animation state
                 delete node._animPos;
                 delete node._animVel;
             }
-        });
+        }
         // Mark canvas as dirty to ensure redraw
         if (graph.canvas) {
             graph.canvas.dirty_canvas = true;

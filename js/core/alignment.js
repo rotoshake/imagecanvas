@@ -595,12 +595,11 @@ class AutoAlignmentManager {
             gridAlignDragging: this.gridAlignDragging
         });
         if (this.gridAlignAnimTargets) {
-            // Get nodes in the order they appear in the grid
+            // Use the same pattern as finishAutoAlign to ensure nodeIds and positions match
             const selectedNodes = this.selection.getSelectedNodes();
             const nodeIds = [];
             const positions = [];
             
-            // Use the exact target positions from gridAlignAnimTargets
             for (const node of selectedNodes) {
                 if (this.gridAlignAnimTargets[node.id]) {
                     nodeIds.push(node.id);
@@ -608,11 +607,13 @@ class AutoAlignmentManager {
                 }
             }
             
-            console.log('[ALIGN_DEBUG] Grid align sending TARGET positions:', { 
+            console.log('[ALIGN_DEBUG] Grid align sending positions:', { 
                 nodeIds, 
                 positions,
                 nodeCount: nodeIds.length,
-                columns: this.gridAlignColumns
+                columns: this.gridAlignColumns,
+                hasUndoManager: !!window.app.undoManager,
+                hasInteractionState: !!window.app.undoManager.interactionInitialState
             });
             
             // Log each node's target position for debugging
@@ -623,7 +624,11 @@ class AutoAlignmentManager {
                 }
             });
             
-            window.app.undoManager.endInteraction('node_move', { nodeIds, positions });
+            window.app.undoManager.endInteraction('node_align', { 
+                nodeIds, 
+                positions, 
+                axis: 'grid' 
+            });
         } else {
             window.app.undoManager.cancelInteraction();
         }
@@ -634,10 +639,9 @@ class AutoAlignmentManager {
         this.gridAlignBox = null;
         this.gridAlignColumns = 1;
         this.gridAlignTargets = null;
-        // Clear animation state that was preserved from completeAnimation
-        this.gridAlignAnimNodes = null;
-        this.gridAlignAnimTargets = null;
-        // Don't clear animation state here - let it complete naturally
+        // Don't clear animation state - let the animation complete naturally
+        // this.gridAlignAnimNodes = null;
+        // this.gridAlignAnimTargets = null;
         this.canvas.dirty_canvas = true;
     }
     
@@ -874,9 +878,10 @@ class AutoAlignmentManager {
         
         if (isGridAlign) {
             this.gridAlignAnimating = false;
-            // Don't clear targets here - they're needed in finishGridAlign
-            // this.gridAlignAnimNodes = null;
-            // this.gridAlignAnimTargets = null;
+            // Clear animation state now that animation is complete
+            // This is safe because finishGridAlign has already been called
+            this.gridAlignAnimNodes = null;
+            this.gridAlignAnimTargets = null;
         } else {
             if (!this.autoAlignMode) {
                 this.autoAlignOriginals = null;

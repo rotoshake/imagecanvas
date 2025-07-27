@@ -809,7 +809,7 @@ class CanvasStateManager {
             if (!op.params.nodeIds || !Array.isArray(op.params.nodeIds) || op.params.nodeIds.length < 2) {
                 return { valid: false, error: 'Missing or invalid nodeIds (need at least 2 nodes)' };
             }
-            if (!op.params.axis || !['horizontal', 'vertical'].includes(op.params.axis)) {
+            if (!op.params.axis || !['horizontal', 'vertical', 'grid'].includes(op.params.axis)) {
                 return { valid: false, error: 'Missing or invalid axis' };
             }
             if (!op.params.positions || !Array.isArray(op.params.positions) || 
