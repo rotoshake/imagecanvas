@@ -78,19 +78,35 @@ class StateSyncManager {
         });
         
         try {
-            // 1. Special handling for move commands - prepare undo data BEFORE execution
-            if (command.type === 'node_move' && !command.undoData && command.prepareUndoData && command.origin === 'local') {
-                const context = {
-                    graph: this.app?.graph,
-                    canvas: this.app?.graphCanvas
-                };
+            // 1. Prepare undo data BEFORE execution for all undoable operations
+            const undoableOperations = [
+                'node_move', 'node_resize', 'node_rotate', 'node_reset',
+                'node_delete', 'node_property_update', 'node_batch_property_update',
+                'node_create', 'node_duplicate', 'node_paste'
+            ];
+            
+            if (undoableOperations.includes(command.type) && command.origin === 'local') {
+                console.log(`📝 Checking ${command.type} undo data:`, {
+                    hasUndoData: !!command.undoData,
+                    hasPrepareMethod: typeof command.prepareUndoData === 'function',
+                    commandKeys: Object.keys(command),
+                    proto: Object.getPrototypeOf(command).constructor.name
+                });
                 
-                if (context.graph && context.canvas) {
-                    try {
-                        await command.prepareUndoData(context);
-                        // Pre-prepared undo data for node_move
-                    } catch (error) {
-                        console.error(`❌ Error preparing undo data for node_move:`, error);
+                if (!command.undoData && typeof command.prepareUndoData === 'function') {
+                    const context = {
+                        graph: this.app?.graph,
+                        canvas: this.app?.graphCanvas
+                    };
+                    
+                    if (context.graph && context.canvas) {
+                        try {
+                            console.log(`📝 Preparing undo data for ${command.type}`);
+                            await command.prepareUndoData(context);
+                            console.log('✅ Undo data prepared:', JSON.stringify(command.undoData, null, 2));
+                        } catch (error) {
+                            console.error(`❌ Error preparing undo data for ${command.type}:`, error);
+                        }
                     }
                 }
             }
@@ -126,8 +142,8 @@ class StateSyncManager {
             }
             
             // 3. Ensure undo data exists for ALL operations (critical for server-authoritative undo)
-            // Skip node_move as it's already handled above
-            if (!command.undoData && command.type !== 'node_move') {
+            // Skip operations already handled above
+            if (!command.undoData && !undoableOperations.includes(command.type)) {
                 console.log(`📝 Generating undo data for ${command.type} before sending to server`);
                 
                 // Check if command has prepareUndoData method
@@ -169,13 +185,37 @@ class StateSyncManager {
                 console.log(`✅ Command ${command.type} already has undo data`);
             }
             
+            // Enforce undo data presence for operations that require it
+            const undoRequiredOperations = [
+                'node_create', 'node_delete', 'node_move', 'node_resize', 
+                'node_update', 'node_duplicate', 'node_paste', 'node_rotate',
+                'edge_create', 'edge_delete', 'edge_update'
+            ];
+            
+            const finalUndoData = command._generatedUndoData || command.undoData || null;
+            
+            if (undoRequiredOperations.includes(command.type) && !finalUndoData) {
+                console.error(`❌ CRITICAL: Operation ${command.type} has no undo data!`);
+                console.error('This operation will be rejected to maintain undo system integrity.');
+                
+                // Show error to user
+                if (window.unifiedNotifications) {
+                    window.unifiedNotifications.error(
+                        `Operation "${command.type}" failed - missing undo data`,
+                        { detail: 'This operation cannot be undone and was rejected for data integrity.' }
+                    );
+                }
+                
+                throw new Error(`Operation ${command.type} rejected: missing required undo data`);
+            }
+            
             // 3. Send to server for authoritative execution
             const serverRequest = {
                 operationId,
                 type: command.type,
                 params: command.params,
                 stateVersion: this.serverStateVersion,
-                undoData: command._generatedUndoData || command.undoData || null,  // Use undo data generated during execution
+                undoData: finalUndoData,
                 transactionId: this.app.transactionManager?.getCurrentTransaction()?.id || null
             };
             
@@ -548,15 +588,32 @@ class StateSyncManager {
                     const hasPendingOptimisticUpdate = this.isNodePendingOptimisticUpdate(nodeData.id);
                     if (!hasPendingOptimisticUpdate || forceUpdate) {
                         // Update if we don't have a pending optimistic update OR if it's a forced update (undo/redo)
+                        const oldState = {
+                            pos: [...node.pos],
+                            size: [...node.size],
+                            rotation: node.rotation
+                        };
+                        
                         this.updateNodeFromData(node, nodeData);
+                        
                         if (forceUpdate) {
                             console.log(`🔄 Force updating node ${nodeData.id} for undo/redo`, {
-                                oldPos: [...node.pos],
+                                oldPos: oldState.pos,
                                 newPos: nodeData.pos ? [...nodeData.pos] : null,
-                                updated: nodeData.pos && (
-                                    Math.abs(node.pos[0] - nodeData.pos[0]) > 0.1 || 
-                                    Math.abs(node.pos[1] - nodeData.pos[1]) > 0.1
-                                )
+                                oldSize: oldState.size,
+                                newSize: nodeData.size ? [...nodeData.size] : null,
+                                oldRotation: oldState.rotation,
+                                newRotation: nodeData.rotation,
+                                posChanged: nodeData.pos && (
+                                    Math.abs(oldState.pos[0] - nodeData.pos[0]) > 0.1 || 
+                                    Math.abs(oldState.pos[1] - nodeData.pos[1]) > 0.1
+                                ),
+                                sizeChanged: nodeData.size && (
+                                    Math.abs(oldState.size[0] - nodeData.size[0]) > 0.1 || 
+                                    Math.abs(oldState.size[1] - nodeData.size[1]) > 0.1
+                                ),
+                                rotationChanged: nodeData.rotation !== undefined && 
+                                    Math.abs((oldState.rotation || 0) - (nodeData.rotation || 0)) > 0.01
                             });
                         }
                     }

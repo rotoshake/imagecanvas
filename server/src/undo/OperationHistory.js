@@ -100,6 +100,7 @@ class OperationHistory {
         console.log(`📝 Recording operation ${operationId}:`, {
             type: operation.type,
             userId: userId,
+            userIdType: typeof userId,
             hasUndoData: !!operation.undoData,
             transactionId: transactionId
         });
@@ -197,6 +198,7 @@ class OperationHistory {
         console.log(`🔍 Getting undoable operations for user ${userId} in project ${projectId}:`, {
             timelineLength: projectTimeline.length,
             userId: userId,
+            userIdType: typeof userId,
             limit: limit
         });
         
@@ -206,7 +208,10 @@ class OperationHistory {
             const op = this.operations.get(opId);
             
             // Only consider operations from this user that are applied
-            if (op && op.userId === userId && op.state === 'applied') {
+            // Use loose equality to handle string/number type mismatch
+            if (op && op.userId == userId && op.state === 'applied') {
+                console.log(`  ✅ Found undoable operation: ${opId}, userId: ${op.userId} (type: ${typeof op.userId})`);
+                
                 // Check if part of transaction
                 if (op.transactionId) {
                     // Skip if we've already processed this transaction
@@ -238,6 +243,17 @@ class OperationHistory {
                         timestamp: op.timestamp
                     });
                 }
+            } else if (op) {
+                console.log(`  ❌ Operation ${opId} not undoable:`, {
+                    opUserId: op.userId,
+                    opUserIdType: typeof op.userId,
+                    expectedUserId: userId,
+                    expectedUserIdType: typeof userId,
+                    strictMatch: op.userId === userId,
+                    looseMatch: op.userId == userId,
+                    state: op.state,
+                    hasUndoData: !!op.undoData
+                });
             }
         }
         

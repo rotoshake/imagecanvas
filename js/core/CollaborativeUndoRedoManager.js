@@ -397,10 +397,11 @@ class CollaborativeUndoRedoManager {
             userId: this.userId,
             isConnected: !!this.network?.isConnected
         });
-        
-        // CRITICAL FIX: Route through server when connected
+
+        // CRITICAL FIX: Route all undo requests through the server
         if (this.network?.isConnected && this.app.stateSyncManager) {
             console.log('🔄 Using server-authoritative undo');
+            window.unifiedNotifications.updateUndoStatus('in_progress');
             
             // Send undo request to server
             return new Promise((resolve, reject) => {
@@ -421,6 +422,7 @@ class CollaborativeUndoRedoManager {
                 const successHandler = (data) => {
                     cleanup();
                     console.log('✅ Server undo successful:', data);
+                    window.unifiedNotifications.updateUndoStatus('success');
                     // Server will handle state updates via state_update event
                     resolve(true);
                 };
@@ -428,65 +430,26 @@ class CollaborativeUndoRedoManager {
                 const failHandler = (data) => {
                     cleanup();
                     console.log('❌ Server undo failed:', data);
+                    window.unifiedNotifications.updateUndoStatus('failed', data.reason || 'Unable to undo');
                     this.showUndoWarning(data.reason || 'Unable to undo');
                     resolve(false);
                 };
                 
                 this.network.once('undo_executed', successHandler);
                 this.network.once('undo_failed', failHandler);
-                
-                // Send undo request
-                console.log('📤 Sending undo request to server');
-                this.network.emit('undo_operation', {
-                    userId: this.userId,
-                    projectId: this.app.projectId || this.network.currentProject?.id
+
+                this.network.send({
+                    type: 'undo_operation',
+                    payload: {
+                        userId: this.userId,
+                    }
                 });
             });
         }
         
-        // Fallback to client-side undo for offline mode
-        console.log('📱 Using offline client-side undo');
-        
-        if (this.historyIndex < 0) {
-            console.log('Nothing to undo');
-            return false;
-        }
-        
-        const operation = this.currentUserHistory[this.historyIndex];
-        
-        // Check if operation can be undone
-        const validation = this.validateUndo(operation);
-        if (!validation.canUndo) {
-            console.warn(`⚠️ Cannot undo: ${validation.reason}`);
-            this.showUndoWarning(validation.reason);
-            return false;
-        }
-        
-        try {
-            console.log(`↩️ Undoing offline: ${operation.type}`);
-            
-            const context = {
-                app: this.app,
-                graph: this.app.graph,
-                canvas: this.app.graphCanvas
-            };
-            
-            // Execute undo
-            await operation.undo(context);
-            
-            // Update history index
-            this.historyIndex--;
-            
-            // Update canvas
-            this.app.graphCanvas.dirty_canvas = true;
-            
-            return true;
-            
-        } catch (error) {
-            console.error('❌ Offline undo failed:', error);
-            this.showUndoError(error.message);
-            return false;
-        }
+        // If not connected, do nothing.
+        console.log('🔌 No network connection. Undo operation skipped.');
+        return Promise.resolve(false);
     }
     
     /**

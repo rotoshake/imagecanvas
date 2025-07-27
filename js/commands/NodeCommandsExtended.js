@@ -30,20 +30,20 @@ class ResizeNodeCommand extends Command {
     
     async prepareUndoData(context) {
         const { graph } = context;
-        this.undoData = { nodes: [] };
+        this.undoData = { 
+            previousSizes: {},
+            previousPositions: {}
+        };
         
         this.params.nodeIds.forEach(nodeId => {
             const node = graph.getNodeById(nodeId);
             if (node) {
-                this.undoData.nodes.push({
-                    id: node.id,
-                    oldSize: [...node.size],
-                    oldPosition: [...node.pos]
-                });
+                this.undoData.previousSizes[nodeId] = [...node.size];
+                this.undoData.previousPositions[nodeId] = [...node.pos];
             }
         });
         
-        console.log(`📝 Prepared undo data for ResizeNodeCommand: ${this.undoData.nodes.length} nodes`);
+        console.log(`📝 Prepared undo data for ResizeNodeCommand: ${Object.keys(this.undoData.previousSizes).length} nodes`);
     }
     
     async execute(context) {
@@ -55,7 +55,10 @@ class ResizeNodeCommand extends Command {
         //     sizes: this.params.sizes
         // });
         
-        this.undoData = { nodes: [] };
+        this.undoData = { 
+            previousSizes: {},
+            previousPositions: {}
+        };
         
         this.params.nodeIds.forEach((nodeId, index) => {
             const node = graph.getNodeById(nodeId);
@@ -63,11 +66,8 @@ class ResizeNodeCommand extends Command {
             
             const newSize = [...this.params.sizes[index]];
             
-            this.undoData.nodes.push({
-                id: node.id,
-                oldSize: [...node.size],
-                oldPos: [...node.pos]
-            });
+            this.undoData.previousSizes[nodeId] = [...node.size];
+            this.undoData.previousPositions[nodeId] = [...node.pos];
             
             // Update size
             node.size[0] = newSize[0];
@@ -82,10 +82,10 @@ class ResizeNodeCommand extends Command {
             else if (this.origin === 'local' && node.rotation && Math.abs(node.rotation) > 0.001) {
                 // This should only happen for local operations
                 // Remote operations should include positions when needed
-                const oldCenterX = this.undoData.nodes[this.undoData.nodes.length - 1].oldPos[0] + 
-                                   this.undoData.nodes[this.undoData.nodes.length - 1].oldSize[0] / 2;
-                const oldCenterY = this.undoData.nodes[this.undoData.nodes.length - 1].oldPos[1] + 
-                                   this.undoData.nodes[this.undoData.nodes.length - 1].oldSize[1] / 2;
+                const oldPos = this.undoData.previousPositions[nodeId];
+                const oldSize = this.undoData.previousSizes[nodeId];
+                const oldCenterX = oldPos[0] + oldSize[0] / 2;
+                const oldCenterY = oldPos[1] + oldSize[1] / 2;
                 
                 node.pos[0] = oldCenterX - newSize[0] / 2;
                 node.pos[1] = oldCenterY - newSize[1] / 2;
@@ -117,22 +117,31 @@ class ResizeNodeCommand extends Command {
             throw new Error('No undo data available');
         }
         
-        this.undoData.nodes.forEach(({ id, oldSize, oldPos }) => {
-            const node = graph.getNodeById(id);
-            if (node) {
-                node.size[0] = oldSize[0];
-                node.size[1] = oldSize[1];
-                
-                if (oldPos) {
-                    node.pos[0] = oldPos[0];
-                    node.pos[1] = oldPos[1];
-                }
-                
-                if (node.onResize) {
-                    node.onResize();
+        // Restore sizes
+        if (this.undoData.previousSizes) {
+            for (const [nodeId, size] of Object.entries(this.undoData.previousSizes)) {
+                const node = graph.getNodeById(nodeId);
+                if (node) {
+                    node.size[0] = size[0];
+                    node.size[1] = size[1];
+                    
+                    if (node.onResize) {
+                        node.onResize();
+                    }
                 }
             }
-        });
+        }
+        
+        // Restore positions
+        if (this.undoData.previousPositions) {
+            for (const [nodeId, pos] of Object.entries(this.undoData.previousPositions)) {
+                const node = graph.getNodeById(nodeId);
+                if (node) {
+                    node.pos[0] = pos[0];
+                    node.pos[1] = pos[1];
+                }
+            }
+        }
         
         return { success: true };
     }
@@ -392,34 +401,35 @@ class RotateNodeCommand extends Command {
     async prepareUndoData(context) {
         const { graph } = context;
         
+        this.undoData = {
+            previousRotations: {},
+            previousPositions: {}
+        };
+        
         // Single node rotation
         if (this.params.nodeId) {
             const node = graph.getNodeById(this.params.nodeId);
             if (node) {
-                this.undoData = {
-                    nodeId: node.id,
-                    oldRotation: node.rotation || 0,
-                    oldPosition: this.params.position ? [...node.pos] : null
-                };
+                this.undoData.previousRotations[node.id] = node.rotation || 0;
+                if (this.params.position) {
+                    this.undoData.previousPositions[node.id] = [...node.pos];
+                }
             }
         }
         // Multi-node rotation
         else if (this.params.nodeIds) {
-            this.undoData = { nodes: [] };
-            
             this.params.nodeIds.forEach((nodeId, index) => {
                 const node = graph.getNodeById(nodeId);
                 if (node) {
-                    this.undoData.nodes.push({
-                        id: node.id,
-                        oldRotation: node.rotation || 0,
-                        oldPosition: this.params.positions?.[index] ? [...node.pos] : null
-                    });
+                    this.undoData.previousRotations[nodeId] = node.rotation || 0;
+                    if (this.params.positions?.[index]) {
+                        this.undoData.previousPositions[nodeId] = [...node.pos];
+                    }
                 }
             });
         }
         
-        console.log(`📝 Prepared undo data for RotateNodeCommand`);
+        console.log(`📝 Prepared undo data for RotateNodeCommand:`, JSON.stringify(this.undoData, null, 2));
     }
     
     async execute(context) {
@@ -434,9 +444,10 @@ class RotateNodeCommand extends Command {
             }
             
             this.undoData = {
-                nodeId: node.id,
-                oldRotation: node.rotation || 0
+                previousRotations: {},
+                previousPositions: {}
             };
+            this.undoData.previousRotations[node.id] = node.rotation || 0;
             
             node.rotation = this.params.angle;
             
@@ -446,17 +457,17 @@ class RotateNodeCommand extends Command {
         
         // Multi-node rotation
         if (this.params.nodeIds) {
-            this.undoData = { nodes: [] };
+            this.undoData = {
+                previousRotations: {},
+                previousPositions: {}
+            };
             
             this.params.nodeIds.forEach((nodeId, index) => {
                 const node = graph.getNodeById(nodeId);
                 if (!node) return;
                 
-                this.undoData.nodes.push({
-                    id: node.id,
-                    oldRotation: node.rotation || 0,
-                    oldPos: [...node.pos]
-                });
+                this.undoData.previousRotations[nodeId] = node.rotation || 0;
+                this.undoData.previousPositions[nodeId] = [...node.pos];
                 
                 // Update rotation
                 node.rotation = this.params.angles[index];
@@ -476,29 +487,32 @@ class RotateNodeCommand extends Command {
     async undo(context) {
         const { graph } = context;
         
-        // Single node undo
-        if (this.undoData.nodeId) {
-            const node = graph.getNodeById(this.undoData.nodeId);
-            if (node) {
-                node.rotation = this.undoData.oldRotation;
-            }
-            return { success: true };
+        if (!this.undoData) {
+            throw new Error('No undo data available');
         }
         
-        // Multi-node undo
-        if (this.undoData.nodes) {
-            this.undoData.nodes.forEach(({ id, oldRotation, oldPos }) => {
-                const node = graph.getNodeById(id);
+        // Restore rotations
+        if (this.undoData.previousRotations) {
+            for (const [nodeId, rotation] of Object.entries(this.undoData.previousRotations)) {
+                const node = graph.getNodeById(nodeId);
                 if (node) {
-                    node.rotation = oldRotation;
-                    if (oldPos) {
-                        node.pos[0] = oldPos[0];
-                        node.pos[1] = oldPos[1];
-                    }
+                    node.rotation = rotation;
                 }
-            });
-            return { success: true };
+            }
         }
+        
+        // Restore positions
+        if (this.undoData.previousPositions) {
+            for (const [nodeId, pos] of Object.entries(this.undoData.previousPositions)) {
+                const node = graph.getNodeById(nodeId);
+                if (node) {
+                    node.pos[0] = pos[0];
+                    node.pos[1] = pos[1];
+                }
+            }
+        }
+        
+        return { success: true };
     }
 }
 

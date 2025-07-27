@@ -290,13 +290,28 @@ class ClientUndoManager {
             affectedNodes: data.affectedNodes,
             hasStateUpdate: !!data.stateUpdate
         });
+        
+        // Debug: Log the actual state update content
+        if (data.stateUpdate && data.stateUpdate.updated) {
+            console.log('📋 State update contains:');
+            data.stateUpdate.updated.forEach(node => {
+                console.log(`  Node ${node.id}:`, {
+                    hasRotation: 'rotation' in node,
+                    rotation: node.rotation,
+                    hasSize: 'size' in node,
+                    size: node.size,
+                    hasPos: 'pos' in node,
+                    pos: node.pos,
+                    allKeys: Object.keys(node).join(', ')
+                });
+            });
+        }
+        
         this.pendingUndoRedo = null;
         
-        // CRITICAL: Apply state changes to the graph
-        if (data.stateUpdate) {
-            console.log('📝 Applying undo state changes:', data.stateUpdate);
-            this.applyStateChanges(data.stateUpdate);
-        }
+        // NOTE: State changes are already applied by the state_update event
+        // sent by the server through broadcastUndo. We don't need to apply
+        // them again here as that would cause duplicate updates.
         
         // Update undo state
         if (data.undoState) {
@@ -391,6 +406,7 @@ class ClientUndoManager {
                     }
                     // Update rotation if present
                     if (nodeData.rotation !== undefined) {
+                        console.log(`🔄 Updating rotation for node ${nodeData.id}: ${node.rotation} -> ${nodeData.rotation}`);
                         node.rotation = nodeData.rotation;
                     }
                     // Update aspect ratio if present
@@ -417,11 +433,8 @@ class ClientUndoManager {
         console.log('✅ Redo successful:', data);
         this.pendingUndoRedo = null;
         
-        // CRITICAL: Apply state changes to the graph
-        if (data.stateUpdate) {
-            console.log('📝 Applying redo state changes:', data.stateUpdate);
-            this.applyStateChanges(data.stateUpdate);
-        }
+        // NOTE: State changes are already applied by the state_update event
+        // sent by the server. We don't need to apply them again here.
         
         // Update undo state
         if (data.undoState) {
@@ -454,6 +467,12 @@ class ClientUndoManager {
     handleCrossTabUndo(data) {
         console.log('🔄 Cross-tab undo:', data);
         
+        // CRITICAL: Apply state changes to the graph
+        if (data.stateChanges) {
+            console.log('📝 Applying cross-tab undo state changes:', data.stateChanges);
+            this.applyStateChanges(data.stateChanges);
+        }
+        
         // Update undo state
         if (data.undoState) {
             this.updateUndoState(data.undoState);
@@ -468,6 +487,12 @@ class ClientUndoManager {
      */
     handleCrossTabRedo(data) {
         console.log('🔄 Cross-tab redo:', data);
+        
+        // CRITICAL: Apply state changes to the graph
+        if (data.stateChanges) {
+            console.log('📝 Applying cross-tab redo state changes:', data.stateChanges);
+            this.applyStateChanges(data.stateChanges);
+        }
         
         // Update undo state
         if (data.undoState) {

@@ -10,7 +10,7 @@ class FloatingPropertiesInspector {
         
         // Debounce timers for different property types
         this.debounceTimers = new Map();
-        this.debounceDelay = 150; // milliseconds
+        this.debounceDelay = 50; // milliseconds - reduced for better responsiveness
         
         // Track which inputs are currently focused/being edited
         this.focusedInputs = new Set();
@@ -83,6 +83,7 @@ class FloatingPropertiesInspector {
                 transform: scale(0.95);
                 transition: opacity 0.2s ease, transform 0.2s ease;
                 pointer-events: none;
+                overflow: hidden;
             }
 
             .floating-properties-inspector.visible {
@@ -137,7 +138,8 @@ class FloatingPropertiesInspector {
             .inspector-content {
                 flex: 1;
                 overflow-y: auto;
-                padding: 16px;
+                overflow-x: hidden;
+                padding: 12px;
                 max-height: calc(100vh - 120px);
                 scrollbar-width: thin;
                 scrollbar-color: #444 #2a2a2a;
@@ -165,6 +167,8 @@ class FloatingPropertiesInspector {
                 display: flex;
                 flex-direction: column;
                 gap: 12px;
+                width: 100%;
+                box-sizing: border-box;
             }
 
             .property-group {
@@ -172,6 +176,8 @@ class FloatingPropertiesInspector {
                 flex-direction: column;
                 gap: 8px;
                 padding-bottom: 8px;
+                width: 100%;
+                box-sizing: border-box;
             }
 
             .property-group-title {
@@ -235,11 +241,13 @@ class FloatingPropertiesInspector {
                 background: #2a2a2a;
                 border: 1px solid #444;
                 border-radius: 4px;
-                padding: 2px 4px;
+                padding: 6px 8px;
                 color: #e0e0e0;
                 font-size: 12px;
                 font-family: inherit;
                 transition: border-color 0.15s ease;
+                width: 100%;
+                box-sizing: border-box;
             }
 
             .property-input:focus {
@@ -421,7 +429,9 @@ class FloatingPropertiesInspector {
             .canvas-stats-grid {
                 display: grid;
                 grid-template-columns: 1fr 1fr;
-                gap: 8px;
+                gap: 6px;
+                width: 100%;
+                box-sizing: border-box;
             }
 
             .stat-item {
@@ -429,10 +439,12 @@ class FloatingPropertiesInspector {
                 flex-direction: column;
                 align-items: center;
                 text-align: center;
-                padding: 6px;
+                padding: 4px;
                 background: rgba(255, 255, 255, 0.05);
                 border-radius: 4px;
-                border: 2px solid rgba(255, 255, 255, 0.1);
+                border: 1px solid rgba(255, 255, 255, 0.1);
+                box-sizing: border-box;
+                min-width: 0;
             }
 
             .stat-item.full-width {
@@ -452,14 +464,18 @@ class FloatingPropertiesInspector {
                 color: #e0e0e0;
                 font-weight: 600;
                 font-size: 11px;
+                word-break: break-word;
+                max-width: 100%;
             }
 
             .property-input.transform-input {
-                width: 50px; /* Adjust this value as needed */
+                flex: 1;
+                min-width: 0;
             }
             
             .property-input.rotation-input {
-                width: 60px; /* Shorter width for rotation */
+                flex: 1;
+                min-width: 0;
             }
             
             /* Reset button styling */
@@ -544,6 +560,13 @@ class FloatingPropertiesInspector {
                 display: flex;
                 align-items: center;
                 gap: 8px;
+                width: 100%;
+                box-sizing: border-box;
+            }
+            
+            .title-input-container .property-input {
+                flex: 1;
+                min-width: 0;
             }
 
             .title-visibility-toggle {
@@ -595,18 +618,66 @@ class FloatingPropertiesInspector {
                 gap: 6px;
                 flex: 1;
             }
+            
+            /* Transform properties specific styling */
+            .transform-property {
+                display: flex;
+                align-items: center;
+                gap: 8px;
+                margin-bottom: 8px;
+            }
+            
+            .transform-property .property-label-icon {
+                margin-bottom: 0;
+            }
+            
+            .transform-property .property-input {
+                flex: 1;
+            }
+            
+            /* Size controls with aspect ratio lock */
+            .size-property-group {
+                margin-bottom: 12px;
+            }
+            
+            .size-controls-row {
+                display: flex;
+                align-items: center;
+                gap: 8px;
+                margin-bottom: 8px;
+            }
+            
+            .aspect-ratio-controls {
+                display: flex;
+                align-items: center;
+                gap: 8px;
+                justify-content: flex-end;
+            }
+            
+            .aspect-ratio-lock {
+                width: 32px;
+                height: 32px;
+            }
+            
+            .property-reset-button {
+                width: 32px;
+                height: 32px;
+            }
 
             .property-value-text {
                 color: #999;
                 font-size: 12px;
                 font-style: italic;
-                display: inline-block;
+                display: block;
                 background: #1a1a1a;
                 border: 1px solid #333;
                 border-radius: 4px;
-                padding: 2px 6px;
+                padding: 6px 8px;
                 width: 100%;
                 box-sizing: border-box;
+                white-space: nowrap;
+                overflow: hidden;
+                text-overflow: ellipsis;
             }
         `;
         document.head.appendChild(style);
@@ -834,15 +905,15 @@ class FloatingPropertiesInspector {
             };
         }
 
-        // Set up periodic updates for live data - use less frequent updates
+        // Set up periodic updates for live data - more frequent for better responsiveness
         this.updateInterval = setInterval(() => {
             // Only update values, not the entire UI
             this.updatePropertyValues();
-        }, 1000); // Less frequent to reduce interference
+        }, 100); // More frequent updates for better responsiveness
         
         // Throttle canvas draw updates to prevent excessive updates
         this.lastDrawUpdate = 0;
-        const drawUpdateThrottle = 100; // minimum ms between updates
+        const drawUpdateThrottle = 16; // ~60fps for smooth updates
         
         // Listen for canvas draw events to update values after changes
         const updateAfterDraw = () => {
@@ -850,10 +921,8 @@ class FloatingPropertiesInspector {
             // Only update if we have selected nodes and enough time has passed
             if (this.currentNodes.size > 0 && (now - this.lastDrawUpdate) > drawUpdateThrottle) {
                 this.lastDrawUpdate = now;
-                // Use a small delay to batch multiple rapid draw calls
-                setTimeout(() => {
-                    this.updatePropertyValues();
-                }, 50);
+                // Update immediately for better responsiveness
+                this.updatePropertyValues();
             }
         };
         
@@ -1111,30 +1180,86 @@ class FloatingPropertiesInspector {
             titleEl.textContent = groupName;
             groupEl.appendChild(titleEl);
 
-            if (groupName === 'Transform' && groupProperties.includes('x') && groupProperties.includes('y')) {
-                this.renderPropertyRow(groupEl, [
-                    { prop: 'x', ...properties.x },
-                    { prop: 'y', ...properties.y }
-                ]);
-                groupProperties.splice(groupProperties.indexOf('x'), 1);
-                groupProperties.splice(groupProperties.indexOf('y'), 1);
-            }
-
-            if (groupName === 'Transform' && groupProperties.includes('width') && groupProperties.includes('height')) {
-                this.renderPropertyRow(groupEl, [
-                    { prop: 'width', ...properties.width },
-                    { prop: 'height', ...properties.height }
-                ]);
-                groupProperties.splice(groupProperties.indexOf('width'), 1);
-                groupProperties.splice(groupProperties.indexOf('height'), 1);
-            }
-
-            for (const prop of groupProperties) {
-                this.renderProperty(groupEl, prop, properties[prop]);
+            if (groupName === 'Transform') {
+                // Render transform properties vertically
+                this.renderTransformProperties(groupEl, properties);
+            } else {
+                // Render other properties normally
+                for (const prop of groupProperties) {
+                    if (properties[prop]) {
+                        this.renderProperty(groupEl, prop, properties[prop]);
+                    }
+                }
             }
 
             container.appendChild(groupEl);
         }
+    }
+
+    renderTransformProperties(container, properties) {
+        // Position properties
+        if (properties.x) {
+            this.renderTransformProperty(container, 'x', properties.x);
+        }
+        if (properties.y) {
+            this.renderTransformProperty(container, 'y', properties.y);
+        }
+        
+        // Size properties with aspect ratio controls
+        if (properties.width || properties.height) {
+            const sizeGroup = document.createElement('div');
+            sizeGroup.className = 'size-property-group';
+            
+            if (properties.width) {
+                this.renderTransformProperty(sizeGroup, 'width', properties.width);
+            }
+            if (properties.height) {
+                this.renderTransformProperty(sizeGroup, 'height', properties.height);
+            }
+            
+            // Aspect ratio controls
+            const aspectControls = document.createElement('div');
+            aspectControls.className = 'aspect-ratio-controls';
+            
+            const lockBtn = this.createAspectRatioLockButton();
+            aspectControls.appendChild(lockBtn);
+            
+            const resetBtn = this.createResetButton('size');
+            aspectControls.appendChild(resetBtn);
+            
+            sizeGroup.appendChild(aspectControls);
+            container.appendChild(sizeGroup);
+        }
+        
+        // Rotation property with reset
+        if (properties.rotation) {
+            const rotationRow = document.createElement('div');
+            rotationRow.className = 'transform-property';
+            
+            const iconLabel = this.createIconLabel('rotation');
+            rotationRow.appendChild(iconLabel);
+            
+            const inputEl = this.createPropertyInput('rotation', properties.rotation);
+            rotationRow.appendChild(inputEl);
+            
+            const resetBtn = this.createResetButton('rotation');
+            rotationRow.appendChild(resetBtn);
+            
+            container.appendChild(rotationRow);
+        }
+    }
+    
+    renderTransformProperty(container, prop, propData) {
+        const row = document.createElement('div');
+        row.className = 'transform-property';
+        
+        const iconLabel = this.createIconLabel(prop);
+        row.appendChild(iconLabel);
+        
+        const inputEl = this.createPropertyInput(prop, propData);
+        row.appendChild(inputEl);
+        
+        container.appendChild(row);
     }
 
     renderPropertyRow(container, propData) {
@@ -1619,6 +1744,7 @@ class FloatingPropertiesInspector {
         let startX = 0;
         let initialNodeValues = new Map(); // Store initial values per node
         let lastCommittedDelta = 0;
+        let finalValues = new Map(); // Store final values for undo state
         
         label.addEventListener('mousedown', (e) => {
             e.preventDefault();
@@ -1631,6 +1757,7 @@ class FloatingPropertiesInspector {
             
             // Store initial values for all selected nodes
             initialNodeValues.clear();
+            finalValues.clear();
             Array.from(this.currentNodes.values()).forEach(node => {
                 const value = this.getNodeProperty(node, prop);
                 if (value !== undefined) {
@@ -1662,8 +1789,8 @@ class FloatingPropertiesInspector {
             
             const delta = deltaX * sensitivity;
             
-            // Only update if delta has changed significantly
-            if (Math.abs(delta - lastCommittedDelta) < 0.5) {
+            // Only update if delta has changed (lowered threshold for smoother updates)
+            if (Math.abs(delta - lastCommittedDelta) < 0.1) {
                 return;
             }
             
@@ -1691,11 +1818,12 @@ class FloatingPropertiesInspector {
                 
                 nodeIds.push(node.id);
                 newValues.push(newValue);
+                finalValues.set(node.id, newValue); // Track final value
             });
             
-            // Commit the change in real-time
+            // Update visually without creating undo states
             if (nodeIds.length > 0) {
-                this.executeRelativePropertyUpdate(prop, nodeIds, newValues);
+                this.executeRelativePropertyUpdate(prop, nodeIds, newValues, true); // skipHistory = true
             }
         };
         
@@ -1704,7 +1832,23 @@ class FloatingPropertiesInspector {
             
             isDragging = false;
             label.classList.remove('dragging');
+            
+            // Commit final state with undo history
+            if (finalValues.size > 0) {
+                const nodeIds = [];
+                const values = [];
+                
+                finalValues.forEach((value, nodeId) => {
+                    nodeIds.push(nodeId);
+                    values.push(value);
+                });
+                
+                // Execute final update that creates undo state
+                this.executeRelativePropertyUpdate(prop, nodeIds, values, false); // skipHistory = false
+            }
+            
             initialNodeValues.clear();
+            finalValues.clear();
             
             document.removeEventListener('mousemove', onMouseMove);
             document.removeEventListener('mouseup', onMouseUp);
@@ -1755,12 +1899,9 @@ class FloatingPropertiesInspector {
         }, this.debounceDelay));
     }
     
-    executeRelativePropertyUpdate(prop, nodeIds, values) {
-        // Access operation pipeline from global app object
-        if (!window.app?.operationPipeline) {
-            console.warn('Operation pipeline not available');
-            return;
-        }
+    executeRelativePropertyUpdate(prop, nodeIds, values, skipHistory = false) {
+        // During dragging (skipHistory = true), update nodes locally only
+        // On mouse up (skipHistory = false), send to server for sync and undo state
         
         // Get nodes by ID
         const nodes = nodeIds.map((id, index) => ({
@@ -1771,72 +1912,119 @@ class FloatingPropertiesInspector {
         
         if (nodes.length === 0) return;
         
-        // Handle different property types
-        if (prop === 'x' || prop === 'y') {
-            // Position update
-            const positions = nodes.map(item => {
-                const pos = [...item.node.pos];
-                if (prop === 'x') pos[0] = item.value;
-                else pos[1] = item.value;
-                return pos;
+        if (skipHistory) {
+            // Local update only during dragging
+            nodes.forEach(item => {
+                if (prop === 'x' || prop === 'y') {
+                    if (prop === 'x') item.node.pos[0] = item.value;
+                    else item.node.pos[1] = item.value;
+                } else if (prop === 'width' || prop === 'height') {
+                    const isUILocked = this.aspectRatioLockBtn && this.aspectRatioLockBtn.classList.contains('locked');
+                    
+                    if (isUILocked && item.node.aspectRatioLocked !== false) {
+                        const aspectRatio = item.node.lockedAspectRatio || (item.node.size[0] / item.node.size[1]);
+                        
+                        if (prop === 'width') {
+                            item.node.size[0] = item.value;
+                            item.node.size[1] = item.value / aspectRatio;
+                        } else {
+                            item.node.size[1] = item.value;
+                            item.node.size[0] = item.value * aspectRatio;
+                        }
+                        
+                        // Ensure both dimensions meet minimum size
+                        if (item.node.size[0] < 50 || item.node.size[1] < 50) {
+                            const scale = Math.max(50 / item.node.size[0], 50 / item.node.size[1]);
+                            item.node.size[0] *= scale;
+                            item.node.size[1] *= scale;
+                        }
+                    } else {
+                        if (prop === 'width') item.node.size[0] = item.value;
+                        else item.node.size[1] = item.value;
+                    }
+                } else if (prop === 'rotation') {
+                    item.node.rotation = item.value;
+                }
             });
             
-            if (nodeIds.length === 1) {
-                window.app.operationPipeline.execute('node_move', {
-                    nodeId: nodeIds[0],
-                    position: positions[0]
+            // Mark canvas dirty for redraw
+            if (this.canvas) {
+                this.canvas.dirty_canvas = true;
+            }
+        } else {
+            // Send to server on mouse up - creates undo state
+            if (!window.app?.operationPipeline) {
+                console.warn('Operation pipeline not available');
+                return;
+            }
+            
+            // Handle different property types
+            if (prop === 'x' || prop === 'y') {
+                // Position update
+                const positions = nodes.map(item => {
+                    const pos = [...item.node.pos];
+                    if (prop === 'x') pos[0] = item.value;
+                    else pos[1] = item.value;
+                    return pos;
                 });
-            } else {
-                window.app.operationPipeline.execute('node_move', {
+                
+                if (nodeIds.length === 1) {
+                    window.app.operationPipeline.execute('node_move', {
+                        nodeId: nodeIds[0],
+                        position: positions[0]
+                    });
+                } else {
+                    window.app.operationPipeline.execute('node_move', {
+                        nodeIds: nodeIds,
+                        positions: positions
+                    });
+                }
+            } else if (prop === 'width' || prop === 'height') {
+                // Size update
+                const sizes = nodes.map(item => {
+                    const size = [...item.node.size];
+                    
+                    // Check if aspect ratio is locked
+                    const isUILocked = this.aspectRatioLockBtn && this.aspectRatioLockBtn.classList.contains('locked');
+                    
+                    if (isUILocked && item.node.aspectRatioLocked !== false) {
+                        const aspectRatio = item.node.lockedAspectRatio || (item.node.size[0] / item.node.size[1]);
+                        
+                        if (prop === 'width') {
+                            size[0] = item.value;
+                            size[1] = item.value / aspectRatio;
+                        } else {
+                            size[1] = item.value;
+                            size[0] = item.value * aspectRatio;
+                        }
+                        
+                        // Ensure both dimensions meet minimum size
+                        if (size[0] < 50 || size[1] < 50) {
+                            const scale = Math.max(50 / size[0], 50 / size[1]);
+                            size[0] *= scale;
+                            size[1] *= scale;
+                        }
+                    } else {
+                        if (prop === 'width') size[0] = item.value;
+                        else size[1] = item.value;
+                    }
+                    
+                    return size;
+                });
+                
+                window.app.operationPipeline.execute('node_resize', {
                     nodeIds: nodeIds,
-                    positions: positions
+                    sizes: sizes
+                });
+            } else if (prop === 'rotation') {
+                // Rotation update
+                nodes.forEach((item, index) => {
+                    window.app.operationPipeline.execute('node_rotate', {
+                        nodeId: item.id,
+                        angle: values[index]
+                    });
                 });
             }
-        } else if (prop === 'width' || prop === 'height') {
-            // Size update
-            const sizes = nodes.map(item => {
-                const size = [...item.node.size];
-                
-                // Check if aspect ratio is locked
-                const isUILocked = this.aspectRatioLockBtn && this.aspectRatioLockBtn.classList.contains('locked');
-                
-                if (isUILocked && item.node.aspectRatioLocked !== false) {
-                    const aspectRatio = item.node.lockedAspectRatio || (item.node.size[0] / item.node.size[1]);
-                    
-                    if (prop === 'width') {
-                        size[0] = item.value;
-                        size[1] = item.value / aspectRatio;
-                    } else {
-                        size[1] = item.value;
-                        size[0] = item.value * aspectRatio;
-                    }
-                    
-                    // Ensure both dimensions meet minimum size
-                    if (size[0] < 50 || size[1] < 50) {
-                        const scale = Math.max(50 / size[0], 50 / size[1]);
-                        size[0] *= scale;
-                        size[1] *= scale;
-                    }
-                } else {
-                    if (prop === 'width') size[0] = item.value;
-                    else size[1] = item.value;
-                }
-                
-                return size;
-            });
-            
-            window.app.operationPipeline.execute('node_resize', {
-                nodeIds: nodeIds,
-                sizes: sizes
-            });
-        } else if (prop === 'rotation') {
-            // Rotation update
-            nodes.forEach((item, index) => {
-                window.app.operationPipeline.execute('node_rotate', {
-                    nodeId: item.id,
-                    angle: values[index]
-                });
-            });
         }
     }
     

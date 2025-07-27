@@ -14,6 +14,20 @@ class UndoStateSync {
         
         // Track user sessions for cross-tab sync
         this.userSessions = new Map(); // userId -> Set<socketId>
+
+        this.undoHandlers = {
+            'node_create': this.undoNodeCreate,
+            'node_duplicate': this.undoNodeCreate,
+            'node_paste': this.undoNodeCreate,
+            'node_delete': this.undoNodeDelete,
+            'node_move': this.undoNodeMove,
+            'node_resize': this.undoNodeResize,
+            'node_property_update': this.undoPropertyUpdate,
+            'node_batch_property_update': this.undoPropertyUpdate,
+            'node_rotate': this.undoNodeRotate,
+            'node_reset': this.undoNodeReset,
+            'video_toggle': this.undoVideoToggle,
+        };
     }
     
     /**
@@ -45,107 +59,35 @@ class UndoStateSync {
     async handleUndo(userId, projectId, socketId) {
         console.log(`🔄 Undo request from user ${userId} in project ${projectId}`);
         
-        // Get next undoable operation(s)
-        const undoable = this.history.getUndoableOperations(userId, projectId, 1);
-        console.log(`📋 Found ${undoable.length} undoable operations`);
-        if (undoable.length === 0) {
-            console.log(`⚠️ No operations to undo for user ${userId}`);
-            return {
-                success: false,
-                reason: 'Nothing to undo',
-                undoState: this.history.getUserUndoState(userId, projectId)
-            };
-        }
-        
-        const undoItem = undoable[0];
-        const operationIds = undoItem.type === 'transaction' 
-            ? undoItem.operationIds 
-            : [undoItem.operationId];
-        
-        // Get operation details
-        const operations = operationIds.map(id => this.history.operations.get(id)).filter(Boolean);
-        console.log(`🔍 Retrieved ${operations.length} operations with undo data:`, 
-            operations.map(op => ({ 
-                id: op.id, 
-                type: op.type, 
-                hasUndoData: !!op.undoData, 
-                state: op.state,
-                userId: op.userId 
-            })));
-            
-        // Check if any operations are missing undo data
-        const opsWithoutUndo = operations.filter(op => !op.undoData);
-        if (opsWithoutUndo.length > 0) {
-            console.warn(`⚠️ ${opsWithoutUndo.length} operations missing undo data:`, 
-                opsWithoutUndo.map(op => ({ id: op.id, type: op.type })));
-        }
-        
-        // Check for conflicts
-        const conflicts = await this.history.checkUndoConflicts(operationIds, userId, projectId);
-        if (conflicts.length > 0) {
-            console.log(`⚠️ Undo conflicts detected:`, conflicts);
-            
-            // For now, we'll warn but allow the undo
-            // In a production system, you might want to prompt the user
-        }
-        
         try {
-            console.log(`⚡ Executing undo for operations:`, operationIds);
-            // Execute undo
+            const undoable = this.history.getUndoableOperations(userId, projectId, 1);
+            if (undoable.length === 0) {
+                return this.createUndoResponse(false, 'Nothing to undo', userId, projectId);
+            }
+
+            const undoItem = undoable[0];
+            const operationIds = undoItem.type === 'transaction'
+                ? undoItem.operationIds
+                : [undoItem.operationId];
+
+            const operations = this.getOperations(operationIds);
+
+            const conflicts = await this.history.checkUndoConflicts(operationIds, userId, projectId);
+            if (conflicts.length > 0) {
+                console.log(`⚠️ Undo conflicts detected:`, conflicts);
+            }
+
             const stateChanges = await this.executeUndo(operations, projectId);
-            console.log(`✅ Undo executed, state changes:`, stateChanges);
-            
-            // Mark operations as undone
             this.history.markOperationsUndone(operationIds, userId, projectId);
-            
-            // Get updated undo state
-            const undoState = this.history.getUserUndoState(userId, projectId);
-            
-            // Prepare response
-            const response = {
-                success: true,
-                undoneOperations: operationIds,
-                stateUpdate: stateChanges,
-                undoState: undoState,
-                conflicts: conflicts.length > 0 ? conflicts : null
-            };
-            
-            // Broadcast state update to ALL clients (including the initiator)
-            // This ensures StateSyncManager handles the changes properly
-            this.io.to(`project_${projectId}`).emit('state_update', {
-                stateVersion: this.stateManager.stateVersions.get(projectId) || 0,
-                changes: stateChanges,
-                operationId: `undo_${Date.now()}`,
-                fromUserId: userId,
-                isUndo: true  // Flag to force update even for optimistic nodes
-            });
-            
-            // Broadcast undo confirmation to all user sessions (cross-tab sync)
-            this.broadcastToUser(userId, 'undo_executed', {
-                projectId,
-                operations: operationIds,
-                stateChanges: stateChanges,
-                undoState: undoState
-            });
-            
-            // Notify other users in the project
-            this.broadcastToOthers(userId, projectId, 'remote_undo', {
-                userId: userId,
-                undoneOperations: operationIds,
-                affectedNodes: this.extractAffectedNodes(operations)
-            });
-            
-            console.log(`✅ Undo completed for user ${userId}`);
+
+            const response = this.createUndoResponse(true, 'Undo successful', userId, projectId, operationIds, stateChanges, conflicts);
+
+            this.broadcastUndo(response, userId, projectId);
+
             return response;
-            
         } catch (error) {
             console.error('❌ Undo execution failed:', error);
-            return {
-                success: false,
-                reason: 'Failed to execute undo',
-                error: error.message,
-                undoState: this.history.getUserUndoState(userId, projectId)
-            };
+            return this.createUndoResponse(false, 'Failed to execute undo', userId, projectId, null, null, null, error.message);
         }
     }
     
@@ -245,9 +187,12 @@ class UndoStateSync {
         // Get current state
         const state = await this.stateManager.getCanvasState(projectId);
         
+        console.log(`🔄 Executing undo for ${operations.length} operations`);
+        
         // Process operations in reverse order
         for (let i = operations.length - 1; i >= 0; i--) {
             const op = operations[i];
+            console.log(`📍 Undoing operation ${op.id} (${op.type}), has undo data: ${!!op.undoData}`);
             const changes = await this.undoOperation(op, state);
             
             // Merge changes
@@ -324,46 +269,13 @@ class UndoStateSync {
         }
         
         // Otherwise, use reverse logic based on operation type
-        switch (operation.type) {
-            case 'node_create':
-            case 'node_duplicate':
-            case 'node_paste':
-                // Remove created nodes
-                return this.undoNodeCreate(operation, state, changes);
-                
-            case 'node_delete':
-                // Restore deleted nodes
-                return this.undoNodeDelete(operation, state, changes);
-                
-            case 'node_move':
-                // Move nodes back to original positions
-                return this.undoNodeMove(operation, state, changes);
-                
-            case 'node_resize':
-                // Restore original sizes
-                return this.undoNodeResize(operation, state, changes);
-                
-            case 'node_property_update':
-            case 'node_batch_property_update':
-                // Restore original properties
-                return this.undoPropertyUpdate(operation, state, changes);
-                
-            case 'node_rotate':
-                // Restore original rotation
-                return this.undoNodeRotate(operation, state, changes);
-                
-            case 'node_reset':
-                // Restore pre-reset state
-                return this.undoNodeReset(operation, state, changes);
-                
-            case 'video_toggle':
-                // Toggle back
-                return this.undoVideoToggle(operation, state, changes);
-                
-            default:
-                console.warn(`No undo handler for operation type: ${operation.type}`);
-                return null;
+        const handler = this.undoHandlers[operation.type];
+        if (handler) {
+            return handler.call(this, operation, state, changes);
         }
+
+        console.warn(`No undo handler for operation type: ${operation.type}`);
+        return null;
     }
     
     /**
@@ -371,7 +283,10 @@ class UndoStateSync {
      */
     applyUndoData(operation, state, changes) {
         const undoData = operation.undoData;
-        console.log(`📝 Applying undo data for ${operation.type}:`, undoData);
+        console.log(`📝 Applying undo data for ${operation.type}:`, JSON.stringify(undoData, null, 2));
+        
+        // Track which nodes have been updated to avoid duplicates
+        const updatedNodeIds = new Set();
         
         // Handle node move operations with array format
         if (undoData.nodes && Array.isArray(undoData.nodes)) {
@@ -380,7 +295,10 @@ class UndoStateSync {
                 if (node && nodeData.oldPosition) {
                     console.log(`🔄 Restoring node ${nodeData.id} position from [${node.pos}] to [${nodeData.oldPosition}]`);
                     node.pos = [...nodeData.oldPosition];
-                    changes.updated.push(node);
+                    if (!updatedNodeIds.has(node.id)) {
+                        changes.updated.push(node);
+                        updatedNodeIds.add(node.id);
+                    }
                 }
             }
             // Don't return early if we also have previousPositions
@@ -416,7 +334,10 @@ class UndoStateSync {
                 if (node) {
                     // Apply previous state
                     Object.assign(node, prevState);
-                    changes.updated.push(node);
+                    if (!updatedNodeIds.has(node.id)) {
+                        changes.updated.push(node);
+                        updatedNodeIds.add(node.id);
+                    }
                 }
             }
         }
@@ -428,7 +349,10 @@ class UndoStateSync {
                 if (node) {
                     console.log(`🔄 Restoring node ${nodeId} position from [${node.pos}] to [${pos}]`);
                     node.pos = [...pos];
-                    changes.updated.push(node);
+                    if (!updatedNodeIds.has(node.id)) {
+                        changes.updated.push(node);
+                        updatedNodeIds.add(node.id);
+                    }
                 }
             }
         }
@@ -439,7 +363,30 @@ class UndoStateSync {
                 const node = state.nodes.find(n => n.id == nodeId); // Use loose equality for type conversion
                 if (node) {
                     node.size = [...size];
-                    changes.updated.push(node);
+                    if (!updatedNodeIds.has(node.id)) {
+                        changes.updated.push(node);
+                        updatedNodeIds.add(node.id);
+                    }
+                }
+            }
+        }
+        
+        if (undoData.previousRotations) {
+            console.log('📐 Found previousRotations in undo data:', undoData.previousRotations);
+            // Restore previous rotations
+            for (const [nodeId, rotation] of Object.entries(undoData.previousRotations)) {
+                const node = state.nodes.find(n => n.id == nodeId); // Use loose equality for type conversion
+                if (node) {
+                    console.log(`🔄 Restoring node ${nodeId} rotation from ${node.rotation} to ${rotation}`);
+                    const oldRotation = node.rotation;
+                    node.rotation = rotation;
+                    console.log(`✅ Node ${nodeId} rotation changed: ${oldRotation} -> ${node.rotation}`);
+                    if (!updatedNodeIds.has(node.id)) {
+                        changes.updated.push(node);
+                        updatedNodeIds.add(node.id);
+                    }
+                } else {
+                    console.log(`❌ Node ${nodeId} not found in state!`);
                 }
             }
         }
@@ -449,8 +396,21 @@ class UndoStateSync {
             for (const [nodeId, props] of Object.entries(undoData.previousProperties)) {
                 const node = state.nodes.find(n => n.id == nodeId); // Use loose equality for type conversion
                 if (node) {
-                    Object.assign(node.properties, props);
-                    changes.updated.push(node);
+                    // Handle both direct properties (like title) and nested properties
+                    for (const [key, value] of Object.entries(props)) {
+                        if (['title', 'type', 'id', 'pos', 'size', 'rotation', 'flags'].includes(key)) {
+                            // Direct node property
+                            node[key] = value;
+                        } else {
+                            // Nested property
+                            if (!node.properties) node.properties = {};
+                            node.properties[key] = value;
+                        }
+                    }
+                    if (!updatedNodeIds.has(node.id)) {
+                        changes.updated.push(node);
+                        updatedNodeIds.add(node.id);
+                    }
                 }
             }
         }
@@ -549,8 +509,21 @@ class UndoStateSync {
             for (const [nodeId, props] of Object.entries(operation.undoData.previousProperties)) {
                 const node = state.nodes.find(n => n.id == nodeId);
                 if (node) {
-                    Object.assign(node.properties, props);
-                    changes.updated.push(node);
+                    // Handle both direct properties (like title) and nested properties
+                    for (const [key, value] of Object.entries(props)) {
+                        if (['title', 'type', 'id', 'pos', 'size', 'rotation', 'flags'].includes(key)) {
+                            // Direct node property
+                            node[key] = value;
+                        } else {
+                            // Nested property
+                            if (!node.properties) node.properties = {};
+                            node.properties[key] = value;
+                        }
+                    }
+                    if (!updatedNodeIds.has(node.id)) {
+                        changes.updated.push(node);
+                        updatedNodeIds.add(node.id);
+                    }
                 }
             }
         }
@@ -652,6 +625,62 @@ class UndoStateSync {
      */
     getUserUndoState(userId, projectId) {
         return this.history.getUserUndoState(userId, projectId);
+    }
+
+    createUndoResponse(success, reason, userId, projectId, operationIds = [], stateChanges = {}, conflicts = [], error = null) {
+        const response = {
+            success,
+            reason,
+            undoState: this.history.getUserUndoState(userId, projectId)
+        };
+
+        if (success) {
+            response.undoneOperations = operationIds;
+            response.stateUpdate = stateChanges;
+            response.conflicts = conflicts.length > 0 ? conflicts : null;
+        }
+
+        if (error) {
+            response.error = error;
+        }
+
+        return response;
+    }
+
+    getOperations(operationIds) {
+        const operations = operationIds.map(id => this.history.operations.get(id)).filter(Boolean);
+        console.log(`🔍 Retrieved ${operations.length} operations with undo data:`,
+            operations.map(op => ({
+                id: op.id,
+                type: op.type,
+                hasUndoData: !!op.undoData,
+                state: op.state,
+                userId: op.userId
+            })));
+        return operations;
+    }
+
+    broadcastUndo(response, userId, projectId) {
+        this.io.to(`project_${projectId}`).emit('state_update', {
+            stateVersion: this.stateManager.stateVersions.get(projectId) || 0,
+            changes: response.stateUpdate,
+            operationId: `undo_${Date.now()}`,
+            fromUserId: userId,
+            isUndo: true
+        });
+
+        this.broadcastToUser(userId, 'undo_executed', {
+            projectId,
+            operations: response.undoneOperations,
+            stateChanges: response.stateUpdate,
+            undoState: response.undoState
+        });
+
+        this.broadcastToOthers(userId, projectId, 'remote_undo', {
+            userId: userId,
+            undoneOperations: response.undoneOperations,
+            affectedNodes: this.extractAffectedNodes(this.getOperations(response.undoneOperations))
+        });
     }
 }
 

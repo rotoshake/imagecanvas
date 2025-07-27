@@ -1,78 +1,78 @@
 # Undo System Fixes Summary
 
-## Fixes Implemented
+## Overview
+Successfully fixed the undo functionality for all node operations in the ImageCanvas collaborative system. Previously, only move operations were working properly.
 
-### 1. User/Project ID Synchronization ✅
-- **Issue**: Client was using hardcoded userId of 1 while server generated different user IDs
-- **Fix**: 
-  - Added `getOrCreateUserId()` method to CanvasNavigator that generates and stores a unique user ID in localStorage
-  - Updated NetworkLayer to use the correct user ID when joining projects
-  - Updated ClientUndoManager to properly track user/project IDs from server responses
+## Issues Fixed
 
-### 2. Missing prepareUndoData Methods ✅
-- **Issue**: DuplicateNodesCommand and PasteNodesCommand were missing prepareUndoData methods
-- **Fix**:
-  - Added prepareUndoData methods to both commands
-  - Fixed property names (createdNodes -> createdNodeIds) for consistency
-  - Ensured undo data is generated before operations are sent to server
+### 1. Client-Server Undo Data Format Mismatch
+The client commands were sending undo data in different formats than what the server expected.
 
-### 3. Operation Validation ✅
-- **Issue**: Commands without prepareUndoData would fail silently
-- **Fix**:
-  - Added validation in StateSyncManager to check for missing prepareUndoData
-  - Shows warning to user when an operation may not be undoable
-  - Logs critical errors to console for debugging
+**Solution**: Standardized all client commands to use the server's expected format:
+- `previousPositions`: Object mapping nodeId -> position array
+- `previousSizes`: Object mapping nodeId -> size array  
+- `previousRotations`: Object mapping nodeId -> rotation value
+- `previousProperties`: Object mapping nodeId -> properties object
+- `deletedNodes`: Array of complete node data for deletion undo
 
-### 4. Enhanced Server Logging ✅
-- **Issue**: Difficult to debug why operations weren't showing in undo state
-- **Fix**:
-  - Added comprehensive logging to handleRequestUndoState
-  - Added logging to handleExecuteOperation to track operation recording
-  - Added logging to show when undo state is sent to clients
+### 2. Property Name Inconsistencies
+Several commands had property name mismatches between `prepareUndoData()` and `undo()` methods:
+- ResizeNodeCommand: `oldPosition` vs `oldPos`
+- RotateNodeCommand: `oldPosition` vs `oldPos`
 
-### 5. Debug Tools ✅
-- **Issue**: No easy way to test and debug the undo system
-- **Fix**:
-  - Created debug-undo-system.html tool that opens in a popup
-  - Shows real-time undo state and system status
-  - Provides buttons to test create, undo, and redo operations
+**Solution**: Fixed all property names to be consistent and match the new server format.
 
-## Investigation Results
+### 3. Server-Side Property Handling
+The server was incorrectly applying all property updates to `node.properties` when some properties (like `title`) are direct node properties.
 
-### Why Clicking Doesn't Add Undo States
-- Selection changes (clicking) do NOT trigger operations
-- Only actual modifications (move, create, delete, etc.) create undoable operations
-- This is the correct behavior
+**Solution**: Updated server-side undo handlers to distinguish between:
+- Direct node properties: `title`, `type`, `id`, `pos`, `size`, `rotation`, `flags`
+- Nested properties: Everything else goes in `node.properties`
 
-### Why Existing Operations May Not Show in Undo State
-Possible causes:
-1. Operations created before proper user ID was set
-2. Operations stored with different user/project IDs than current session
-3. Browser cache preventing updated code from loading
+### 4. Local Undo Method Updates
+The client-side undo methods were still using the old format after we changed the data structure.
 
-## Testing Instructions
+**Solution**: Updated all undo methods to iterate through the new object-based format instead of array-based format.
 
-1. **Clear browser cache** to ensure all code updates are loaded
-2. **Open the debug tool**:
-   ```javascript
-   window.open('/.scratch/debug-undo-system.html', 'undo-debug', 'width=600,height=800')
-   ```
-3. **Test the undo system**:
-   - Click "Create Test Node" to add a node
-   - Click "Request Undo State" to check if undo is available
-   - Click "Perform Undo" to undo the creation
-   - Monitor server logs for detailed operation tracking
+## Commands Fixed
+
+1. **ResizeNodeCommand**: 
+   - Fixed undo data format
+   - Fixed property name mismatches
+   - Updated undo method
+
+2. **RotateNodeCommand**:
+   - Fixed undo data format  
+   - Updated execute method for consistency
+   - Updated undo method
+
+3. **UpdateNodePropertyCommand**:
+   - Fixed to use server format
+   - Handles both direct and nested properties correctly
+   - Updated undo method
+
+4. **DeleteNodeCommand**:
+   - Changed from `nodes` to `deletedNodes` array
+   - Already had correct restoration logic
+
+5. **MoveNodeCommand**:
+   - Already working correctly
+   - Uses both old and new format for compatibility
+
+## Test Results
+
+All operations now pass undo tests:
+- ✅ Move
+- ✅ Resize  
+- ✅ Rotate
+- ✅ Property Update (including title)
+- ✅ Delete
 
 ## Next Steps
 
-1. **Monitor server logs** with the new logging to identify any remaining issues
-2. **Test with fresh browser session** to ensure user ID synchronization works
-3. **Add sequence numbers** to prevent operation order scrambling (still pending)
-4. **Create automated tests** for the undo system (still pending)
-
-## Success Indicators
-
-- Creating a node shows `canUndo: true` in the debug tool
-- Server logs show operations being recorded with undo data
-- Undo successfully removes created nodes
-- User IDs are consistent across client and server
+The following Phase 2 items from the audit are still pending:
+1. User-specific undo and conflict resolution
+2. Transaction grouping for bulk operations
+3. Synchronization protocol for undo state
+4. UI feedback improvements for undo operations
+5. Offline/online transition handling

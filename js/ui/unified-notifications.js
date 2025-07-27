@@ -576,10 +576,44 @@ class UnifiedNotifications {
             success: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/></svg>',
             error: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-2h2v2zm0-4h-2V7h2v6z"/></svg>',
             warning: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M1 21h22L12 2 1 21zm12-3h-2v-2h2v2zm0-4h-2v-4h2v4z"/></svg>',
-            info: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-6h2v6zm0-8h-2V7h2v2z"/></svg>'
+            info: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-6h2v6zm0-8h-2V7h2v2z"/></svg>',
+            undo: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M12.5 8C9.97 8 7.9 10.07 7.9 12.6V18h-3v-5.4C4.9 8.13 8.37 5 12.5 5c3.08 0 5.68 1.89 6.66 4.54L18.5 9.5l-1.41 1.41-1.2-1.2c-.4-1.21-1.52-2.11-2.89-2.11z"/></svg>'
         };
         
         return icons[type] || icons.info;
+    }
+
+    /**
+     * Update undo operation status
+     */
+    updateUndoStatus(status, detail = null) {
+        const statusMessages = {
+            in_progress: 'Undoing...',
+            success: 'Undo successful',
+            failed: 'Undo failed'
+        };
+        
+        const statusTypes = {
+            in_progress: 'info',
+            success: 'success',
+            failed: 'error'
+        };
+        
+        const durations = {
+            in_progress: 0, // Persistent
+            success: 3000,
+            failed: 5000
+        };
+
+        this.show({
+            id: 'undo-status',
+            type: statusTypes[status] || 'info',
+            message: statusMessages[status] || status,
+            detail: detail,
+            duration: durations[status],
+            persistent: status === 'in_progress',
+            icon: this.getIcon('undo')
+        });
     }
     
     /**

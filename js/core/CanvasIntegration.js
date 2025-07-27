@@ -12,6 +12,7 @@ class CanvasIntegration {
         // Track ongoing drag operation
         this.dragState = {
             active: false,
+            initialPositions: new Map(), // nodeId -> [x, y] at drag start
             lastPositions: new Map(), // nodeId -> [x, y]
             dragCommands: [], // Track commands for this drag
             startTime: 0
@@ -54,14 +55,17 @@ class CanvasIntegration {
             if (!this.dragState.active) {
                 this.dragState.active = true;
                 this.dragState.startTime = Date.now();
+                this.dragState.initialPositions.clear();
                 this.dragState.lastPositions.clear();
                 this.dragState.dragCommands = [];
                 
-                // Store initial positions
+                // Store initial positions (before any movement)
                 for (const [nodeId, offset] of this.canvas.interactionState.dragging.offsets) {
                     const node = this.canvas.graph.getNodeById(nodeId);
                     if (node) {
-                        this.dragState.lastPositions.set(nodeId, [...node.pos]);
+                        const initialPos = [...node.pos];
+                        this.dragState.initialPositions.set(nodeId, initialPos);
+                        this.dragState.lastPositions.set(nodeId, initialPos);
                     }
                 }
             }
@@ -135,6 +139,7 @@ class CanvasIntegration {
             
             // Reset drag state
             this.dragState.active = false;
+            this.dragState.initialPositions.clear();
             this.dragState.lastPositions.clear();
             this.dragState.dragCommands = [];
         };
@@ -171,6 +176,12 @@ class CanvasIntegration {
                         nodeId,
                         position
                     };
+                    
+                    // Include initial position for undo
+                    const initialPos = this.dragState.initialPositions.get(nodeId);
+                    if (initialPos) {
+                        moveData.initialPosition = initialPos;
+                    }
                     
                     if (node.type === 'media/image' || node.type === 'media/video') {
                         moveData.properties = {

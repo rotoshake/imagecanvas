@@ -1038,8 +1038,17 @@ Mode: ${this.fpsTestMode}`;
         // Reset movement tracking
         this.interactionState.dragging.hasMoved = false;
         
-        // Calculate offsets for all selected nodes
+        // Capture initial positions for undo before any movement
         const selectedNodes = this.selection.getSelectedNodes();
+        this.interactionState.dragging.initialPositions = new Map();
+        for (const selectedNode of selectedNodes) {
+            this.interactionState.dragging.initialPositions.set(
+                selectedNode.id, 
+                [...selectedNode.pos]
+            );
+        }
+        
+        // Calculate offsets for all selected nodes
         for (const selectedNode of selectedNodes) {
             const offset = [
                 selectedNode.pos[0] - this.mouseState.graph[0],
@@ -1636,6 +1645,10 @@ Mode: ${this.fpsTestMode}`;
             const wasDuplication = this.interactionState.dragging.isDuplication;
             const hasMoved = this.interactionState.dragging.hasMoved;
             
+            // Capture initial positions before clearing drag state
+            const capturedInitialPositions = this.interactionState.dragging.initialPositions ? 
+                new Map(this.interactionState.dragging.initialPositions) : null;
+            
             // Broadcast move operation for collaboration
             // Skip move operations for duplicated nodes, temporary nodes, or if no movement occurred
             if (window.app?.operationPipeline && wasInteracting && !wasDuplication && hasMoved) {
@@ -1664,6 +1677,14 @@ Mode: ${this.fpsTestMode}`;
                         position: [...node.pos]
                     };
                     
+                    // Include initial position if this was a drag operation
+                    if (capturedInitialPositions) {
+                        const initialPos = capturedInitialPositions.get(node.id);
+                        if (initialPos) {
+                            moveData.initialPosition = initialPos;
+                        }
+                    }
+                    
                     // For move operations, we don't need to send media properties
                     // The server already has this data and positions are the only thing changing
                     
@@ -1689,6 +1710,20 @@ Mode: ${this.fpsTestMode}`;
                                     positions: chunk.map(n => [...n.pos])
                                 };
                                 
+                                // Include initial positions for chunk if this was a drag operation
+                                if (capturedInitialPositions) {
+                                    const initialPositions = {};
+                                    for (const node of chunk) {
+                                        const initialPos = capturedInitialPositions.get(node.id);
+                                        if (initialPos) {
+                                            initialPositions[node.id] = initialPos;
+                                        }
+                                    }
+                                    if (Object.keys(initialPositions).length > 0) {
+                                        moveData.initialPositions = initialPositions;
+                                    }
+                                }
+                                
                                 // REMOVED: Validation - let server handle missing nodes gracefully
                                 
                                 try {
@@ -1711,6 +1746,20 @@ Mode: ${this.fpsTestMode}`;
                             positions: collaborativeNodes.map(n => [...n.pos])
                         };
                         
+                        // Include initial positions if this was a drag operation
+                        if (capturedInitialPositions) {
+                            const initialPositions = {};
+                            for (const node of collaborativeNodes) {
+                                const initialPos = capturedInitialPositions.get(node.id);
+                                if (initialPos) {
+                                    initialPositions[node.id] = initialPos;
+                                }
+                            }
+                            if (Object.keys(initialPositions).length > 0) {
+                                moveData.initialPositions = initialPositions;
+                            }
+                        }
+                        
                         // REMOVED: Validation - let server handle missing nodes gracefully
                         
                         window.app.operationPipeline.execute('node_move', moveData);
@@ -1722,6 +1771,10 @@ Mode: ${this.fpsTestMode}`;
             this.interactionState.dragging.node = null;
             this.interactionState.dragging.offsets.clear();
             this.interactionState.dragging.hasMoved = false;
+            if (this.interactionState.dragging.initialPositions) {
+                this.interactionState.dragging.initialPositions.clear();
+                this.interactionState.dragging.initialPositions = null;
+            }
             
             // For Alt+drag duplication, sync the nodes through collaborative system
             // but keep the local nodes visible for seamless transition

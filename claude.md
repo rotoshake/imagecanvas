@@ -28,6 +28,7 @@ Please place plans and fixes in the `/plans` subdirectory. This would include an
 - ALWAYS write documentation .md files into the `/docs` subdirectory.
 - NEVER claim that what you've done works perfectly unless you've tested it yourself.
 - When troubleshooting and fixing bugs, be more proactive and think ahead to how a bug fix might apply to other similar circumstances, especially across multiple node and synced operation types.
+- The node server runs on port 3000 and the client server on port 8000, by default. Try those first when running tests. Also let me know if you feel like it's time to update this or remove this memory.
 
 ## Prime Directive
 

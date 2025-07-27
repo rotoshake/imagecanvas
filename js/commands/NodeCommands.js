@@ -40,11 +40,13 @@ class MoveNodeCommand extends Command {
         if (this.params.nodeId) {
             const node = graph.getNodeById(this.params.nodeId);
             if (node) {
-                this.undoData.previousPositions[node.id] = [...node.pos];
+                // Use initial position if provided (from drag operation)
+                const position = this.params.initialPosition || [...node.pos];
+                this.undoData.previousPositions[node.id] = position;
                 // Also keep old format for compatibility
                 this.undoData.nodes.push({
                     id: node.id,
-                    oldPosition: [...node.pos]
+                    oldPosition: position
                 });
             }
         }
@@ -54,11 +56,17 @@ class MoveNodeCommand extends Command {
             this.params.nodeIds.forEach(nodeId => {
                 const node = graph.getNodeById(nodeId);
                 if (node) {
-                    this.undoData.previousPositions[node.id] = [...node.pos];
+                    // Use initial position if provided (from drag operation)
+                    let position = [...node.pos];
+                    if (this.params.initialPositions && this.params.initialPositions[nodeId]) {
+                        position = this.params.initialPositions[nodeId];
+                    }
+                    
+                    this.undoData.previousPositions[node.id] = position;
                     // Also keep old format for compatibility
                     this.undoData.nodes.push({
                         id: node.id,
-                        oldPosition: [...node.pos]
+                        oldPosition: position
                     });
                 }
             });
@@ -583,7 +591,7 @@ class DeleteNodeCommand extends Command {
     
     async prepareUndoData(context) {
         const { graph } = context;
-        this.undoData = { nodes: [] };
+        this.undoData = { deletedNodes: [] };
         
         this.params.nodeIds.forEach(nodeId => {
             const node = graph.getNodeById(nodeId);
@@ -626,18 +634,18 @@ class DeleteNodeCommand extends Command {
                     }
                 }
                 
-                this.undoData.nodes.push(nodeData);
+                this.undoData.deletedNodes.push(nodeData);
             }
         });
         
-        console.log(`📝 Prepared undo data for DeleteNodeCommand: ${this.undoData.nodes.length} nodes`);
+        console.log(`📝 Prepared undo data for DeleteNodeCommand: ${this.undoData.deletedNodes.length} nodes`);
     }
     
     async execute(context) {
         const { graph, canvas } = context;
         
         // Store nodes for undo
-        this.undoData = { nodes: [] };
+        this.undoData = { deletedNodes: [] };
         
         console.log(`🗑️ DeleteNodeCommand: Deleting ${this.params.nodeIds.length} nodes`);
         
@@ -714,7 +722,7 @@ class DeleteNodeCommand extends Command {
                     }
                 }
                 
-                this.undoData.nodes.push(nodeData);
+                this.undoData.deletedNodes.push(nodeData);
                 
                 // Clear from selection if selected
                 if (canvas?.selection) {
@@ -728,10 +736,10 @@ class DeleteNodeCommand extends Command {
         
         // Log total undo data size
         const totalUndoSize = JSON.stringify(this.undoData).length;
-        console.log(`📊 Total deletion undo data size: ${(totalUndoSize/1024/1024).toFixed(2)}MB for ${this.undoData.nodes.length} nodes`);
+        console.log(`📊 Total deletion undo data size: ${(totalUndoSize/1024/1024).toFixed(2)}MB for ${this.undoData.deletedNodes.length} nodes`);
         
         this.executed = true;
-        return { deletedCount: this.undoData.nodes.length };
+        return { deletedCount: this.undoData.deletedNodes.length };
     }
     
     async undo(context) {
@@ -742,7 +750,8 @@ class DeleteNodeCommand extends Command {
         }
         
         // Restore nodes
-        for (const nodeData of this.undoData.nodes) {
+        const nodesToRestore = this.undoData.deletedNodes || this.undoData.nodes || [];
+        for (const nodeData of nodesToRestore) {
             const node = NodeFactory.createNode(nodeData.type);
             if (node) {
                 // Restore all properties
@@ -846,13 +855,18 @@ class UpdateNodePropertyCommand extends Command {
                 });
             }
             
+            // Use server format for undo data
             this.undoData = {
-                nodeId: node.id,
-                property: this.params.property,
-                oldValue: oldValue,
-                isDirectProperty: isDirectProperty
+                previousProperties: {}
             };
-            console.log(`📝 Prepared undo data for UpdateNodePropertyCommand: ${this.params.property}=${this.undoData.oldValue} -> ${this.params.value}`);
+            
+            // For direct properties like 'title', we still need to store them
+            // The server will handle both direct and nested properties
+            this.undoData.previousProperties[node.id] = {
+                [this.params.property]: oldValue
+            };
+            
+            console.log(`📝 Prepared undo data for UpdateNodePropertyCommand: ${this.params.property}=${oldValue} -> ${this.params.value}`);
         } else {
             console.warn(`⚠️ Cannot prepare undo data for UpdateNodePropertyCommand: node ${this.params.nodeId} not found`);
         }
@@ -870,12 +884,13 @@ class UpdateNodePropertyCommand extends Command {
         const isDirectProperty = ['title'].includes(this.params.property);
         const oldValue = isDirectProperty ? node[this.params.property] : node.properties[this.params.property];
         
-        
+        // Use server format for undo data
         this.undoData = {
-            nodeId: node.id,
-            property: this.params.property,
-            oldValue: oldValue,
-            isDirectProperty: isDirectProperty
+            previousProperties: {}
+        };
+        
+        this.undoData.previousProperties[node.id] = {
+            [this.params.property]: oldValue
         };
         
         // Update property
@@ -905,16 +920,24 @@ class UpdateNodePropertyCommand extends Command {
             throw new Error('No undo data available');
         }
         
-        const node = graph.getNodeById(this.undoData.nodeId);
-        if (node) {
-            if (this.undoData.isDirectProperty) {
-                node[this.undoData.property] = this.undoData.oldValue;
-            } else {
-                node.properties[this.undoData.property] = this.undoData.oldValue;
-            }
-            
-            if (node.updateProperty) {
-                node.updateProperty(this.undoData.property, this.undoData.oldValue);
+        // Restore properties
+        if (this.undoData.previousProperties) {
+            for (const [nodeId, props] of Object.entries(this.undoData.previousProperties)) {
+                const node = graph.getNodeById(nodeId);
+                if (node) {
+                    for (const [key, value] of Object.entries(props)) {
+                        const isDirectProperty = ['title'].includes(key);
+                        if (isDirectProperty) {
+                            node[key] = value;
+                        } else {
+                            node.properties[key] = value;
+                        }
+                        
+                        if (node.updateProperty) {
+                            node.updateProperty(key, value);
+                        }
+                    }
+                }
             }
         }
         
