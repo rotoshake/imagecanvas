@@ -198,19 +198,29 @@ class ClientUndoManager {
             return;
         }
 
-        const initialNodesState = Array.from(this.interactionInitialState.nodes.values());
-        const nodeIds = Array.from(this.interactionInitialState.nodes.keys());
-        
+        const initialNodesMap = this.interactionInitialState.nodes;
+        const finalNodeIds = finalParams.nodeIds || Array.from(initialNodesMap.keys());
+
         const initialState = {
-            positions: initialNodesState.map(s => s.pos),
-            sizes: initialNodesState.map(s => s.size),
-            rotations: initialNodesState.map(s => s.rotation),
-            properties: initialNodesState.map(s => s.properties)
+            positions: [],
+            sizes: [],
+            rotations: [],
+            properties: []
         };
+
+        finalNodeIds.forEach(nodeId => {
+            const state = initialNodesMap.get(nodeId);
+            if (state) {
+                initialState.positions.push(state.pos);
+                initialState.sizes.push(state.size);
+                initialState.rotations.push(state.rotation);
+                initialState.properties.push(state.properties);
+            }
+        });
 
         const params = {
             ...finalParams,
-            nodeIds: nodeIds
+            nodeIds: finalNodeIds
         };
 
         window.app.operationPipeline.execute(commandType, params, { initialState });

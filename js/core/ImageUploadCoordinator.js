@@ -114,7 +114,7 @@ class ImageUploadCoordinator {
         // Update each node locally
         nodes.forEach(node => {
             node.properties.serverUrl = uploadResult.url;
-            node.properties.serverFilename = uploadResult.filename;
+            node.properties.serverFilename = uploadResult.serverFilename || uploadResult.filename;
             
             // Update image source if needed
             if (node.img && node.img.src.startsWith('data:')) {
@@ -128,7 +128,7 @@ class ImageUploadCoordinator {
                 await this.app.operationPipeline.execute('image_upload_complete', {
                     hash: hash,
                     serverUrl: uploadResult.url,
-                    serverFilename: uploadResult.filename
+                    serverFilename: uploadResult.serverFilename || uploadResult.filename
                 });
                 // Server notified of upload completion
             } catch (error) {
@@ -140,7 +140,7 @@ class ImageUploadCoordinator {
         if (this.app.imageResourceCache) {
             this.app.imageResourceCache.set(hash, {
                 url: fullUrl,
-                serverFilename: uploadResult.filename,
+                serverFilename: uploadResult.serverFilename || uploadResult.filename,
                 originalFilename: nodes[0]?.properties.filename,
                 thumbnail: nodes[0]?.thumbnail,
                 isLocal: false
@@ -162,7 +162,7 @@ class ImageUploadCoordinator {
             const currentNode = this.app.graph.getNodeById(node.id);
             if (currentNode) {
                 currentNode.properties.serverUrl = uploadResult.url;
-                currentNode.properties.serverFilename = uploadResult.filename;
+                currentNode.properties.serverFilename = uploadResult.serverFilename || uploadResult.filename;
                 
                 const fullUrl = uploadResult.url.startsWith('http') 
                     ? uploadResult.url 

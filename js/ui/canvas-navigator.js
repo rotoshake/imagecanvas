@@ -1587,7 +1587,10 @@ Continue?`;
                 // Server cleanup results
                 if (result.deleted) {
                     if (result.deleted.files > 0) {
-                        parts.push(`• Removed ${result.deleted.files} orphaned files`);
+                        parts.push(`• Removed ${result.deleted.files} orphaned database files`);
+                    }
+                    if (result.deleted.orphanedDiskFiles > 0) {
+                        parts.push(`• Removed ${result.deleted.orphanedDiskFiles} orphaned disk files`);
                     }
                     if (result.deleted.largeOperations > 0) {
                         parts.push(`• Removed ${result.deleted.largeOperations} operations with embedded images`);

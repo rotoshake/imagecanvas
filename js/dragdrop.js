@@ -489,7 +489,7 @@ class DragDropManager {
         // Add server URL if we have a successful pre-upload
         if (uploadResult && !uploadResult.error) {
             properties.serverUrl = uploadResult.url;
-            properties.serverFilename = uploadResult.filename;
+            properties.serverFilename = uploadResult.serverFilename || uploadResult.filename;
         }
         
         // Return node data for OperationPipeline, not an actual node

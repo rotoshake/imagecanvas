@@ -170,8 +170,8 @@ class CanvasStateManager {
                     if (node && operation.params.positions[index]) {
                         // Update both X and Y coordinates from the provided positions
                         // The client sends complete positions after alignment animation
-                        node.pos[0] = operation.params.positions[index][0];
-                        node.pos[1] = operation.params.positions[index][1];
+                        node.pos = [...operation.params.positions[index]];
+                        changes.updated.push(node);
                         console.log(`[node_align] Updated node ${nodeId} to position [${node.pos[0]}, ${node.pos[1]}]`);
                     }
                 });

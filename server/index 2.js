@@ -147,47 +147,23 @@ class ImageCanvasServer {
 
                 const hash = req.body.hash || crypto.createHash('sha256').update(await fs.readFile(req.file.path)).digest('hex');
                 
-                try {
-                    // Generate thumbnails for images
-                    if (req.file.mimetype.startsWith('image/')) {
-                        await this.generateThumbnails(req.file.path, req.file.filename);
-                    }
-
-                    // Return the URL for the uploaded file
-                    res.json({
-                        success: true,
-                        url: `/uploads/${req.file.filename}`,
-                        hash: hash,
-                        filename: req.file.originalname,  // Original filename from user
-                        serverFilename: req.file.filename, // Actual filename on server
-                        size: req.file.size
-                    });
-
-                    console.log(`✅ Image uploaded via API: ${req.file.originalname} -> ${req.file.filename}`);
-                } catch (thumbnailError) {
-                    // If thumbnail generation fails, clean up the uploaded file
-                    console.error('Thumbnail generation failed, cleaning up:', thumbnailError);
-                    try {
-                        await fs.unlink(req.file.path);
-                        console.log('🗑️ Cleaned up failed upload file');
-                    } catch (unlinkError) {
-                        console.error('Failed to clean up file:', unlinkError);
-                    }
-                    throw thumbnailError; // Re-throw to be caught by outer catch
+                // Generate thumbnails for images
+                if (req.file.mimetype.startsWith('image/')) {
+                    await this.generateThumbnails(req.file.path, req.file.filename);
                 }
+
+                // Return the URL for the uploaded file
+                res.json({
+                    success: true,
+                    url: `/uploads/${req.file.filename}`,
+                    hash: hash,
+                    filename: req.file.originalname,
+                    size: req.file.size
+                });
+
+                console.log(`✅ Image uploaded via API: ${req.file.originalname} -> ${req.file.filename}`);
             } catch (error) {
                 console.error('Upload error:', error);
-                
-                // Try to clean up the uploaded file if it exists
-                if (req.file && req.file.path) {
-                    try {
-                        await fs.unlink(req.file.path);
-                        console.log('🗑️ Cleaned up failed upload file');
-                    } catch (unlinkError) {
-                        console.error('Failed to clean up file:', unlinkError);
-                    }
-                }
-                
                 res.status(500).json({ error: 'Upload failed', details: error.message });
             }
         });
@@ -216,21 +192,9 @@ class ImageCanvasServer {
                     project_id: parseInt(projectId)
                 };
 
-                try {
-                    // Generate thumbnails for images
-                    if (req.file.mimetype.startsWith('image/')) {
-                        await this.generateThumbnails(req.file.path, req.file.filename);
-                    }
-                } catch (thumbnailError) {
-                    // If thumbnail generation fails, clean up the uploaded file
-                    console.error('Thumbnail generation failed, cleaning up:', thumbnailError);
-                    try {
-                        await fs.unlink(req.file.path);
-                        console.log('🗑️ Cleaned up failed upload file');
-                    } catch (unlinkError) {
-                        console.error('Failed to clean up file:', unlinkError);
-                    }
-                    throw thumbnailError; // Re-throw to be caught by outer catch
+                // Generate thumbnails for images
+                if (req.file.mimetype.startsWith('image/')) {
+                    await this.generateThumbnails(req.file.path, req.file.filename);
                 }
 
                 // Broadcast to other users in the project (excluding uploader)
@@ -277,24 +241,11 @@ class ImageCanvasServer {
                 res.json({ 
                     success: true, 
                     fileInfo,
-                    mediaUrl: `/uploads/${req.file.filename}`,
-                    serverFilename: req.file.filename, // Add server filename for clarity
-                    filename: req.file.originalname
+                    mediaUrl: `/uploads/${req.file.filename}`
                 });
 
             } catch (error) {
                 console.error('Upload error:', error);
-                
-                // Try to clean up the uploaded file if it exists
-                if (req.file && req.file.path) {
-                    try {
-                        await fs.unlink(req.file.path);
-                        console.log('🗑️ Cleaned up failed upload file');
-                    } catch (unlinkError) {
-                        console.error('Failed to clean up file:', unlinkError);
-                    }
-                }
-                
                 res.status(500).json({ error: 'Upload failed' });
             }
         });
@@ -724,28 +675,13 @@ class ImageCanvasServer {
                 
                 // Extract all media URLs from all projects
                 const usedFilenames = new Set();
-                console.log(`📋 Scanning ${projects.length} projects for used files...`);
                 for (const project of projects) {
                     try {
                         const canvasData = JSON.parse(project.canvas_data);
                         if (canvasData && canvasData.nodes) {
                             for (const node of canvasData.nodes) {
-                                // Check multiple possible locations for file references
-                                // 1. Direct serverFilename property (most common)
-                                if (node.properties && node.properties.serverFilename) {
-                                    usedFilenames.add(node.properties.serverFilename);
-                                }
-                                
-                                // 2. Check src property for uploads
-                                if (node.properties && node.properties.src) {
-                                    const srcMatch = node.properties.src.match(/\/uploads\/(.+)$/);
-                                    if (srcMatch) {
-                                        usedFilenames.add(srcMatch[1]);
-                                    }
-                                }
-                                
-                                // 3. Legacy: Check data.mediaUrl (older format)
                                 if (node.data && node.data.mediaUrl) {
+                                    // Extract filename from URL
                                     const match = node.data.mediaUrl.match(/\/uploads\/(.+)$/);
                                     if (match) {
                                         usedFilenames.add(match[1]);
@@ -757,9 +693,6 @@ class ImageCanvasServer {
                         console.error('Error parsing canvas data:', error);
                     }
                 }
-                
-                console.log(`✅ Found ${usedFilenames.size} files in use across all projects`);
-                console.log(`📁 Database contains ${allFiles.length} file records`);
                 
                 // Find orphaned files
                 const orphanedFiles = allFiles.filter(file => !usedFilenames.has(file.filename));
@@ -796,19 +729,14 @@ class ImageCanvasServer {
                     const diskFiles = await fs.readdir(uploadsDir);
                     const dbFilenames = new Set(allFiles.map(f => f.filename));
                     
-                    console.log(`🔍 Checking ${diskFiles.length} files on disk...`);
-                    
                     for (const diskFile of diskFiles) {
                         // Skip non-file entries (directories, etc)
                         const filePath = path.join(uploadsDir, diskFile);
                         const stat = await fs.stat(filePath);
                         if (!stat.isFile()) continue;
                         
-                        // IMPORTANT: File must NOT be in database AND NOT be used in any canvas
-                        const inDatabase = dbFilenames.has(diskFile);
-                        const isUsed = usedFilenames.has(diskFile);
-                        
-                        if (!inDatabase && !isUsed) {
+                        // If file exists on disk but not in database, delete it
+                        if (!dbFilenames.has(diskFile)) {
                             try {
                                 await fs.unlink(filePath);
                                 orphanedDiskFiles++;
@@ -943,18 +871,6 @@ class ImageCanvasServer {
                     console.warn('Could not count some cleanup results:', e);
                 }
                 
-                console.log(`\n📊 Cleanup Summary:
-                - Files removed from database: ${deletedFiles}
-                - Orphaned disk files removed: ${orphanedDiskFiles}
-                - Operations deleted: ${totalOpsDeleted}
-                - Users deleted: ${totalUsersDeleted}
-                - Files still in use: ${usedFilenames.size}`);
-                
-                // Safety check - warn if we're about to delete a lot of files
-                if (deletedFiles + orphanedDiskFiles > 100) {
-                    console.warn(`⚠️ Large number of files deleted: ${deletedFiles + orphanedDiskFiles}`);
-                }
-                
                 res.json({ 
                     success: true,
                     deleted: {
@@ -1077,121 +993,6 @@ class ImageCanvasServer {
         }
     }
     
-    async performStartupCleanup() {
-        console.log('🧹 Performing startup cleanup...');
-        try {
-            // Wait a bit for database to be fully ready
-            await new Promise(resolve => setTimeout(resolve, 1000));
-            
-            // Get all files from database
-            const dbFiles = await this.db.all('SELECT filename FROM files');
-            const dbFilenames = new Set(dbFiles.map(f => f.filename));
-            
-            // Get all files referenced in canvases
-            const projects = await this.db.all(`
-                SELECT canvas_data FROM projects 
-                WHERE canvas_data IS NOT NULL
-            `);
-            
-            const usedFilenames = new Set();
-            console.log(`📋 Scanning ${projects.length} projects for used files...`);
-            
-            for (const project of projects) {
-                try {
-                    const canvasData = JSON.parse(project.canvas_data);
-                    if (canvasData && canvasData.nodes) {
-                        for (const node of canvasData.nodes) {
-                            // Check multiple possible locations for file references
-                            // 1. Direct serverFilename property (most common)
-                            if (node.properties && node.properties.serverFilename) {
-                                usedFilenames.add(node.properties.serverFilename);
-                            }
-                            
-                            // 2. Check src property for uploads
-                            if (node.properties && node.properties.src) {
-                                const srcMatch = node.properties.src.match(/\/uploads\/(.+)$/);
-                                if (srcMatch) {
-                                    usedFilenames.add(srcMatch[1]);
-                                }
-                            }
-                            
-                            // 3. Legacy: Check data.mediaUrl (older format)
-                            if (node.data && node.data.mediaUrl) {
-                                const match = node.data.mediaUrl.match(/\/uploads\/(.+)$/);
-                                if (match) {
-                                    usedFilenames.add(match[1]);
-                                }
-                            }
-                        }
-                    }
-                } catch (error) {
-                    console.error('Error parsing canvas data during startup cleanup:', error);
-                }
-            }
-            
-            // Check uploads directory
-            const uploadsDir = path.join(__dirname, 'uploads');
-            let cleanedFiles = 0;
-            let cleanedSize = 0;
-            
-            try {
-                const diskFiles = await fs.readdir(uploadsDir);
-                console.log(`✅ Found ${usedFilenames.size} files in use, ${diskFiles.length} files on disk`);
-                
-                for (const diskFile of diskFiles) {
-                    const filePath = path.join(uploadsDir, diskFile);
-                    const stat = await fs.stat(filePath);
-                    
-                    if (!stat.isFile()) continue;
-                    
-                    // Delete if not used in any canvas
-                    const isUsed = usedFilenames.has(diskFile);
-                    const inDatabase = dbFilenames.has(diskFile);
-                    
-                    if (!isUsed) {
-                        try {
-                            cleanedSize += stat.size;
-                            await fs.unlink(filePath);
-                            cleanedFiles++;
-                            
-                            // If in database, remove the database entry too
-                            if (inDatabase) {
-                                await this.db.run('DELETE FROM files WHERE filename = ?', [diskFile]);
-                            }
-                            
-                            // Clean up thumbnails
-                            const nameWithoutExt = path.parse(diskFile).name;
-                            const thumbnailSizes = [64, 128, 256, 512, 1024, 2048];
-                            for (const size of thumbnailSizes) {
-                                try {
-                                    const thumbnailPath = path.join(__dirname, 'thumbnails', size.toString(), `${nameWithoutExt}.webp`);
-                                    await fs.unlink(thumbnailPath);
-                                } catch (e) {
-                                    // Thumbnail might not exist
-                                }
-                            }
-                            
-                            console.log(`  🗑️ Cleaned up orphaned file: ${diskFile}`);
-                        } catch (error) {
-                            console.error(`  ❌ Failed to clean up ${diskFile}:`, error.message);
-                        }
-                    }
-                }
-                
-                if (cleanedFiles > 0) {
-                    console.log(`✅ Startup cleanup complete: removed ${cleanedFiles} files (${this.formatBytes(cleanedSize)})`);
-                } else {
-                    console.log('✅ Startup cleanup complete: no orphaned files found');
-                }
-            } catch (error) {
-                console.error('Error during startup cleanup:', error);
-            }
-        } catch (error) {
-            console.error('Failed to perform startup cleanup:', error);
-            // Don't exit - this is not critical for server operation
-        }
-    }
-    
     setupRealtime() {
         try {
             this.collaborationManager = new CollaborationManager(this.io, this.db);
@@ -1228,14 +1029,6 @@ class ImageCanvasServer {
             // Initialize systems
             await this.setupDatabase();
             this.setupRealtime();
-            
-            // DISABLED: Startup cleanup is too aggressive and deleting in-use files
-            // TODO: Fix the logic before re-enabling
-            // setTimeout(() => {
-            //     this.performStartupCleanup().catch(err => {
-            //         console.error('Startup cleanup error:', err);
-            //     });
-            // }, 2000);
             
             this.server.listen(this.port, () => {
                 console.log(`🚀 ImageCanvas Collaborative Server running on port ${this.port}`);

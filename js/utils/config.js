@@ -82,8 +82,8 @@ const CONFIG = {
     
     HANDLES: {
         SIZE: 16,
-        MIN_NODE_SIZE: 24,
-        ROTATION_DISTANCE: 25,
+        MIN_NODE_SIZE: 50,
+        ROTATION_DISTANCE: 50,
         MIN_ROTATION_DISTANCE: 8,
         ROTATION_SNAP_ANGLE: 45  // degrees
     },

@@ -407,7 +407,7 @@ class CreateNodeCommand extends Command {
                     
                     // Update the node's properties with server URL
                     currentNode.properties.serverUrl = uploadResult.url;
-                    currentNode.properties.serverFilename = uploadResult.filename;
+                    currentNode.properties.serverFilename = uploadResult.serverFilename || uploadResult.filename;
                     
                     // Update the image source to use server URL
                     const fullUrl = CONFIG.SERVER.API_BASE + uploadResult.url;
@@ -426,7 +426,7 @@ class CreateNodeCommand extends Command {
                             const completeResult = await window.app.operationPipeline.execute('image_upload_complete', {
                                 hash: currentNode.properties.hash,
                                 serverUrl: uploadResult.url,
-                                serverFilename: uploadResult.filename
+                                serverFilename: uploadResult.serverFilename || uploadResult.filename
                             });
                             console.log(`✅ Server notified of upload completion:`, completeResult);
                         } catch (error) {
@@ -454,7 +454,7 @@ class CreateNodeCommand extends Command {
                         const wasLocal = window.app.imageResourceCache.get(node.properties.hash)?.isLocal;
                         window.app.imageResourceCache.set(node.properties.hash, {
                             url: fullUrl,
-                            serverFilename: uploadResult.filename,
+                            serverFilename: uploadResult.serverFilename || uploadResult.filename,
                             originalFilename: node.properties.filename,
                             thumbnail: node.thumbnail,
                             isLocal: false // Now upgraded to server URL
@@ -478,7 +478,7 @@ class CreateNodeCommand extends Command {
                                 
                                 console.log(`🔄 Updating existing node ${existingNode.id} with server URL`);
                                 existingNode.properties.serverUrl = fullUrl;
-                                existingNode.properties.serverFilename = uploadResult.filename;
+                                existingNode.properties.serverFilename = uploadResult.serverFilename || uploadResult.filename;
                                 
                                 // Update image source if the node has an img element
                                 if (existingNode.img) {

@@ -72,7 +72,7 @@ class NodeAlignCommand extends Command {
         if (!nodeIds || !Array.isArray(nodeIds) || nodeIds.length < 2) {
             return { valid: false, error: 'Not enough nodes to align' };
         }
-        if (!['horizontal', 'vertical'].includes(axis)) {
+        if (!['horizontal', 'vertical', 'grid'].includes(axis)) {
             return { valid: false, error: 'Invalid axis' };
         }
         return { valid: true };
@@ -126,9 +126,12 @@ class NodeAlignCommand extends Command {
         if (axis === 'horizontal') {
             const avgY = nodes.reduce((sum, node) => sum + node.pos[1], 0) / nodes.length;
             nodes.forEach(node => node.pos[1] = avgY);
-        } else { // vertical
+        } else if (axis === 'vertical') {
             const avgX = nodes.reduce((sum, node) => sum + node.pos[0], 0) / nodes.length;
             nodes.forEach(node => node.pos[0] = avgX);
+        } else if (axis === 'grid') {
+            // Grid alignment should always provide positions, this is just a fallback
+            console.warn('[NodeAlignCommand] Grid alignment without positions - no changes made');
         }
         return { success: true };
     }
