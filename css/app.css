@@ -20,7 +20,7 @@ body, html {
     height: 100%; 
     overflow: hidden; 
     font-family: var(--app-font-family);
-    background-color: #222;
+    background-color: var(--color-backgrounds-canvas-primary);
 }
 
 #mycanvas { 
@@ -31,26 +31,26 @@ body, html {
 
 /* Override or supplement LiteGraph styles if needed */
 .litegraph {
-    background: #222;
-    color: #999;
+    background: var(--color-backgrounds-canvas-primary);
+    color: var(--color-text-minimal);
     font-family: var(--app-font-family);
     font-size: 12px;
 }
 
 .litenode {
-    background: rgba(0,0,0,0.7);
-    border: 1px solid #555;
+    background: var(--color-backgrounds-node-default);
+    border: 1px solid var(--color-borders-default);
     border-radius: 4px;
-    color: #ccc;
+    color: var(--color-text-canvas-secondary);
 }
 
 .litenode.selected {
-    border-color: #CCC;
-    background: rgba(255,255,255,0.1);
+    border-color: var(--color-accents-selection-border);
+    background: var(--color-backgrounds-node-selected);
 }
 
 .litenode-title {
-    background: rgba(0,0,0,0.2);
+    background: var(--color-backgrounds-node-title);
     padding: 4px 8px;
     font-weight: bold;
     border-radius: 4px 4px 0 0;
@@ -64,8 +64,8 @@ body, html {
     position: absolute;
     width: 12px;
     height: 12px;
-    background: #fff;
-    border: 1px solid #666;
+    background: var(--color-canvas-handle-fill);
+    border: 1px solid var(--color-canvas-handle-stroke);
     cursor: se-resize;
 }
 
@@ -75,7 +75,7 @@ body, html {
 }
 
 .drop-active {
-    background-color: rgba(68, 170, 255, 0.1);
+    background-color: var(--color-accents-drag-highlight);
 }
 
 .drop-overlay {
@@ -84,8 +84,8 @@ body, html {
 
 /* Floating Properties Inspector */
 .property-input.readonly {
-    background-color: #f5f5f5;
-    color: #666;
+    background-color: var(--color-backgrounds-input-readonly);
+    color: var(--color-text-disabled);
     cursor: default;
 }
 
@@ -96,7 +96,7 @@ body, html {
 
 .source-filename {
     font-size: 11px;
-    color: #888;
+    color: var(--color-text-muted);
     margin-top: 2px;
     font-style: italic;
 }

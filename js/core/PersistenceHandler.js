@@ -11,7 +11,6 @@ class PersistenceHandler {
         this.lastSaveTime = Date.now();
         this.hasUnsavedChanges = false;
         
-        console.log('💾 PersistenceHandler initialized');
     }
     
     /**

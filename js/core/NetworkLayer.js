@@ -16,13 +16,23 @@ class NetworkLayer {
         this.maxReconnectDelay = 30000;
         this.reconnectAttempts = 0;
         
-        // Heartbeat settings
+        // Enhanced reconnection settings
+        this.customReconnectionEnabled = true;
+        this.customReconnectAttempts = 0;
+        this.customReconnectInterval = null;
+        this.baseReconnectDelay = 1000; // Start with 1 second
+        this.maxCustomReconnectDelay = 30000; // Max 30 seconds between attempts
+        this.backgroundReconnectInterval = 30000; // Background retry every 30s
+        this.isManuallyDisconnected = false;
+        
+        // Heartbeat settings (improved)
         this.heartbeatInterval = null;
         this.heartbeatTimeout = null;
         this.lastPingTime = null;
         this.lastPongTime = null;
         this.connectionQuality = 'unknown'; // excellent, good, poor, critical, unknown
         this.pingLatencies = []; // Track last 5 ping times for averaging
+        this.heartbeatFrequency = 10000; // Reduced from 30s to 10s for faster detection
         
         // Session management
         this.sessionId = this.generateSessionId();
@@ -31,7 +41,10 @@ class NetworkLayer {
         // Event handlers for state-based sync
         this.eventHandlers = new Map();
         
-        console.log(`🌐 NetworkLayer initialized (tab: ${this.tabId})`);
+        // Setup page visibility and focus handling for smart reconnection
+        this.setupVisibilityHandling();
+        
+        // NetworkLayer initialized
     }
     
     /**
@@ -54,10 +67,10 @@ class NetworkLayer {
      * Initialize the network layer and connect to server
      */
     initialize() {
-        console.log('🌐 NetworkLayer.initialize() called');
+        // NetworkLayer.initialize() called
         // Connect to the server
         this.connect().catch(error => {
-            console.error('❌ Failed to connect during initialization:', error);
+            console.error('Failed to connect during initialization:', error);
         });
     }
     
@@ -69,12 +82,12 @@ class NetworkLayer {
             try {
                 // Check if Socket.IO is available
                 if (typeof io === 'undefined') {
-                    console.error('❌ Socket.IO not loaded - cannot connect');
+                    console.error('Socket.IO not loaded - cannot connect');
                     reject(new Error('Socket.IO not available'));
                     return;
                 }
                 
-                console.log(`🔌 Attempting to connect to ${this.serverUrl}...`);
+                console.log(`Attempting to connect to ${this.serverUrl}...`);
                 
                 // Update status to connecting
                 if (this.app.updateConnectionStatus) {
@@ -83,9 +96,8 @@ class NetworkLayer {
                 
                 this.socket = io(this.serverUrl, {
                     transports: ['websocket'],
-                    reconnection: true,
-                    reconnectionDelay: this.reconnectDelay,
-                    reconnectionDelayMax: this.maxReconnectDelay
+                    reconnection: false, // Disable Socket.IO reconnection - we'll handle it ourselves
+                    timeout: 20000 // 20 second connection timeout
                 });
                 
                 this.setupEventHandlers();
@@ -93,7 +105,9 @@ class NetworkLayer {
                 this.socket.on('connect', () => {
                     this.isConnected = true;
                     this.reconnectAttempts = 0;
-                    console.log('✅ Connected to server');
+                    this.customReconnectAttempts = 0; // Reset custom counter
+                    this.clearCustomReconnectTimer(); // Stop custom reconnection attempts
+                    console.log('Connected to server');
                     
                     // Start heartbeat monitoring
                     this.startHeartbeat();
@@ -110,16 +124,34 @@ class NetworkLayer {
                         userId: this.currentUser?.id
                     });
                     
+                    // If we were in a project before disconnection, rejoin it
+                    if (this.currentProject && this.currentUser) {
+                        console.log(`🔄 Auto-rejoining project ${this.currentProject.id} after reconnection`);
+                        setTimeout(() => {
+                            this.joinProject(
+                                this.currentProject.id,
+                                this.currentProject.canvasId || 'default',
+                                this.currentUser.id,
+                                this.currentUser.username
+                            );
+                        }, 100); // Small delay to ensure session_init is processed first
+                    }
+                    
                     resolve();
                 });
                 
                 this.socket.on('connect_error', (error) => {
                     this.reconnectAttempts++;
-                    console.error('❌ Connection error:', error.message);
+                    console.error('Connection error:', error.message);
                     
-                    // Update status to error
+                    // Update status to error with reconnection info
                     if (this.app.updateConnectionStatus) {
-                        this.app.updateConnectionStatus('error');
+                        this.app.updateConnectionStatus('error', `Connection failed - retrying automatically`);
+                    }
+                    
+                    // Start custom reconnection if not already running
+                    if (this.customReconnectionEnabled && !this.isManuallyDisconnected) {
+                        this.startCustomReconnection();
                     }
                     
                     if (this.reconnectAttempts === 1) {
@@ -138,29 +170,24 @@ class NetworkLayer {
      */
     setupEventHandlers() {
         // Connection events
-        this.socket.on('disconnect', () => {
+        this.socket.on('disconnect', (reason) => {
             this.isConnected = false;
-            console.log('🔌 Disconnected from server');
+            console.log('Disconnected from server. Reason:', reason);
             
             // Stop heartbeat monitoring
             this.stopHeartbeat();
             
-            this.app.updateConnectionStatus('disconnected');
-        });
-        
-        this.socket.on('reconnect', () => {
-            console.log('🔄 Reconnected to server');
+            // Update status with reconnection info
+            this.app.updateConnectionStatus('disconnected', 'Attempting to reconnect...');
             
-            // Restart heartbeat monitoring
-            this.startHeartbeat();
-            
-            this.app.updateConnectionStatus('connected');
-            
-            // Re-join current project if any
-            if (this.currentProject) {
-                this.joinProject(this.currentProject.id);
+            // Start custom reconnection if not manually disconnected
+            if (this.customReconnectionEnabled && !this.isManuallyDisconnected) {
+                this.startCustomReconnection();
             }
         });
+        
+        // Note: 'reconnect' event removed since we disabled Socket.IO's auto-reconnection
+        // Our custom reconnection logic handles this in the 'connect' event
         
         // Operation events - DISABLED in favor of state sync
         // this.socket.on('canvas_operation', (data) => {
@@ -169,19 +196,19 @@ class NetworkLayer {
         
         // Project events
         this.socket.on('project_joined', (data) => {
-            console.log('📁 Received project_joined event:', data);
+            // Received project_joined event
             // Server sends data.project object, not data.projectId
             if (data.project && data.project.id) {
                 this.currentProject = { id: data.project.id };
-                console.log('✅ Current project set to:', this.currentProject);
+                // Current project set
                 
                 // Request full state sync after joining project
                 if (this.app.stateSyncManager) {
-                    console.log('📥 Requesting initial state sync...');
+                    // Requesting initial state sync
                     this.app.stateSyncManager.requestFullSync();
                 }
             } else {
-                console.warn('⚠️ Invalid project_joined data:', data);
+                console.warn('Invalid project_joined data:', data);
             }
             
             // Forward to local event handlers (e.g., ClientUndoManager)
@@ -189,7 +216,7 @@ class NetworkLayer {
         });
         
         this.socket.on('project_left', () => {
-            console.log('📁 Left project');
+            // Left project
             this.currentProject = null;
         });
         
@@ -222,7 +249,7 @@ class NetworkLayer {
         
         // Undo/redo events
         this.socket.on('undo_state_update', (data) => {
-            console.log('📨 NetworkLayer: Forwarding undo_state_update:', data);
+            // NetworkLayer: Forwarding undo_state_update
             this.emitLocal('undo_state_update', data);
         });
         
@@ -244,13 +271,13 @@ class NetworkLayer {
         
         // Undo history event for debug HUD
         this.socket.on('undo_history', (data) => {
-            console.log('📨 NetworkLayer: Forwarding undo_history:', data);
+            // NetworkLayer: Forwarding undo_history
             this.emitLocal('undo_history', data);
         });
         
         // Error events
         this.socket.on('error_message', (data) => {
-            console.error('⚠️ Server error:', data.message);
+            console.error('Server error:', data.message);
             this.app.showError(data.message);
         });
         
@@ -338,7 +365,7 @@ class NetworkLayer {
         
         // Server expects 'canvas_operation' not 'operation'
         this.socket.emit('canvas_operation', data);
-        console.log(`📤 Broadcast: ${command.type}`);
+        // Broadcast operation
     }
     
     /**
@@ -347,11 +374,11 @@ class NetworkLayer {
     handleIncomingOperation(data) {
         // Ignore our own operations (by tab ID)
         if (data.operation.tabId === this.tabId) {
-            console.log(`🔄 Ignoring own operation: ${data.operation.type}`);
+            // Ignoring own operation
             return;
         }
         
-        console.log(`📥 Received: ${data.operation.type} from tab ${data.operation.tabId}`);
+        // Received remote operation
         
         // Create command from remote data
         try {
@@ -382,7 +409,7 @@ class NetworkLayer {
      * Handle state synchronization
      */
     handleStateSync(data) {
-        console.log('🔄 Received state sync');
+        // Received state sync
         
         if (this.app.handleStateSync) {
             this.app.handleStateSync(data.state);
@@ -393,7 +420,7 @@ class NetworkLayer {
      * Join a project
      */
     joinProject(projectId, canvasId = null) {
-        console.log(`📁 NetworkLayer.joinProject called: projectId=${projectId}, canvasId=${canvasId}`);
+        // NetworkLayer.joinProject called
         
         if (!this.isConnected) {
             console.warn('Cannot join project: not connected');
@@ -414,15 +441,15 @@ class NetworkLayer {
             displayName: this.currentUser?.displayName || username
         };
         
-        console.log('📤 Emitting join_project:', data);
+        // Emitting join_project
         this.socket.emit('join_project', data);
         
         // Add a timeout check
         setTimeout(() => {
             if (!this.currentProject || this.currentProject.id != projectId) {
-                console.warn(`⚠️ Project ${projectId} not joined after 2 seconds. Current project:`, this.currentProject);
+                console.warn(`Project ${projectId} not joined after 2 seconds. Current project:`, this.currentProject);
             } else {
-                console.log(`✅ Successfully joined project ${projectId}`);
+                console.log(`Successfully joined project ${projectId}`);
             }
         }, 2000);
     }
@@ -474,7 +501,15 @@ class NetworkLayer {
     /**
      * Disconnect from server
      */
-    disconnect() {
+    disconnect(manual = false) {
+        this.isManuallyDisconnected = manual;
+        
+        // Stop custom reconnection if manually disconnecting
+        if (manual) {
+            this.clearCustomReconnectTimer();
+            this.customReconnectionEnabled = false;
+        }
+        
         if (this.socket) {
             this.socket.disconnect();
             this.socket = null;
@@ -498,12 +533,12 @@ class NetworkLayer {
         // Send initial ping immediately
         this.sendPing();
         
-        // Set up regular pings every 30 seconds
+        // Set up regular pings using improved frequency (10 seconds)
         this.heartbeatInterval = setInterval(() => {
             this.sendPing();
-        }, 30000);
+        }, this.heartbeatFrequency);
         
-        console.log('💓 Heartbeat monitoring started');
+        // Heartbeat monitoring started
     }
     
     /**
@@ -521,7 +556,7 @@ class NetworkLayer {
         }
         
         this.connectionQuality = 'unknown';
-        console.log('💓 Heartbeat monitoring stopped');
+        // Heartbeat monitoring stopped
     }
     
     /**
@@ -537,13 +572,13 @@ class NetworkLayer {
         
         // Set timeout for pong response (10 seconds)
         this.heartbeatTimeout = setTimeout(() => {
-            console.warn('💓 Ping timeout - connection may be degraded');
+            console.warn('Ping timeout - connection may be degraded');
             this.connectionQuality = 'critical';
             this.updateConnectionQuality();
             
             // If we haven't received a pong in 30 seconds, consider connection lost
             if (this.lastPongTime && (Date.now() - this.lastPongTime > 30000)) {
-                console.error('💓 Connection appears dead, triggering manual reconnect');
+                console.error('Connection appears dead, triggering manual reconnect');
                 this.socket.disconnect();
                 this.socket.connect();
             }
@@ -593,7 +628,7 @@ class NetworkLayer {
             this.updateConnectionQuality();
         }
         
-        console.log(`💓 Pong received: ${latency}ms (avg: ${Math.round(avgLatency)}ms, quality: ${this.connectionQuality})`);
+        // Pong received
     }
     
     /**
@@ -623,19 +658,166 @@ class NetworkLayer {
     }
     
     /**
+     * Setup page visibility and focus handling for smart reconnection
+     */
+    setupVisibilityHandling() {
+        // Reconnect when page becomes visible after being hidden
+        document.addEventListener('visibilitychange', () => {
+            if (!document.hidden && !this.isConnected && !this.isManuallyDisconnected) {
+                console.log('Page became visible - attempting reconnection');
+                this.attemptReconnection('Page visibility');
+            }
+        });
+        
+        // Reconnect when window gains focus
+        window.addEventListener('focus', () => {
+            if (!this.isConnected && !this.isManuallyDisconnected) {
+                console.log('Window gained focus - attempting reconnection');
+                this.attemptReconnection('Window focus');
+            }
+        });
+        
+        // Reconnect when browser reports we're back online
+        window.addEventListener('online', () => {
+            if (!this.isConnected && !this.isManuallyDisconnected) {
+                console.log('Browser reports online - attempting reconnection');
+                this.attemptReconnection('Network online');
+            }
+        });
+    }
+    
+    /**
+     * Start custom reconnection with exponential backoff
+     */
+    startCustomReconnection() {
+        if (this.customReconnectInterval || this.isManuallyDisconnected) {
+            return; // Already running or manually disconnected
+        }
+        
+        // Starting custom reconnection logic
+        this.scheduleNextReconnection();
+    }
+    
+    /**
+     * Schedule the next reconnection attempt with exponential backoff
+     */
+    scheduleNextReconnection() {
+        this.clearCustomReconnectTimer();
+        
+        this.customReconnectAttempts++;
+        
+        // Calculate delay with exponential backoff and jitter
+        const baseDelay = Math.min(
+            this.baseReconnectDelay * Math.pow(2, Math.min(this.customReconnectAttempts - 1, 5)),
+            this.maxCustomReconnectDelay
+        );
+        
+        // Add jitter (±25% randomness)
+        const jitter = baseDelay * 0.25 * (Math.random() * 2 - 1);
+        const delay = Math.max(1000, baseDelay + jitter);
+        
+        // Scheduling reconnection attempt
+        
+        // Update status with attempt info
+        if (this.app.updateConnectionStatus) {
+            this.app.updateConnectionStatus('disconnected', 
+                `Reconnecting... (attempt ${this.customReconnectAttempts})`);
+        }
+        
+        this.customReconnectInterval = setTimeout(() => {
+            this.attemptReconnection(`Scheduled attempt ${this.customReconnectAttempts}`);
+        }, delay);
+    }
+    
+    /**
+     * Attempt to reconnect to the server
+     */
+    async attemptReconnection(reason = 'Manual') {
+        if (this.isConnected || this.isManuallyDisconnected) {
+            return;
+        }
+        
+        console.log(`Attempting reconnection: ${reason}`);
+        
+        try {
+            // Update status to show we're trying
+            if (this.app.updateConnectionStatus) {
+                this.app.updateConnectionStatus('connecting', 
+                    `Reconnecting... (${reason.toLowerCase()})`);
+            }
+            
+            await this.connect();
+            
+            // Connection successful - reconnection logic will be stopped by connect event
+            console.log('Reconnection successful');
+            
+        } catch (error) {
+            console.error('Reconnection failed:', error.message);
+            
+            // Schedule next attempt if custom reconnection is enabled
+            if (this.customReconnectionEnabled && !this.isManuallyDisconnected) {
+                this.scheduleNextReconnection();
+            }
+        }
+    }
+    
+    /**
+     * Manually trigger a reconnection attempt (for user-initiated retries)
+     */
+    manualReconnect() {
+        console.log('Manual reconnection triggered by user');
+        this.customReconnectAttempts = 0; // Reset attempt counter for manual retries
+        this.isManuallyDisconnected = false; // Allow reconnection
+        this.customReconnectionEnabled = true; // Re-enable custom reconnection
+        
+        this.clearCustomReconnectTimer();
+        this.attemptReconnection('Manual user request');
+    }
+    
+    /**
+     * Clear custom reconnection timer
+     */
+    clearCustomReconnectTimer() {
+        if (this.customReconnectInterval) {
+            clearTimeout(this.customReconnectInterval);
+            this.customReconnectInterval = null;
+        }
+    }
+    
+    /**
+     * Get connection and reconnection status
+     */
+    getConnectionInfo() {
+        return {
+            isConnected: this.isConnected,
+            customReconnectAttempts: this.customReconnectAttempts,
+            isReconnecting: !!this.customReconnectInterval,
+            isManuallyDisconnected: this.isManuallyDisconnected,
+            connectionQuality: this.connectionQuality,
+            lastPongTime: this.lastPongTime,
+            avgLatency: this.pingLatencies.length > 0 
+                ? Math.round(this.pingLatencies.reduce((a, b) => a + b, 0) / this.pingLatencies.length)
+                : null
+        };
+    }
+    
+    /**
      * Cleanup resources
      */
     cleanup() {
-        console.log('🧹 Cleaning up NetworkLayer...');
+        // Cleaning up NetworkLayer
         
         // Stop heartbeat
         this.stopHeartbeat();
+        
+        // Stop custom reconnection
+        this.clearCustomReconnectTimer();
         
         // Clear event handlers
         this.eventHandlers.clear();
         
         // Disconnect socket
-        this.disconnect();
+        this.disconnect(true); // Manual disconnect to prevent reconnection
         
         // Clear references
         this.app = null;

@@ -27,16 +27,26 @@ class StateSyncManager {
         // Optimistic update support
         this.optimisticEnabled = true;
         
+        // Debug logging control
+        this.debugLevel = 0; // 0 = errors only, 1 = warnings, 2 = info, 3 = verbose
+        
         this.setupHandlers();
         
         // Start periodic cleanup of orphaned temporary nodes
         this.startPeriodicCleanup();
         
-        console.log('🔄 StateSyncManager initialized');
+    }
+    
+    /**
+     * Debug logging with level control
+     */
+    debugLog(level, message, ...args) {
+        if (this.debugLevel >= level) {
+            console.log(message, ...args);
+        }
     }
     
     setupHandlers() {
-        console.log('🔄 Setting up StateSyncManager handlers');
         
         // Listen for server state updates
         this.network.on('state_update', this.handleServerStateUpdate.bind(this));
@@ -50,25 +60,23 @@ class StateSyncManager {
         // Listen for full state sync
         this.network.on('full_state_sync', this.handleFullStateSync.bind(this));
         
-        console.log('✅ StateSyncManager handlers registered');
     }
     
     /**
      * Execute an operation with server-authoritative sync
      */
     async executeOperation(command) {
+        // Check if we're connected and joined to a project
+        if (!this.network.isConnected) {
+            throw new Error('Not connected to server - operation cannot be executed');
+        }
+        
+        if (!this.network.currentProject) {
+            throw new Error('Not joined to any project - operation cannot be executed');
+        }
+        
         const operationId = this.generateOperationId();
         
-        // DIAGNOSTIC: Log execution start
-        console.log('🔥 EXECUTEOP START:', {
-            type: command.type,
-            origin: command.origin,
-            optimisticEnabled: this.optimisticEnabled,
-            willCallOptimistic: this.optimisticEnabled && command.origin === 'local',
-            graphNodeCount: this.app?.graph?.nodes?.length || 0,
-            operationId: operationId,
-            timestamp: Date.now()
-        });
         
         // Store operation as pending
         this.pendingOperations.set(operationId, {
@@ -101,9 +109,7 @@ class StateSyncManager {
                     
                     if (context.graph && context.canvas) {
                         try {
-                            console.log(`📝 Preparing undo data for ${command.type}`);
                             await command.prepareUndoData(context);
-                            console.log('✅ Undo data prepared:', JSON.stringify(command.undoData, null, 2));
                         } catch (error) {
                             console.error(`❌ Error preparing undo data for ${command.type}:`, error);
                         }
@@ -116,9 +122,7 @@ class StateSyncManager {
             let tempNodeIds = [];
             
             if (this.optimisticEnabled && command.origin === 'local') {
-                console.log('🔮 ABOUT TO CALL applyOptimistic - graph has', this.app?.graph?.nodes?.length, 'nodes');
                 const optimisticResult = await this.applyOptimistic(command);
-                console.log('✅ applyOptimistic DONE - graph now has', this.app?.graph?.nodes?.length, 'nodes');
                 const pending = this.pendingOperations.get(operationId);
                 pending.rollbackData = optimisticResult.rollbackData;
                 pending.localResult = optimisticResult.localResult;
@@ -170,7 +174,8 @@ class StateSyncManager {
                             await command.prepareUndoData(context);
                             if (command.undoData) {
                                 console.log(`✅ Generated undo data for ${command.type}`);
-                            } else {
+                            } else if (!['image_upload_complete', 'sync_complete'].includes(command.type)) {
+                                // Only warn for commands that should have undo data
                                 console.warn(`⚠️ prepareUndoData() did not generate undoData for ${command.type}`);
                             }
                         } else {
@@ -461,7 +466,7 @@ class StateSyncManager {
                 // Check if server node already exists
                 const existingNode = this.app.graph.getNodeById(nodeData.id);
                 if (existingNode) {
-                    console.log(`⏭️ Skipping server node ${nodeData.id} - already exists`);
+                    this.debugLog(3, `⏭️ Skipping server node ${nodeData.id} - already exists`);
                     continue;
                 }
                 addedNodeIds.push(nodeData.id);
@@ -491,44 +496,46 @@ class StateSyncManager {
                               this.findTemporaryNodeAtPosition(nodeData.pos, nodeData.type);
                 }
                 if (tempNode && !processedTempNodes.has(tempNode.id)) {
-                    console.log(`🔄 Found temporary node to replace: temp:${tempNode.id} -> server:${nodeData.id} at [${nodeData.pos[0]}, ${nodeData.pos[1]}]`);
+                    this.debugLog(2, `🔄 Updating temporary node in place: temp:${tempNode.id} -> server:${nodeData.id} at [${nodeData.pos[0]}, ${nodeData.pos[1]}]`);
                     processedTempNodes.add(tempNode.id);
                     
-                    // Transfer any important state from temp node
-                    const wasSelected = this.app.graphCanvas?.selection?.isSelected(tempNode);
+                    // Update the existing node in place to prevent flickering
+                    console.log(`🔄 Updating node ${tempNode.id} with server data (preventing flicker)`);
                     
-                    // Remove temporary node
-                    if (this.app.graphCanvas?.selection) {
-                        this.app.graphCanvas.selection.deselectNode(tempNode);
+                    // Update node properties while preserving visual state
+                    const oldId = tempNode.id;
+                    tempNode.id = nodeData.id; // Update to server ID
+                    tempNode.properties = { ...tempNode.properties, ...nodeData.properties };
+                    
+                    // Update positions if they've changed
+                    if (nodeData.pos && (tempNode.pos[0] !== nodeData.pos[0] || tempNode.pos[1] !== nodeData.pos[1])) {
+                        tempNode.pos = [...nodeData.pos];
                     }
-                    this.app.graph.remove(tempNode);
+                    
+                    // Update size if provided
+                    if (nodeData.size && (tempNode.size[0] !== nodeData.size[0] || tempNode.size[1] !== nodeData.size[1])) {
+                        tempNode.size = [...nodeData.size];
+                    }
+                    
+                    // Clear sync pending flags since we've successfully synced
+                    delete tempNode._syncPending;
+                    delete tempNode._operationId;
                     
                     // Mark as replaced in tracker
-                    if (this.operationTracker.isNodeTracked(tempNode.id)) {
-                        this.operationTracker.markNodeReplaced(tempNode.id);
+                    if (this.operationTracker.isNodeTracked(oldId)) {
+                        this.operationTracker.markNodeReplaced(oldId);
                     }
                     
-                    // Create server node
-                    console.log(`➕ Adding server node: ${nodeData.id}:${nodeData.type} at [${nodeData.pos[0]}, ${nodeData.pos[1]}]`);
-                    const node = await this.createNodeFromData(nodeData);
-                    if (node) {
-                        // Clear sync pending flags since we've successfully synced
-                        delete node._syncPending;
-                        delete node._operationId;
-                        
-                        this.app.graph.add(node);
-                        console.log(`✅ Server node added successfully: ${node.id} (total nodes: ${this.app.graph.nodes.length})`);
-                        
-                        // Notify upload coordinator for image nodes
-                        if (node.type === 'media/image' && this.app.imageUploadCoordinator) {
-                            this.app.imageUploadCoordinator.onImageNodeCreated(node);
-                        }
-                        
-                        // Restore selection if it was selected
-                        if (wasSelected && this.app.graphCanvas?.selection) {
-                            this.app.graphCanvas.selection.selectNode(node, true);
-                        }
+                    // No need to remove/add - node is already in graph and updated
+                    const node = tempNode; // Reference for the rest of the code
+                    console.log(`✅ Server node updated in place: ${node.id} (total nodes: ${this.app.graph.nodes.length})`);
+                    
+                    // Notify upload coordinator for image nodes
+                    if (node.type === 'media/image' && this.app.imageUploadCoordinator) {
+                        this.app.imageUploadCoordinator.onImageNodeCreated(node);
                     }
+                    
+                    // Selection is preserved automatically since we didn't remove the node
                 } else {
                     if (tempNode) {
                         console.log(`⚠️ Temporary node ${tempNode.id} already processed`);
@@ -555,7 +562,7 @@ class StateSyncManager {
             
             // Don't clean up immediately - let the tracker verify all nodes are replaced
             // The periodic cleanup will handle truly orphaned nodes
-            console.log('📊 Server changes applied, tracker will verify replacements');
+            this.debugLog(3, '📊 Server changes applied, tracker will verify replacements');
             
             // Check if we need to restore selection for these nodes
             if (this.app.graphCanvas?._pendingSelectionNodeIds && addedNodeIds.length > 0) {
@@ -574,6 +581,120 @@ class StateSyncManager {
                 
                 // Clear pending selection list
                 delete canvas._pendingSelectionNodeIds;
+                
+                // Mark canvas dirty to ensure selected nodes are visually rendered
+                this.app.graphCanvas.dirty_canvas = true;
+            }
+            
+            // Check if we need to restore selection for duplicated nodes
+            if (this.app.graphCanvas?._pendingDuplicationSelection && operationId && addedNodeIds.length > 0) {
+                const pendingSelection = this.app.graphCanvas._pendingDuplicationSelection.get(operationId);
+                if (pendingSelection && pendingSelection.wasSelected) {
+                    console.log(`🎯 Restoring selection for ${addedNodeIds.length} duplicated nodes from operation ${operationId}`);
+                    
+                    // Clear any existing selection first
+                    this.app.graphCanvas.selection.clear();
+                    
+                    // Select all the newly added nodes from this duplication operation
+                    addedNodeIds.forEach(nodeId => {
+                        const node = this.app.graph.getNodeById(nodeId);
+                        if (node) {
+                            this.app.graphCanvas.selection.selectNode(node, true);
+                            console.log(`✅ Selected duplicated node: ${node.id}`);
+                        }
+                    });
+                    
+                    // Clean up the pending selection entry
+                    this.app.graphCanvas._pendingDuplicationSelection.delete(operationId);
+                    if (this.app.graphCanvas._pendingDuplicationSelection.size === 0) {
+                        delete this.app.graphCanvas._pendingDuplicationSelection;
+                    }
+                    
+                    // Force canvas redraw to show selection
+                    this.app.graphCanvas.dirty_canvas = true;
+                    this.app.graphCanvas.dirty_bgcanvas = true;
+                }
+            }
+            
+            // Check if we need to restore selection for dropped nodes
+            if (this.app.graphCanvas?._pendingDropSelection) {
+                console.log(`🔍 Have _pendingDropSelection:`, this.app.graphCanvas._pendingDropSelection);
+            }
+            if (this.app.graphCanvas?._pendingDropSelection && addedNodeIds.length > 0) {
+                const pendingSelections = this.app.graphCanvas._pendingDropSelection;
+                const now = Date.now();
+                
+                console.log(`🔍 Checking ${pendingSelections.length} pending drop selections for ${addedNodeIds.length} added nodes`);
+                
+                // Look for pending selections that match the current node addition
+                for (let i = pendingSelections.length - 1; i >= 0; i--) {
+                    const pending = pendingSelections[i];
+                    const age = now - pending.timestamp;
+                    
+                    console.log(`🔍 Pending selection ${i}: count=${pending.nodeCount}, age=${age}ms, target=${addedNodeIds.length}`);
+                    
+                    // For dropped nodes, they arrive individually, so we need to accumulate them
+                    // Match by recency and count down the expected nodes
+                    if (age < 10000) {
+                        // Initialize selection tracking if not exists
+                        if (!pending.selectedNodes) {
+                            pending.selectedNodes = [];
+                        }
+                        
+                        // Add the new nodes to our tracking
+                        addedNodeIds.forEach(nodeId => {
+                            if (!pending.selectedNodes.includes(nodeId)) {
+                                pending.selectedNodes.push(nodeId);
+                            }
+                        });
+                        
+                        console.log(`🎯 Accumulated ${pending.selectedNodes.length}/${pending.nodeCount} nodes for pending selection`);
+                        
+                        // If we have all expected nodes, select them all
+                        if (pending.selectedNodes.length >= pending.nodeCount) {
+                            console.log(`🎯 COMPLETE! Restoring selection for ${pending.selectedNodes.length} dropped nodes (age: ${age}ms)`);
+                            
+                            // Clear any existing selection first
+                            this.app.graphCanvas.selection.clear();
+                            
+                            // Select all the accumulated nodes
+                            pending.selectedNodes.forEach(nodeId => {
+                                const node = this.app.graph.getNodeById(nodeId);
+                                if (node) {
+                                    this.app.graphCanvas.selection.selectNode(node, true);
+                                    console.log(`✅ Selected dropped node: ${node.id}`);
+                                } else {
+                                    console.error(`❌ Could not find node: ${nodeId}`);
+                                }
+                            });
+                            
+                            // Remove this pending selection
+                            pendingSelections.splice(i, 1);
+                            
+                            // Clean up if empty
+                            if (pendingSelections.length === 0) {
+                                delete this.app.graphCanvas._pendingDropSelection;
+                            }
+                            
+                            // Force canvas redraw to show selection
+                            this.app.graphCanvas.dirty_canvas = true;
+                            this.app.graphCanvas.dirty_bgcanvas = true;
+                            
+                            break; // Only match one pending selection
+                        }
+                    }
+                }
+                
+                // Clean up old pending selections (older than 30 seconds)
+                const filteredSelections = pendingSelections.filter(p => (now - p.timestamp) < 30000);
+                if (filteredSelections.length !== pendingSelections.length) {
+                    this.app.graphCanvas._pendingDropSelection = filteredSelections;
+                    if (filteredSelections.length === 0) {
+                        delete this.app.graphCanvas._pendingDropSelection;
+                    }
+                }
+            } else if (this.app.graphCanvas?._pendingDropSelection) {
+                console.log(`🔍 Have ${this.app.graphCanvas._pendingDropSelection.length} pending drop selections but ${addedNodeIds.length} added nodes`);
             }
             
             // No longer using NodeSyncValidator - server handles validation gracefully
@@ -600,14 +721,8 @@ class StateSyncManager {
                             delete node._optimisticUpdate;
                         }
                         
-                        console.log(`📊 About to update node ${nodeData.id} with data:`, {
-                            hasRotation: 'rotation' in nodeData,
-                            rotation: nodeData.rotation,
-                            currentRotation: node.rotation,
-                            forceUpdate
-                        });
                         
-                        this.updateNodeFromData(node, nodeData);
+                        this.updateNodeFromData(node, nodeData, forceUpdate);
                         
                         if (forceUpdate) {
                             console.log(`🔄 Force updating node ${nodeData.id} for undo/redo`, {
@@ -708,6 +823,15 @@ class StateSyncManager {
             
             console.log('✅ Full state sync complete');
             
+            // Show success notification
+            if (window.unifiedNotifications) {
+                window.unifiedNotifications.success('Sync complete', {
+                    id: 'manual-sync',
+                    detail: `${state.nodes?.length || 0} nodes synced`,
+                    duration: 2000
+                });
+            }
+            
             // No longer using NodeSyncValidator - server handles validation gracefully
             
         } finally {
@@ -742,7 +866,11 @@ class StateSyncManager {
         node.size = [...nodeData.size];
         node.properties = { ...nodeData.properties };
         node.rotation = nodeData.rotation || 0;
-        node.flags = { ...nodeData.flags };
+        // Merge flags preserving constructor defaults (like hide_title: true)
+        if (nodeData.flags) {
+            // Start with current node flags (preserves constructor defaults)
+            node.flags = { ...node.flags, ...nodeData.flags };
+        }
         if (nodeData.title !== node.title) {
             // console.log(`🔄 Server updating title: "${node.title}" → "${nodeData.title}" for node ${nodeData.id}`);
         }
@@ -789,17 +917,64 @@ class StateSyncManager {
     /**
      * Update node from server data
      */
-    updateNodeFromData(node, nodeData) {
+    updateNodeFromData(node, nodeData, forceUpdate = false) {
         // Check if this node has a recent optimistic update that should be preserved
         if (node._optimisticUpdate) {
             const age = Date.now() - node._optimisticUpdate.timestamp;
             // Skip server updates for recent optimistic updates (within 2 seconds)
             if (age < 2000) {
-                console.log(`⏭️ Skipping server update for node ${node.id} due to recent optimistic ${node._optimisticUpdate.type} update`);
+                this.debugLog(3, `⏭️ Skipping server update for node ${node.id} due to recent optimistic ${node._optimisticUpdate.type} update`);
                 return;
             } else {
                 // Clear old optimistic update flag
                 delete node._optimisticUpdate;
+            }
+        }
+        
+        // Check if this node recently completed an alignment animation
+        if (node._alignmentCompletedAt) {
+            const age = Date.now() - node._alignmentCompletedAt;
+            // Skip position updates for 2 seconds after alignment completion
+            // BUT allow undo/redo operations to override this protection
+            if (age < 2000 && nodeData.pos && !forceUpdate) {
+                // Clear the flag if it's old
+                if (age > 2000) {
+                    delete node._alignmentCompletedAt;
+                }
+                // Still update other properties, just skip position
+                const { pos, ...otherData } = nodeData;
+                nodeData = otherData;
+            } else if (forceUpdate && age < 2000) {
+                this.debugLog(2, `🔄 Allowing undo/redo position update for node ${node.id} despite recent alignment completion`);
+            }
+        }
+        
+        // Check if node is currently being animated
+        if ((node._gridAnimPos || node._animPos) && nodeData.pos) {
+            // For undo/redo operations, we need to handle this carefully
+            if (forceUpdate) {
+                // Check if there's an active alignment animation
+                const alignmentManager = this.app?.graphCanvas?.alignmentManager;
+                const isActiveAnimation = alignmentManager?.gridAlignAnimating || alignmentManager?.autoAlignAnimating;
+                
+                if (isActiveAnimation) {
+                    this.debugLog(2, `⏭️ Preserving animation for node ${node.id} during undo/redo`);
+                    // Don't interfere with active animation, even for undo
+                    const { pos, ...otherData } = nodeData;
+                    nodeData = otherData;
+                } else {
+                    this.debugLog(2, `🔄 Clearing stale animation properties for node ${node.id} during undo/redo`);
+                    // No active animation, these are stale properties - clear them
+                    delete node._gridAnimPos;
+                    delete node._animPos;
+                    delete node._gridAnimVel;
+                    delete node._animVel;
+                }
+            } else {
+                this.debugLog(3, `⏭️ Skipping position update for node ${node.id} - animation in progress`);
+                // Don't update position during animation
+                const { pos, ...otherData } = nodeData;
+                nodeData = otherData;
             }
         }
         
@@ -862,17 +1037,22 @@ class StateSyncManager {
         
         // Update other attributes
         if (nodeData.rotation !== undefined) {
-            console.log(`🔄 updateNodeFromData changing rotation: ${node.rotation} → ${nodeData.rotation} for node ${node.id}`);
             node.rotation = nodeData.rotation;
         }
         
         if (nodeData.flags) {
-            Object.assign(node.flags, nodeData.flags);
+            // Only override specific flags that are explicitly provided
+            // This preserves constructor defaults (like hide_title: true) for new nodes
+            for (const [key, value] of Object.entries(nodeData.flags)) {
+                if (value !== undefined) {
+                    node.flags[key] = value;
+                }
+            }
         }
         
         if (nodeData.title !== undefined) {
             if (nodeData.title !== node.title) {
-                console.log(`🔄 updateNodeFromData changing title: "${node.title}" → "${nodeData.title}" for node ${node.id}`);
+                this.debugLog(3, `🔄 updateNodeFromData changing title: "${node.title}" → "${nodeData.title}" for node ${node.id}`);
             }
             node.title = nodeData.title;
         }
@@ -880,6 +1060,11 @@ class StateSyncManager {
         // Update aspect ratio
         if (nodeData.aspectRatio !== undefined) {
             node.aspectRatio = nodeData.aspectRatio;
+        }
+        
+        // Invalidate selection bounding box cache if this node is selected
+        if (this.app?.graphCanvas?.selection?.isSelected(node)) {
+            this.app.graphCanvas.selection.invalidateBoundingBox();
         }
     }
     
@@ -1013,7 +1198,27 @@ class StateSyncManager {
      * Handle operation rejection
      */
     handleOperationRejected(data) {
-        // Handled by waitForServerResponse
+        console.warn('🚫 Operation rejected by server:', data);
+        
+        // Check if rejection is due to authentication issues
+        if (data.error === 'Not authenticated' || data.error === 'Not authenticated for this project') {
+            console.warn('🔐 Authentication lost - attempting to rejoin project');
+            
+            // Try to rejoin the project after a short delay
+            if (this.network.currentProject && this.network.currentUser) {
+                setTimeout(() => {
+                    console.log('🔄 Rejoining project due to authentication error');
+                    this.network.joinProject(
+                        this.network.currentProject.id,
+                        this.network.currentProject.canvasId || 'default',
+                        this.network.currentUser.id,
+                        this.network.currentUser.username
+                    );
+                }, 500);
+            }
+        }
+        
+        // Handled by waitForServerResponse for operation-specific logic
     }
     
     /**
@@ -1025,16 +1230,26 @@ class StateSyncManager {
         
         console.log('🧹 Cleaning up optimistic operation:', command.type, operationId);
         
-        // For node creation: remove the optimistic node so server node can be added cleanly
-        if (command.type === 'node_create') {
+        // For node creation/duplication: handle optimistic nodes before server nodes arrive
+        if (command.type === 'node_create' || command.type === 'node_duplicate' || command.type === 'node_paste') {
             // Find any nodes that were added optimistically
             const currentNodes = this.app.graph.nodes.slice(); // Make a copy to iterate safely
             const nodesBeforeCleanup = currentNodes.length;
+            
+            // Track which optimistic nodes were selected (for duplication/paste)
+            const selectedOptimisticNodeIds = [];
             
             for (const node of currentNodes) {
                 // Remove nodes that weren't in the rollback state (i.e., were added optimistically)
                 const wasInRollback = pending.rollbackData.nodes?.some(rollbackNode => rollbackNode.id === node.id);
                 if (!wasInRollback) {
+                    // For duplicate/paste operations, track if this node was selected
+                    if ((command.type === 'node_duplicate' || command.type === 'node_paste') && 
+                        this.app.graphCanvas?.selection?.isSelected(node)) {
+                        selectedOptimisticNodeIds.push(node.id);
+                        console.log(`📌 Optimistic node ${node.id} was selected - will restore selection`);
+                    }
+                    
                     console.log(`🗑️ Removing optimistic node: ${node.id}:${node.type} (created at ${node.pos[0]}, ${node.pos[1]})`);
                     // Also remove from selection to prevent issues
                     if (this.app.graphCanvas.selection) {
@@ -1044,12 +1259,22 @@ class StateSyncManager {
                 }
             }
             
-            const nodesAfterCleanup = this.app.graph.nodes.length;
-            console.log(`🧹 Cleanup complete: removed ${nodesBeforeCleanup - nodesAfterCleanup} optimistic nodes`);
+            // For duplicate/paste operations, prepare to select the server nodes when they arrive
+            if ((command.type === 'node_duplicate' || command.type === 'node_paste') && 
+                selectedOptimisticNodeIds.length > 0 && pending.localResult?.nodes) {
+                // The server will send nodes in the same order as we created them locally
+                // Store this information to restore selection when server nodes arrive
+                if (!this.app.graphCanvas._pendingDuplicationSelection) {
+                    this.app.graphCanvas._pendingDuplicationSelection = new Map();
+                }
+                this.app.graphCanvas._pendingDuplicationSelection.set(operationId, {
+                    nodeCount: pending.localResult.nodes.length,
+                    wasSelected: true
+                });
+            }
         }
         
         // For other operations, rollback data handling may be different
-        // but for now, creation is the main culprit for phantom nodes
     }
     
     /**
@@ -1159,7 +1384,7 @@ class StateSyncManager {
         
         // Log diagnostic info if we have many temp nodes
         if (tempNodeCount > 10) {
-            console.log(`📊 Temp node status: ${tempNodeCount} total (${trackedCount} tracked, ${untrackedCount} untracked), cleaning ${nodesToClean.length}`);
+            this.debugLog(2, `📊 Temp node status: ${tempNodeCount} total (${trackedCount} tracked, ${untrackedCount} untracked), cleaning ${nodesToClean.length}`);
         }
         
         if (nodesToClean.length > 0) {
@@ -1176,7 +1401,7 @@ class StateSyncManager {
         // Log tracker stats periodically
         if (Math.random() < 0.1) { // 10% chance
             const stats = this.operationTracker.getStats();
-            console.log('📊 Operation Tracker Stats:', stats);
+            this.debugLog(2, '📊 Operation Tracker Stats:', stats);
         }
     }
     

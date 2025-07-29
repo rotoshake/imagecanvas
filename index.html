@@ -8,8 +8,8 @@
     <link rel="stylesheet" href="css/app.css">
     <style>
         /* Inline critical styles to prevent white flash */
-        body, html { background-color: #222; margin: 0; padding: 0; }
-        #mycanvas { background-color: #222; }
+        body, html { background-color: var(--color-backgrounds-canvas-primary, #222); margin: 0; padding: 0; }
+        #mycanvas { background-color: var(--color-backgrounds-canvas-primary, #222); }
     </style>
 </head>
 <body>
@@ -21,11 +21,16 @@
         <!-- Configuration -->
         <script type="text/javascript" src="js/utils/config.js"></script>
         <script type="text/javascript" src="js/utils/font-config.js"></script>
+        <script type="text/javascript" src="js/utils/colors.js"></script>
+        <script type="text/javascript" src="js/utils/image-dimensions.js"></script>
+        <script type="text/javascript" src="js/utils/image-webp-converter.js"></script>
+        <script type="text/javascript" src="js/utils/WorkerImageProcessor.js"></script>
 
         <!-- Utilities -->
         <script type="text/javascript" src="js/utils/utils.js"></script>
         <script type="text/javascript" src="js/utils/state.js"></script>
         <script type="text/javascript" src="js/utils/cache.js"></script>
+        <script type="text/javascript" src="js/utils/file-hash.js"></script>
         <script type="text/javascript" src="js/utils/undo-optimization.js"></script>
         <script type="text/javascript" src="js/utils/ImageLoadManager.js"></script>
         <script type="text/javascript" src="js/utils/IndexedDBThumbnailStore.js"></script>
@@ -44,6 +49,9 @@
         <script type="text/javascript" src="js/core/BulkOperationManager.js"></script>
         <script type="text/javascript" src="js/core/GraphCircularReferenceResolver.js"></script>
         <script type="text/javascript" src="js/core/ImageResourceCache.js"></script>
+        <script type="text/javascript" src="js/core/MemoryManager.js"></script>
+        <script type="text/javascript" src="js/core/OffscreenRenderCache.js"></script>
+        <script type="text/javascript" src="js/core/PerformanceMonitor.js"></script>
         <script type="text/javascript" src="js/core/LocalFirstOperations.js"></script>
         <script type="text/javascript" src="js/core/NavigationStateManager.js"></script>
         <script type="text/javascript" src="js/core/OperationPersistence.js"></script>
@@ -57,6 +65,8 @@
         <script type="text/javascript" src="js/core/ImageUploadCoordinator.js"></script>
         <script type="text/javascript" src="js/core/GalleryViewManager.js"></script>
         <script type="text/javascript" src="js/core/BackgroundSyncManager.js"></script>
+        <!-- Temporarily disabled for performance testing -->
+        <!-- <script type="text/javascript" src="js/core/ThumbnailPreloader.js"></script> -->
 
         <!-- Node classes -->
         <script type="text/javascript" src="js/nodes/base-node.js"></script>
@@ -87,7 +97,6 @@
         <script type="text/javascript" src="js/ui/canvas-navigator.js"></script>
         <script type="text/javascript" src="js/ui/connection-status.js"></script>
         <script type="text/javascript" src="js/ui/floating-properties-inspector.js"></script>
-        <script type="text/javascript" src="js/ui/UndoDebugHUD.js"></script>
         <script type="text/javascript" src="js/ui/unified-notifications.js"></script>
         
         <!-- App Startup -->

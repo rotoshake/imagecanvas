@@ -4,7 +4,6 @@
 
 class ImageCanvasApp {
     constructor(canvasElement) {
-        console.log('[STARTUP_TRACE] ImageCanvasApp constructor started');
         this.canvas = canvasElement;
         this.graph = new LGraph();
         this.graphCanvas = new LGraphCanvas(this.canvas, this.graph);
@@ -14,7 +13,6 @@ class ImageCanvasApp {
         this.backgroundSyncManager = null; // Will be initialized after network layer
         
         this.init();
-        console.log('[STARTUP_TRACE] ImageCanvasApp constructor finished');
     }
     
     async init() {
@@ -24,6 +22,15 @@ class ImageCanvasApp {
             // Initialize caching systems
             await window.imageCache.init();
             window.thumbnailCache = new ThumbnailCache();
+            
+            // Initialize memory management
+            window.memoryManager = new MemoryManager();
+            
+            // Initialize offscreen render cache
+            window.offscreenRenderCache = new OffscreenRenderCache();
+            
+            // Initialize performance monitor
+            this.performanceMonitor = new PerformanceMonitor();
             
             // Initialize image resource cache for deduplication
             this.imageResourceCache = new ImageResourceCache();
@@ -42,12 +49,7 @@ class ImageCanvasApp {
             NodeFactory.registerNodeType('media/text', TextNode);
             
             // State will be loaded from server when joining a project
-            // No local state loading needed with server-authoritative sync
-            console.log('📥 State will be loaded from server');
-            
             // Collaborative features are now handled by CollaborativeArchitecture
-            // which is automatically initialized by AutoInit.js
-            console.log('🤝 Collaborative features handled by new architecture');
             
             // Setup auto-save
             this.setupAutoSave();
@@ -68,7 +70,6 @@ class ImageCanvasApp {
     
     setupAutoSave() {
         // Auto-save disabled - server handles all persistence with state sync
-        console.log('💾 Client-side auto-save disabled (server-authoritative mode)');
     }
     
     setupCleanup() {
@@ -126,42 +127,7 @@ class ImageCanvasApp {
     }
     
     logControls() {
-        console.log('🎮 Controls:');
-        console.log('- Drag & drop images/videos to add them');
-        console.log('- Drag nodes to move them');
-        console.log('- Alt+drag to duplicate a node');
-        console.log('- Shift+click to multi-select');
-        console.log('- Ctrl/Cmd+C to copy, Ctrl/Cmd+V to paste');
-        console.log('- Ctrl/Cmd+D to duplicate selected');
-        console.log('- Delete/Backspace to remove selected');
-        console.log('- Drag resize handle (bottom-right) to resize');
-        console.log('- Drag rotation handle to rotate');
-        console.log('- Mouse wheel to zoom, drag empty space to pan');
-        console.log('- = (plus) to zoom in 2x, - (minus) to zoom out 0.5x');
-        console.log('- F to fit all/selection to view');
-        console.log('- H to recenter and reset zoom');
-        console.log('- T to create text node');
-        console.log('- Shift+T to toggle title visibility');
-        console.log('- [ ] to adjust layer order');
-        console.log('- Double-click to edit titles/text');
-        console.log('');
-        console.log('🎯 Alignment Features:');
-        console.log('- Shift+drag on empty space (with multi-selection) for auto-align');
-        console.log('- Ctrl/Cmd+Shift+drag for grid alignment');
-        console.log('- 1 key for horizontal alignment');
-        console.log('- 2 key for vertical alignment');
-        console.log('');
-        console.log('🔧 Debug Commands:');
-        console.log('- window.thumbnailCache.getStats() - show thumbnail cache stats');
-        console.log('- window.imageCache - access image cache');
-        console.log('- window.app - access main app instance');
-        console.log('- window.lcanvas - access canvas instance');
-        console.log('');
-        console.log('🤝 Collaborative Features (Phase 2):');
-        console.log('- Real-time multi-user editing with conflict resolution');
-        console.log('- Live cursor and selection sharing');
-        console.log('- Operational transformation for seamless collaboration');
-        console.log('- Check the collaboration panel (top-right) for connection status');
+        console.log('🎮 ImageCanvas ready! Drag & drop images/videos, use Ctrl+D to duplicate, F to fit view.');
     }
     
     /**
@@ -183,13 +149,12 @@ class ImageCanvasApp {
     }
     
     /**
-     * Update connection status (using unified notification system)
+     * Update connection status (using ConnectionStatus component)
      */
     updateConnectionStatus(status, detail) {
-        if (window.unifiedNotifications) {
-            window.unifiedNotifications.updateConnectionStatus(status, detail);
+        if (this.connectionStatus) {
+            this.connectionStatus.updateStatus(status, detail);
         }
-        console.log(`Connection status: ${status}${detail ? ' - ' + detail : ''}`);
     }
     
     /**
@@ -577,8 +542,8 @@ class ImageCanvasApp {
             testCanvas.style.top = '10px';
             testCanvas.style.right = '10px';
             testCanvas.style.zIndex = '10000';
-            testCanvas.style.border = '2px solid #4af';
-            testCanvas.style.background = '#000';
+            testCanvas.style.border = `2px solid ${ColorUtils.get('accents', 'primary')}`;
+            testCanvas.style.background = ColorUtils.get('litegraph', 'background_dark');
             document.body.appendChild(testCanvas);
             
             const ctx = testCanvas.getContext('2d');
@@ -754,7 +719,13 @@ class NodeFactory {
                 }
             }
             if (options.flags) {
-                Object.assign(node.flags, options.flags);
+                // Only override specific flags that are explicitly provided
+                // This preserves constructor defaults (like hide_title: true)
+                for (const [key, value] of Object.entries(options.flags)) {
+                    if (value !== undefined) {
+                        node.flags[key] = value;
+                    }
+                }
             }
             if (options.title) node.title = options.title;
             if (options.rotation !== undefined) node.rotation = options.rotation;
@@ -782,7 +753,6 @@ window.NodeFactory = NodeFactory;
 
 // Global instances
 window.imageCache = new ImageCache();
-window.thumbnailCache = new ThumbnailCache();
 let app = null;
 
 // Custom LiteGraph compatibility object
@@ -796,7 +766,6 @@ window.LiteGraph = {
 // ===================================
 
 async function initApp() {
-    console.log('[STARTUP_TRACE] initApp started');
     const canvasElement = document.getElementById('mycanvas');
     if (!canvasElement) {
         console.error('Canvas element not found');
@@ -811,14 +780,7 @@ async function initApp() {
         window.app = app;
         window.lcanvas = app.graphCanvas;
         
-        // Initialize the collaborative architecture BEFORE other components
-        console.log('[STARTUP_TRACE] Initializing collaborative architecture...');
-        if (window.AutoInit) {
-            window.AutoInit.initialize();
-            console.log('[STARTUP_TRACE] Collaborative architecture initialized');
-        } else {
-            console.error('[STARTUP_TRACE] AutoInit not available!');
-        }
+        // AutoInit runs automatically when loaded - no manual initialization needed
         
         // Now initialize Canvas Navigator (guaranteed to have network layer)
         app.canvasNavigator = new CanvasNavigator(app);
@@ -827,8 +789,11 @@ async function initApp() {
         // Initialize Image Upload Coordinator
         if (window.ImageUploadCoordinator) {
             app.imageUploadCoordinator = new ImageUploadCoordinator(app);
-            console.log('✅ Image Upload Coordinator initialized');
         }
+        
+        // Initialize Connection Status
+        app.connectionStatus = new ConnectionStatus(app);
+        window.connectionStatus = app.connectionStatus;
         
         // Initialize Floating Properties Inspector
         app.propertiesInspector = new FloatingPropertiesInspector(app.graphCanvas);
@@ -851,12 +816,19 @@ async function initApp() {
         window.galleryViewManager = app.galleryViewManager;
         app.graphCanvas.galleryViewManager = app.galleryViewManager;
         
-        // Initialize Undo Debug HUD (if available)
-        if (window.UndoDebugHUD) {
-            app.undoDebugHUD = new window.UndoDebugHUD(app);
-            window.undoDebugHUD = app.undoDebugHUD; // Global access for debugging
-            console.log('🐛 Undo Debug HUD initialized');
-        }
+        // Add event listener for node added to graph
+        app.graph.onNodeAdded = (node) => {
+            console.log(`Node added: ${node.id}`);
+            // If the node has an initSubscriptions method, call it.
+            // This ensures that subscriptions are set up after all managers are initialized.
+            if (typeof node.initSubscriptions === 'function') {
+                node.initSubscriptions();
+            }
+        };
+
+        // Undo/Redo Manager
+        app.undoManager = new ClientUndoManager(app.graph, app.operationPipeline);
+        
         
         // Load last canvas or create default
         // Use more robust initialization that doesn't strictly depend on collaborative architecture
@@ -932,7 +904,6 @@ async function initApp() {
             checkAndLoad();
         }, 500);
         
-        console.log('[STARTUP_TRACE] initApp finished');
     } catch (error) {
         console.error('Failed to initialize application:', error);
     }

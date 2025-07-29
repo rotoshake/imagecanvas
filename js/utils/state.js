@@ -228,7 +228,10 @@ class StateManager {
         node.size = [...nodeData.size];
         node.aspectRatio = nodeData.aspectRatio || 1;
         node.rotation = nodeData.rotation || 0;
-        node.flags = { ...nodeData.flags };
+        // Merge flags preserving constructor defaults (like hide_title: true)
+        if (nodeData.flags) {
+            node.flags = { ...node.flags, ...nodeData.flags };
+        }
         node.title = nodeData.title;
         
         // Update properties carefully for media nodes
@@ -311,7 +314,10 @@ class StateManager {
         node.aspectRatio = nodeData.aspectRatio || 1;
         node.rotation = nodeData.rotation || 0;
         node.properties = { ...nodeData.properties };
-        node.flags = { ...nodeData.flags };
+        // Merge flags preserving constructor defaults (like hide_title: true)
+        if (nodeData.flags) {
+            node.flags = { ...node.flags, ...nodeData.flags };
+        }
         node.title = nodeData.title;
     }
     

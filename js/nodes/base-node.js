@@ -223,7 +223,10 @@ class BaseNode {
     // Lifecycle methods (override in subclasses)
     onResize() {}
     onDrawForeground(ctx) {}
-    onRemoved() {}
+    // Called when the node is removed from the graph
+    onRemoved() {
+        // Base implementation does nothing, can be overridden by subclasses
+    }
 
     /**
      * Prepares data for an undo operation by capturing the node's current state.

@@ -117,6 +117,39 @@ class UnifiedNotifications {
                 font-weight: 400;
             }
             
+            /* Action Buttons */
+            .notification-actions {
+                display: flex;
+                gap: 8px;
+                margin-top: 6px;
+                flex-wrap: wrap;
+            }
+            
+            .notification-action-btn {
+                background: rgba(255, 255, 255, 0.2);
+                border: 1px solid rgba(255, 255, 255, 0.3);
+                color: white;
+                padding: 4px 8px;
+                border-radius: 3px;
+                font-size: 10px;
+                font-weight: 500;
+                cursor: pointer;
+                transition: all 0.2s ease;
+                text-decoration: none;
+                white-space: nowrap;
+            }
+            
+            .notification-action-btn:hover {
+                background: rgba(255, 255, 255, 0.3);
+                border-color: rgba(255, 255, 255, 0.5);
+                transform: translateY(-1px);
+            }
+            
+            .notification-action-btn:active {
+                transform: translateY(0);
+                background: rgba(255, 255, 255, 0.4);
+            }
+            
             /* Type Variations */
             .notification-item.success {
                 background: rgba(76, 175, 80, 0.9);
@@ -250,7 +283,8 @@ class UnifiedNotifications {
             closeable = true,
             id = null,
             icon = null,
-            progress = null  // { current, total, showBar }
+            progress = null,  // { current, total, showBar }
+            actions = null    // [{ text, action }]
         } = options;
         
         const notificationId = id || `notification-${++this.notificationIdCounter}`;
@@ -297,6 +331,7 @@ class UnifiedNotifications {
                 <div class="notification-message">${this.escapeHtml(message)}</div>
                 ${detail ? `<div class="notification-detail">${this.escapeHtml(detail)}</div>` : ''}
                 ${progress ? this.getProgressHTML(progress) : ''}
+                ${actions ? this.getActionsHTML(actions) : ''}
             </div>
         `;
         
@@ -304,6 +339,10 @@ class UnifiedNotifications {
         
         notification.innerHTML = html;
         
+        // Add action button event listeners if actions exist
+        if (actions && actions.length > 0) {
+            this.setupActionHandlers(notification, actions, notificationId);
+        }
         
         // Add to appropriate area
         if (persistent) {
@@ -445,57 +484,6 @@ class UnifiedNotifications {
         }, remainingTime);
     }
     
-    /**
-     * Update network connection status
-     */
-    updateConnectionStatus(status, detail = null) {
-        const statusMessages = {
-            connected: 'Connected to server',
-            connecting: 'Connecting to server...',
-            disconnected: 'Reconnecting...',
-            error: 'Connection error - will retry automatically'
-        };
-        
-        const statusTypes = {
-            connected: 'success',
-            connecting: 'warning',
-            disconnected: 'error',
-            error: 'error'
-        };
-        
-        const durations = {
-            connected: 3000,      // Same as other success messages
-            connecting: 3000,     // Show for 3 seconds
-            disconnected: 0,      // Persistent until reconnected
-            error: 5000          // Longer for errors
-        };
-        
-        
-        // Remove any existing network status notification
-        if (this.notifications.has('network-status')) {
-            // Get the notification data before removing
-            const existingData = this.notifications.get('network-status');
-            if (existingData && existingData.timeout) {
-                clearTimeout(existingData.timeout);
-            }
-            // Force immediate removal without animation
-            if (existingData && existingData.element && existingData.element.parentNode) {
-                existingData.element.parentNode.removeChild(existingData.element);
-            }
-            this.notifications.delete('network-status');
-        }
-        
-        // Show appropriate notification
-        this.show({
-            id: 'network-status',
-            type: statusTypes[status] || 'info',
-            message: statusMessages[status] || status,
-            detail: detail,
-            duration: durations[status] || 3000,
-            persistent: status === 'disconnected',
-            closeable: status !== 'disconnected'
-        });
-    }
     
     /**
      * Show a success notification
@@ -526,6 +514,13 @@ class UnifiedNotifications {
     }
     
     /**
+     * Hide a notification (alias for remove)
+     */
+    hide(id) {
+        this.remove(id);
+    }
+    
+    /**
      * Clear all non-persistent notifications
      */
     clear() {
@@ -533,6 +528,44 @@ class UnifiedNotifications {
             if (!data.persistent) {
                 this.remove(id);
             }
+        });
+    }
+    
+    /**
+     * Generate actions HTML for a notification
+     */
+    getActionsHTML(actions) {
+        if (!actions || !Array.isArray(actions) || actions.length === 0) {
+            return '';
+        }
+        
+        const actionButtons = actions.map((action, index) => {
+            return `<button class="notification-action-btn" data-action-index="${index}">${this.escapeHtml(action.text)}</button>`;
+        }).join('');
+        
+        return `<div class="notification-actions">${actionButtons}</div>`;
+    }
+    
+    /**
+     * Setup action button event handlers
+     */
+    setupActionHandlers(notification, actions, notificationId) {
+        const actionButtons = notification.querySelectorAll('.notification-action-btn');
+        
+        actionButtons.forEach((button, index) => {
+            button.addEventListener('click', (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                
+                const action = actions[index];
+                if (action && typeof action.action === 'function') {
+                    try {
+                        action.action();
+                    } catch (error) {
+                        console.error('Notification action error:', error);
+                    }
+                }
+            });
         });
     }
     

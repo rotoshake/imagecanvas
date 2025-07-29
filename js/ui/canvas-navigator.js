@@ -27,9 +27,7 @@ class CanvasNavigator {
             // Generate a unique user ID based on timestamp and random value
             userId = `user-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
             localStorage.setItem('imageCanvasUserId', userId);
-            console.log('🆔 Generated new user ID:', userId);
         } else {
-            console.log('🆔 Using existing user ID:', userId);
         }
         
         return userId;
@@ -467,9 +465,7 @@ class CanvasNavigator {
         // Cleanup button
         const cleanupBtn = this.panel.querySelector('.cleanup-btn');
         if (cleanupBtn) {
-            console.log('✅ Cleanup button found, adding event listener');
             cleanupBtn.addEventListener('click', () => {
-                console.log('🖱️ Cleanup button clicked (event handler)');
                 this.performCleanup();
             });
         } else {
@@ -520,7 +516,6 @@ class CanvasNavigator {
         
         try {
             // Use general projects endpoint to show all canvases
-            // TODO: Implement proper user authentication later
             const response = await fetch(CONFIG.ENDPOINTS.PROJECTS);
             if (!response.ok) throw new Error('Failed to load canvases');
             
@@ -638,7 +633,6 @@ class CanvasNavigator {
             // Join the project if collaborative
             // Join using the new NetworkLayer if available
             if (this.app.networkLayer) {
-                console.log('🔌 Joining new project via NetworkLayer:', newCanvas.id);
                 await this.joinProjectWithRetry(newCanvas.id);
             }
             
@@ -647,8 +641,6 @@ class CanvasNavigator {
             // Refresh the list
             this.loadCanvases();
             
-            // Show success message
-            console.log(`✅ Created new canvas: ${name}`);
         } catch (error) {
             console.error('Failed to create canvas:', error);
             alert('Failed to create canvas');
@@ -668,7 +660,6 @@ class CanvasNavigator {
             
             // Check if network layer is connected
             if (this.networkLayer && !this.networkLayer.isConnected) {
-                console.log('⏳ Waiting for network connection...');
                 // Wait for connection
                 let attempts = 0;
                 while (!this.networkLayer.isConnected && attempts < 30) {
@@ -727,9 +718,7 @@ class CanvasNavigator {
             this.stopAutoSave();
             
             // Clear the current canvas
-            console.log('🧹 Clearing canvas, current nodes:', this.app.graph.nodes.length);
             this.app.graph.clear();
-            console.log('🧹 Canvas cleared, nodes after clear:', this.app.graph.nodes.length);
             
             // Update current canvas ID
             this.currentCanvasId = canvasId;
@@ -751,16 +740,8 @@ class CanvasNavigator {
                 if (data.canvas_data) {
                     // With state sync, we don't load from the REST endpoint
                     // The state will come from the WebSocket after joining
-                    console.log('📥 Canvas metadata loaded, state will sync from server');
                     
                     // NOW join the new project if collaborative
-                    console.log('🔌 Checking collaborative state:', {
-                        hasManager: !!this.networkLayer,
-                        isConnected: this.networkLayer?.isConnected,
-                        socket: !!this.networkLayer?.socket,
-                        hasNetworkLayer: !!this.app.networkLayer,
-                        networkConnected: this.app.networkLayer?.isConnected
-                    });
                     
                     // Join using the new NetworkLayer with retry logic
                     if (this.app.networkLayer) {
@@ -777,16 +758,8 @@ class CanvasNavigator {
                         });
                     }
                 } else {
-                    console.log('📭 No canvas data found - starting with empty canvas');
                     
                     // Still need to join the project for collaboration
-                    console.log('🔌 Checking collaborative state (empty canvas):', {
-                        hasManager: !!this.networkLayer,
-                        isConnected: this.networkLayer?.isConnected,
-                        socket: !!this.networkLayer?.socket,
-                        hasNetworkLayer: !!this.app.networkLayer,
-                        networkConnected: this.app.networkLayer?.isConnected
-                    });
                     
                     // Join using the new NetworkLayer with retry logic
                     if (this.app.networkLayer) {
@@ -820,7 +793,6 @@ class CanvasNavigator {
     }
     
     async deleteCanvas(canvasId) {
-        console.log('🗑️ Attempting to delete canvas:', canvasId);
         const canvas = this.canvases.find(c => c.id === canvasId);
         if (!canvas) {
             console.error('Canvas not found:', canvasId);
@@ -834,13 +806,11 @@ class CanvasNavigator {
         
         try {
             const deleteUrl = CONFIG.ENDPOINTS.PROJECT(canvasId);
-            console.log('🗑️ DELETE URL:', deleteUrl);
             
             const response = await fetch(deleteUrl, {
                 method: 'DELETE'
             });
             
-            console.log('🗑️ Delete response:', response.status, response.statusText);
             
             if (!response.ok) {
                 const errorText = await response.text();
@@ -862,8 +832,6 @@ class CanvasNavigator {
             
             // Refresh the list
             await this.loadCanvases();
-            
-            console.log('✅ Canvas deleted successfully');
             
             // Show success message
             if (this.app.showNotification) {
@@ -938,12 +906,10 @@ class CanvasNavigator {
     
     async leaveProjectAndWait(projectId) {
         return new Promise((resolve) => {
-            console.log('📤 Leaving project:', projectId);
             
             // Set up one-time listener for leave confirmation
             const leaveHandler = (data) => {
                 if (data && parseInt(data.projectId) === parseInt(projectId)) {
-                    console.log('✅ Project leave confirmed:', projectId);
                     this.networkLayer.socket.off('project_left', leaveHandler);
                     resolve();
                 }
@@ -951,7 +917,6 @@ class CanvasNavigator {
             
             // Set up timeout in case server doesn't respond
             const timeout = setTimeout(() => {
-                console.log('⚠️ Project leave timeout - proceeding anyway');
                 this.networkLayer.socket.off('project_left', leaveHandler);
                 resolve();
             }, 2000); // 2 second timeout
@@ -972,13 +937,11 @@ class CanvasNavigator {
     }
     
     async joinProjectWithRetry(canvasId, maxAttempts = 3) {
-        console.log(`🔌 Attempting to join project ${canvasId} with retry logic`);
         
         for (let attempt = 1; attempt <= maxAttempts; attempt++) {
             try {
                 // Check if network is connected
                 if (!this.app.networkLayer.isConnected) {
-                    console.log(`⏳ Network not connected, waiting... (attempt ${attempt})`);
                     
                     // Wait for connection with timeout
                     let waitTime = 0;
@@ -1001,7 +964,6 @@ class CanvasNavigator {
                 }
                 
                 // Now try to join the project
-                console.log(`🔌 Joining project ${canvasId} (attempt ${attempt})`);
                 this.app.networkLayer.joinProject(canvasId);
                 
                 // Wait a moment to see if join was successful
@@ -1009,14 +971,10 @@ class CanvasNavigator {
                 
                 // Check if the undo manager has the project ID set (indicates successful join)
                 if (this.app.undoManager && this.app.undoManager.projectId === canvasId) {
-                    console.log(`✅ Project join successful (attempt ${attempt})`);
                     return true;
-                } else {
-                    console.log(`⚠️ Project join unclear, undo manager projectId: ${this.app.undoManager?.projectId}`);
                 }
                 
                 // For now, assume success if we got this far
-                console.log(`✅ Project join completed (attempt ${attempt})`);
                 return true;
                 
             } catch (error) {
@@ -1191,7 +1149,6 @@ class CanvasNavigator {
             // Join the project if collaborative
             // Join using the new NetworkLayer if available
             if (this.app.networkLayer) {
-                console.log('🔌 Joining new project via NetworkLayer (saveAsNew):', newCanvas.id);
                 await this.joinProjectWithRetry(newCanvas.id);
             }
             
@@ -1211,12 +1168,10 @@ class CanvasNavigator {
     }
     
     async loadStartupCanvas() {
-        console.log('🚀 Starting loadStartupCanvas...');
         
         try {
             // Wait for network layer to be ready if it exists
             if (this.app.networkLayer) {
-                console.log('⏳ Waiting for network connection...');
                 let networkAttempts = 0;
                 const maxNetworkAttempts = 20; // 10 seconds
                 
@@ -1224,15 +1179,10 @@ class CanvasNavigator {
                     await new Promise(resolve => setTimeout(resolve, 500));
                     networkAttempts++;
                     
-                    if (networkAttempts % 4 === 0) { // Log every 2 seconds
-                        console.log(`⏳ Still waiting for network... (${networkAttempts}/${maxNetworkAttempts})`);
-                    }
                 }
                 
                 if (!this.app.networkLayer.isConnected) {
                     console.warn('⚠️ Network connection timeout - proceeding anyway');
-                } else {
-                    console.log('✅ Network layer connected');
                 }
             }
             
@@ -1240,17 +1190,14 @@ class CanvasNavigator {
             const isDemoMode = window.location.pathname.includes('demo.html');
             
             if (isDemoMode) {
-                console.log('🎭 Demo mode detected - loading demo canvas');
                 
                 // For demo mode, always load or create the demo canvas
                 await this.loadCanvases();
                 const demoCanvas = this.canvases.find(c => c.name === 'Demo Canvas');
                 
                 if (demoCanvas) {
-                    console.log('📂 Loading existing demo canvas:', demoCanvas.id);
                     await this.loadCanvas(demoCanvas.id);
                 } else {
-                    console.log('🆕 Creating new demo canvas...');
                     const response = await fetch(CONFIG.ENDPOINTS.PROJECTS, {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
@@ -1263,7 +1210,6 @@ class CanvasNavigator {
                     
                     if (response.ok) {
                         const newCanvas = await response.json();
-                        console.log('📂 Loading new demo canvas:', newCanvas.id);
                         await this.loadCanvas(newCanvas.id);
                     }
                 }
@@ -1282,24 +1228,17 @@ class CanvasNavigator {
             // Only check for actual duplicates (same window reloaded)
             const isReload = performance.navigation.type === 1;
             
-            if (isReload) {
-                console.log('🔄 Page reloaded, continuing with same session');
-            } else {
-                console.log('📑 New tab opened, allowing independent session');
-            }
             
             // Get last used canvas from localStorage
             const lastCanvasId = localStorage.getItem('lastCanvasId');
             
             if (lastCanvasId) {
                 // Try to load the last canvas by checking if it exists in all projects
-                // TODO: Use general projects endpoint until proper user authentication is implemented
                 const response = await fetch(CONFIG.ENDPOINTS.PROJECTS);
                 if (response.ok) {
                     const canvases = await response.json();
                     const lastCanvas = canvases.find(c => c.id === parseInt(lastCanvasId));
                     if (lastCanvas) {
-                        console.log('🔄 Auto-loading last canvas:', lastCanvasId);
                         await this.loadCanvas(parseInt(lastCanvasId));
                         return;
                     }
@@ -1347,7 +1286,6 @@ class CanvasNavigator {
             // Join the project if collaborative
             // Join using the new NetworkLayer if available
             if (this.app.networkLayer) {
-                console.log('🔌 Joining new project via NetworkLayer (createDefault):', newCanvas.id);
                 await this.joinProjectWithRetry(newCanvas.id);
             }
             
@@ -1379,24 +1317,16 @@ class CanvasNavigator {
         // Save every 30 seconds if there are changes
         this.autoSaveTimer = setInterval(async () => {
             if (this.currentCanvasId && this.app.graph._nodes && this.app.graph._nodes.length > 0) {
-                console.log('🔄 Auto-saving canvas to server...');
-                const saved = await this.saveCanvasToServer();
-                if (saved) {
-                    console.log('✅ Canvas auto-saved successfully');
-                } else {
-                    console.warn('⚠️ Canvas auto-save failed');
-                }
+                await this.saveCanvasToServer();
             }
         }, 30000); // 30 seconds
         
-        console.log('🚀 Started auto-save timer');
     }
     
     stopAutoSave() {
         if (this.autoSaveTimer) {
             clearInterval(this.autoSaveTimer);
             this.autoSaveTimer = null;
-            console.log('⏹️ Stopped auto-save timer');
         }
     }
     
@@ -1452,15 +1382,22 @@ class CanvasNavigator {
     
     async updateDatabaseSize() {
         try {
-            console.log('📊 Fetching database size from:', CONFIG.ENDPOINTS.DATABASE_SIZE);
-            const response = await fetch(CONFIG.ENDPOINTS.DATABASE_SIZE);
+            // Add timestamp to prevent caching
+            const response = await fetch(`${CONFIG.ENDPOINTS.DATABASE_SIZE}?t=${Date.now()}`);
             if (!response.ok) throw new Error('Failed to get database size');
             
             const data = await response.json();
-            console.log('📊 Database size data:', data);
             const sizeElement = this.panel.querySelector('.size-value');
             if (sizeElement) {
-                sizeElement.textContent = data.sizeFormatted || '--';
+                // Show breakdown if available
+                if (data.breakdown) {
+                    const db = data.breakdown.database.formatted;
+                    const uploads = data.breakdown.uploads.formatted;
+                    const thumbs = data.breakdown.thumbnails.formatted;
+                    sizeElement.innerHTML = `${data.sizeFormatted}<br><small style="font-size: 9px; opacity: 0.7">DB: ${db}, Files: ${uploads}</small>`;
+                } else {
+                    sizeElement.textContent = data.sizeFormatted || '--';
+                }
             }
         } catch (error) {
             console.error('Failed to get database size:', error);
@@ -1472,7 +1409,6 @@ class CanvasNavigator {
     }
     
     async performCleanup() {
-        console.log('🧹 Cleanup button clicked');
         const cleanupBtn = this.panel.querySelector('.cleanup-btn');
         if (!cleanupBtn) {
             console.error('Cleanup button not found');
@@ -1484,16 +1420,114 @@ class CanvasNavigator {
             return;
         }
         
-        // Enhanced confirmation dialog with options
-        const confirmMessage = `This will:
-• Remove orphaned data and unused media files
-• Clear client-side caches (images, thumbnails)
-• Clear undo/redo history
-
-Continue?`;
+        // Create a custom dialog for cleanup options
+        const dialog = document.createElement('div');
+        dialog.className = 'cleanup-dialog';
+        dialog.style.cssText = `
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: #2a2a2a;
+            border: 1px solid #444;
+            border-radius: 8px;
+            padding: 20px;
+            z-index: 10000;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.5);
+            max-width: 500px;
+            color: #eee;
+        `;
         
-        if (!confirm(confirmMessage)) {
+        dialog.innerHTML = `
+            <h3 style="margin-top: 0; color: #fff;">Database Cleanup</h3>
+            <p style="color: #ccc; margin-bottom: 15px;">This will scan for and remove orphaned files using a safe mark-and-sweep approach.</p>
+            
+            <div style="background: #1a1a1a; border-radius: 4px; padding: 10px; margin-bottom: 15px;">
+                <strong style="color: #4a9eff;">What will be cleaned:</strong>
+                <ul style="margin: 5px 0; padding-left: 20px; color: #aaa;">
+                    <li>Orphaned media files not referenced in any canvas</li>
+                    <li>Old operations with embedded image data</li>
+                    <li>Client-side caches (images, thumbnails)</li>
+                    <li>Undo/redo history</li>
+                </ul>
+            </div>
+            
+            <div style="background: #1a1a1a; border-radius: 4px; padding: 10px; margin-bottom: 20px;">
+                <strong style="color: #4eff4a;">Protected files:</strong>
+                <ul style="margin: 5px 0; padding-left: 20px; color: #aaa;">
+                    <li>All files referenced in saved canvases</li>
+                    <li>Files in recent operations (last 24 hours)</li>
+                </ul>
+            </div>
+            
+            <div style="margin-bottom: 20px;">
+                <label style="display: flex; align-items: center; cursor: pointer; margin-bottom: 10px;">
+                    <input type="checkbox" id="cleanup-dry-run" style="margin-right: 8px;">
+                    <span>Dry run (preview what would be deleted without actually deleting)</span>
+                </label>
+                <label style="display: flex; align-items: center; cursor: pointer;">
+                    <input type="checkbox" id="cleanup-all-thumbnails" style="margin-right: 8px;">
+                    <span>Delete ALL thumbnails (including those with active images)</span>
+                </label>
+                <div style="font-size: 11px; color: #888; margin-left: 24px; margin-top: 4px;">
+                    ⚠️ This will clear the entire thumbnail cache. Thumbnails will be regenerated when needed.
+                </div>
+            </div>
+            
+            
+            <div style="display: flex; gap: 10px; justify-content: flex-end;">
+                <button id="cleanup-cancel" style="padding: 8px 16px; background: #444; border: none; border-radius: 4px; color: #fff; cursor: pointer;">Cancel</button>
+                <button id="cleanup-proceed" style="padding: 8px 16px; background: #4a9eff; border: none; border-radius: 4px; color: #fff; cursor: pointer; font-weight: bold;">Proceed</button>
+            </div>
+        `;
+        
+        // Add backdrop
+        const backdrop = document.createElement('div');
+        backdrop.style.cssText = `
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0,0,0,0.5);
+            z-index: 9999;
+        `;
+        
+        document.body.appendChild(backdrop);
+        document.body.appendChild(dialog);
+        
+        // Handle dialog actions
+        const cleanup = async (dryRun, gracePeriod, deleteAllThumbnails) => {
+            backdrop.remove();
+            dialog.remove();
+            
+            // Proceed with cleanup
+            await this.executeCleanup(dryRun, gracePeriod, deleteAllThumbnails);
+        };
+        
+        document.getElementById('cleanup-cancel').onclick = () => {
+            backdrop.remove();
+            dialog.remove();
             console.log('Cleanup cancelled by user');
+        };
+        
+        document.getElementById('cleanup-proceed').onclick = () => {
+            const dryRun = document.getElementById('cleanup-dry-run').checked;
+            const gracePeriod = 0; // Always use 0 grace period
+            const deleteAllThumbnails = document.getElementById('cleanup-all-thumbnails').checked;
+            cleanup(dryRun, gracePeriod, deleteAllThumbnails);
+        };
+        
+        // Focus on proceed button
+        document.getElementById('cleanup-proceed').focus();
+        
+        return;  // Exit here, actual cleanup happens in executeCleanup
+    }
+    
+    async executeCleanup(dryRun = false, gracePeriod = 0, deleteAllThumbnails = false) {
+        const cleanupBtn = this.panel.querySelector('.cleanup-btn');
+        if (!cleanupBtn) {
+            console.error('Cleanup button not found');
             return;
         }
         
@@ -1503,88 +1537,97 @@ Continue?`;
         cleanupBtn.innerHTML = '<span class="icon">⏳</span> Cleaning...';
         
         try {
-            // Clear client-side caches first
-            console.log('🧹 Clearing client-side caches...');
-            
-            // Clear image cache
-            if (window.imageCache) {
-                window.imageCache.clear();
-                console.log('✅ Image cache cleared');
-            }
-            
-            // Clear thumbnail cache
-            if (window.thumbnailCache) {
-                window.thumbnailCache.clear();
-                console.log('✅ Thumbnail cache cleared');
-            }
-            
-            // Clear image resource cache
-            if (window.app && window.app.imageResourceCache) {
-                window.app.imageResourceCache.clear();
-                console.log('✅ Image resource cache cleared');
-            }
-            
-            // Clear client undo state
-            if (window.app && window.app.clientUndoManager) {
-                // Reset local undo state
-                window.app.clientUndoManager.undoState = {
-                    canUndo: false,
-                    canRedo: false,
-                    undoCount: 0,
-                    redoCount: 0,
-                    nextUndo: null,
-                    nextRedo: null
-                };
-                console.log('✅ Client undo state cleared');
-                
-                // Request server to clear undo history for this project
-                if (this.currentCanvasId && this.networkLayer && this.networkLayer.socket) {
-                    console.log('📡 Requesting server to clear undo history...');
-                    this.networkLayer.socket.emit('clear_undo_history', {
-                        projectId: this.currentCanvasId
-                    });
+            // Clear client-side caches first (only if not dry run)
+            if (!dryRun) {
+                // Clear image cache
+                if (window.imageCache) {
+                    window.imageCache.clear();
                 }
-            }
-            
-            // Clear any local storage
-            try {
-                // Clear undo-related localStorage entries
-                const keysToRemove = [];
-                for (let i = 0; i < localStorage.length; i++) {
-                    const key = localStorage.key(i);
-                    if (key && (key.includes('undo') || key.includes('redo'))) {
-                        keysToRemove.push(key);
+                
+                // Clear thumbnail cache
+                if (window.thumbnailCache) {
+                    window.thumbnailCache.clear();
+                }
+                
+                // Clear image resource cache
+                if (window.app && window.app.imageResourceCache) {
+                    window.app.imageResourceCache.clear();
+                }
+                
+                // Clear client undo state
+                if (window.app && window.app.clientUndoManager) {
+                    // Reset local undo state
+                    window.app.clientUndoManager.undoState = {
+                        canUndo: false,
+                        canRedo: false,
+                        undoCount: 0,
+                        redoCount: 0,
+                        nextUndo: null,
+                        nextRedo: null
+                    };
+                    
+                    // Request server to clear undo history for this project
+                    if (this.currentCanvasId && this.networkLayer && this.networkLayer.socket) {
+                        this.networkLayer.socket.emit('clear_undo_history', {
+                            projectId: this.currentCanvasId
+                        });
                     }
                 }
-                keysToRemove.forEach(key => localStorage.removeItem(key));
-                if (keysToRemove.length > 0) {
-                    console.log(`✅ Cleared ${keysToRemove.length} localStorage entries`);
+                
+                // Clear any local storage
+                try {
+                    // Clear undo-related localStorage entries
+                    const keysToRemove = [];
+                    for (let i = 0; i < localStorage.length; i++) {
+                        const key = localStorage.key(i);
+                        if (key && (key.includes('undo') || key.includes('redo'))) {
+                            keysToRemove.push(key);
+                        }
+                    }
+                    keysToRemove.forEach(key => localStorage.removeItem(key));
+                } catch (e) {
+                    console.warn('Failed to clear some localStorage entries:', e);
                 }
-            } catch (e) {
-                console.warn('Failed to clear some localStorage entries:', e);
-            }
+            } // End if (!dryRun)
             
-            // Now perform server cleanup
-            console.log('📡 Sending cleanup request to:', CONFIG.ENDPOINTS.DATABASE_CLEANUP);
-            const response = await fetch(CONFIG.ENDPOINTS.DATABASE_CLEANUP, {
+            // Now perform server cleanup with parameters
+            const params = new URLSearchParams();
+            if (dryRun) params.append('dryRun', 'true');
+            params.append('gracePeriod', gracePeriod.toString());
+            if (deleteAllThumbnails) params.append('deleteAllThumbnails', 'true');
+            
+            const response = await fetch(`${CONFIG.ENDPOINTS.DATABASE_CLEANUP}?${params}`, {
                 method: 'POST'
             });
-            
-            console.log('📡 Cleanup response status:', response.status);
             if (!response.ok) throw new Error(`Cleanup failed with status ${response.status}`);
             
             const result = await response.json();
-            console.log('📡 Cleanup result:', result);
             
-            // Update database size
-            await this.updateDatabaseSize();
+            // Update database size after a short delay to ensure DB operations are complete
+            setTimeout(async () => {
+                await this.updateDatabaseSize();
+            }, 1000);
             
             // Show success notification
             if (this.app.showNotification) {
-                let message = 'Cleanup completed:\n';
+                let message = dryRun ? 'Dry run completed:\n' : 'Cleanup completed:\n';
                 const parts = [];
                 
-                // Server cleanup results
+                // Handle new cleanup response format
+                if (result.fileCleanup) {
+                    if (dryRun) {
+                        parts.push(`• Found ${result.fileCleanup.referencedFiles} referenced files`);
+                        parts.push(`• Would delete ${result.fileCleanup.deletedFiles} orphaned files`);
+                    } else {
+                        parts.push(`• Deleted ${result.fileCleanup.deletedFiles} orphaned files`);
+                    }
+                }
+                
+                if (result.operationsDeleted > 0) {
+                    parts.push(`• ${dryRun ? 'Would delete' : 'Deleted'} ${result.operationsDeleted} old operations`);
+                }
+                
+                // Legacy format support
                 if (result.deleted) {
                     if (result.deleted.files > 0) {
                         parts.push(`• Removed ${result.deleted.files} orphaned database files`);
@@ -1608,11 +1651,13 @@ Continue?`;
                     parts.push(`• Database size: ${result.previousSize.formatted} → ${result.newSize.formatted}`);
                 }
                 
-                // Client cleanup results
-                parts.push('• Cleared all client-side caches');
-                parts.push('• Reset undo/redo history');
+                // Client cleanup results (only if not dry run)
+                if (!dryRun) {
+                    parts.push('• Cleared all client-side caches');
+                    parts.push('• Reset undo/redo history');
+                }
                 
-                message = parts.length > 0 ? `Cleanup completed:\n${parts.join('\n')}` : 'Cleanup completed';
+                message = parts.length > 0 ? `${dryRun ? 'Dry run' : 'Cleanup'} completed:\n${parts.join('\n')}` : (dryRun ? 'Dry run completed' : 'Cleanup completed');
                 
                 this.app.showNotification({
                     type: 'success',
@@ -1621,7 +1666,6 @@ Continue?`;
                 });
             }
             
-            console.log('✅ Full cleanup completed:', result);
             
         } catch (error) {
             console.error('Failed to perform cleanup:', error);

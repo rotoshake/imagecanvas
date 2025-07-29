@@ -112,18 +112,36 @@ class NodeAlignCommand extends Command {
         
         console.log('[NodeAlignCommand] Executing with params:', { nodeIds, positions, axis });
         
+        // Check if grid alignment animation is active
+        const alignmentManager = window.app?.graphCanvas?.alignmentManager;
+        const isGridAlignAnimating = alignmentManager?.gridAlignAnimating === true;
+        
         // If positions are provided (from alignment animation), use them directly
         if (positions && Array.isArray(positions)) {
             console.log('[NodeAlignCommand] Using provided positions');
+            
+            // During optimistic execution with active grid animation, skip position updates
+            // The animation will handle the visual updates, and the server will sync the final positions
+            if (this.origin === 'local' && isGridAlignAnimating && axis === 'grid') {
+                console.log('[NodeAlignCommand] Grid alignment animation active - skipping optimistic position updates');
+                // Still mark canvas dirty to ensure animation continues
+                if (graph.canvas) {
+                    graph.canvas.dirty_canvas = true;
+                }
+                return { success: true };
+            }
+            
             for (let i = 0; i < nodeIds.length; i++) {
                 const node = graph.getNodeById(nodeIds[i]);
                 if (node && positions[i]) {
-                    console.log(`[NodeAlignCommand] Moving node ${nodeIds[i]} to`, positions[i]);
+                    // console.log(`[NodeAlignCommand] Moving node ${nodeIds[i]} to`, positions[i]);
                     node.pos[0] = positions[i][0];
                     node.pos[1] = positions[i][1];
                     // Clear any animation state to prevent overwriting
                     delete node._animPos;
                     delete node._animVel;
+                    delete node._gridAnimPos;
+                    delete node._gridAnimVel;
                 }
             }
             // Mark canvas as dirty to ensure redraw
@@ -136,10 +154,23 @@ class NodeAlignCommand extends Command {
         // Fallback: calculate alignment if positions not provided (legacy support)
         const nodes = nodeIds.map(id => graph.getNodeById(id)).filter(n => n);
 
+        // Check for active auto-align animation as well
+        const isAutoAlignAnimating = alignmentManager?.autoAlignAnimating === true;
+        
         if (axis === 'horizontal') {
+            // Skip during active animation for consistency
+            if (this.origin === 'local' && isAutoAlignAnimating) {
+                console.log('[NodeAlignCommand] Auto-align animation active - skipping optimistic updates');
+                return { success: true };
+            }
             const avgY = nodes.reduce((sum, node) => sum + node.pos[1], 0) / nodes.length;
             nodes.forEach(node => node.pos[1] = avgY);
         } else if (axis === 'vertical') {
+            // Skip during active animation for consistency
+            if (this.origin === 'local' && isAutoAlignAnimating) {
+                console.log('[NodeAlignCommand] Auto-align animation active - skipping optimistic updates');
+                return { success: true };
+            }
             const avgX = nodes.reduce((sum, node) => sum + node.pos[0], 0) / nodes.length;
             nodes.forEach(node => node.pos[0] = avgX);
         } else if (axis === 'grid') {

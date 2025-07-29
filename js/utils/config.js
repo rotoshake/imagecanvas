@@ -81,11 +81,11 @@ const CONFIG = {
     },
     
     HANDLES: {
-        SIZE: 16,
-        MIN_NODE_SIZE: 50,
-        ROTATION_DISTANCE: 50,
-        MIN_ROTATION_DISTANCE: 8,
-        ROTATION_SNAP_ANGLE: 45  // degrees
+        SIZE: 16,                    // Hitbox radius in pixels for resize handles (corner dots)
+        MIN_NODE_SIZE: 50,           // Minimum node size in pixels before handles are shown
+        ROTATION_DISTANCE: 20,       // Maximum distance in pixels from corner where rotation handle is active
+        MIN_ROTATION_DISTANCE: 8,    // Minimum distance in pixels from corner to avoid overlap with resize handle
+        ROTATION_SNAP_ANGLE: 45      // Angle in degrees for rotation snapping when holding shift
     },
     
     STORAGE: {
@@ -96,7 +96,7 @@ const CONFIG = {
     },
     
     THUMBNAILS: {
-        SIZES: [64, 128, 256, 512],
+        SIZES: [64, 256, 512],  // Reduced from 4 to 3 sizes
         QUALITY: 'high'
     },
     

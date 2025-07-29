@@ -9,7 +9,6 @@ class OperationTracker {
         this.completedOperations = new Set();
         this.operationTimeout = 30000; // 30 seconds
         
-        console.log('📊 OperationTracker initialized');
     }
     
     /**

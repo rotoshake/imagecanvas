@@ -26,6 +26,11 @@ class SelectionManager {
         // Invalidate bounding box cache when selection changes
         this._boundingBoxDirty = true;
         
+        // Mark canvas dirty to ensure visual update
+        if (window.app?.graphCanvas) {
+            window.app.graphCanvas.dirty_canvas = true;
+        }
+        
         this.callbacks.forEach(callback => {
             try {
                 callback(this.selectedNodes);

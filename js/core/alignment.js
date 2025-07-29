@@ -45,6 +45,7 @@ class AutoAlignmentManager {
         this.gridAlignAnimating = false;
         this.gridAlignAnimNodes = null;
         this.gridAlignAnimTargets = null;
+        this.gridAlignInteractionSaved = false;
     }
     
     // ===================================
@@ -54,10 +55,7 @@ class AutoAlignmentManager {
     startAutoAlign(startPos) {
         if (this.selection.size() < 2) return false;
         
-        console.log('[ALIGN_DEBUG] startAutoAlign', {
-            existingMasterOrder: this.autoAlignMasterOrder,
-            selectionSize: this.selection.size()
-        });
+
         this.autoAlignMode = true;
         this.autoAlignStart = [...startPos];
         this.autoAlignOriginalClick = [...startPos];
@@ -86,11 +84,7 @@ class AutoAlignmentManager {
     
     updateAutoAlign(currentPos) {
         if (!this.autoAlignMode) return;
-        console.log('[ALIGN_DEBUG] updateAutoAlign', {
-            currentPos,
-            startPos: this.autoAlignStart,
-            committed: this.autoAlignCommitted
-        });
+
         
         const threshold = 40 / this.viewport.scale;
         const dx = currentPos[0] - this.autoAlignStart[0];
@@ -123,12 +117,7 @@ class AutoAlignmentManager {
             if ((commitAxis === 'horizontal' && Math.abs(cdx) > threshold) || 
                 (commitAxis === 'vertical' && Math.abs(cdy) > threshold)) {
                 
-                console.log('[ALIGN_DEBUG] Threshold met, committing alignment', {
-                    commitAxis,
-                    threshold,
-                    cdx: Math.abs(cdx),
-                    cdy: Math.abs(cdy)
-                });
+
                 
                 this.autoAlignCommitted = true;
                 this.autoAlignCommittedAxis = commitAxis;
@@ -136,14 +125,8 @@ class AutoAlignmentManager {
                 
                 // Check if images are already aligned on this axis
                 const alreadyAligned = this.areImagesAlignedOnAxis(commitAxis);
-                console.log('[ALIGN_DEBUG] Checking if already aligned:', {
-                    axis: commitAxis,
-                    aligned: alreadyAligned,
-                    selectionSize: this.selection.size()
-                });
                 
                 if (alreadyAligned) {
-                    console.log('[ALIGN_DEBUG] Nodes already aligned on', commitAxis, '- enabling reorder mode');
                     this.autoAlignIsReorderMode = true;
                 } else {
                     this.autoAlignIsReorderMode = false;
@@ -188,13 +171,6 @@ class AutoAlignmentManager {
                 // Check if switching to reorder mode
                 const switchingToReorder = this.areImagesAlignedOnAxis(currentAxis);
                 
-                console.log('[ALIGN_DEBUG] Axis switch check:', {
-                    currentAxis,
-                    previousAxis: this.autoAlignCommittedAxis,
-                    alignedOnAxis: switchingToReorder,
-                    wasReorderMode: this.autoAlignIsReorderMode
-                });
-                
                 if (switchingToReorder) {
                     this.autoAlignIsReorderMode = true;
                 } else {
@@ -216,7 +192,6 @@ class AutoAlignmentManager {
     }
     
     finishAutoAlign() {
-        console.log('[ALIGN_DEBUG] finishAutoAlign');
         if (this.autoAlignCommittedAxis && this.autoAlignCommittedTargets) {
             // Use the same pattern as finishGridAlign to ensure nodeIds and positions match
             const selectedNodes = this.selection.getSelectedNodes();
@@ -230,7 +205,7 @@ class AutoAlignmentManager {
                 }
             }
             
-            console.log('[ALIGN_DEBUG] Linear align sending paired positions:', { nodeIds, positions });
+
             window.app.undoManager.endInteraction('node_align', { 
                 nodeIds, 
                 positions, 
@@ -257,14 +232,10 @@ class AutoAlignmentManager {
     
     triggerAutoAlign(axis) {
         if (this.selection.size() < 2) {
-            console.log('[ALIGN_DEBUG] triggerAutoAlign aborted - selection size:', this.selection.size());
             return;
         }
         
-        console.log(`[ALIGN_DEBUG] triggerAutoAlign: axis=${axis}, reorderMode=${this.autoAlignIsReorderMode}`, {
-            selectionSize: this.selection.size(),
-            callStack: new Error().stack.split('\n').slice(1, 4).join('\n')
-        });
+
         // Store original positions if not already set
         if (!this.autoAlignOriginals) {
             this.autoAlignOriginals = {};
@@ -276,7 +247,6 @@ class AutoAlignmentManager {
         
         // Determine master order if not set
         if (!this.autoAlignMasterOrder) {
-            console.log('[ALIGN_DEBUG] Establishing new master order');
             const selectedNodes = this.selection.getSelectedNodes();
             
             // Calculate bounding box
@@ -307,12 +277,6 @@ class AutoAlignmentManager {
             
             this.autoAlignMasterOrder = masterOrder.map(n => n.id);
             this.autoAlignDominantAxis = isVerticalDominant ? 'vertical' : 'horizontal';
-            
-            console.log('[ALIGN_DEBUG] Master order established:', {
-                order: masterOrder.map(n => n.title || n.id),
-                dominantAxis: this.autoAlignDominantAxis,
-                isVerticalDominant
-            });
         }
         
         // Calculate center of selection
@@ -357,17 +321,11 @@ class AutoAlignmentManager {
         // Sort nodes according to master order
         let sortedNodes = masterOrder.map(id => selectedNodes.find(n => n.id === id)).filter(Boolean);
         
-        console.log('[ALIGN_DEBUG] computeAutoAlignTargetsWithMasterOrder:', {
-            axis,
-            isReorderMode: this.autoAlignIsReorderMode,
-            originalOrder: sortedNodes.map(n => n.title || n.id),
-            masterOrder: this.autoAlignMasterOrder
-        });
+
         
         // If in reorder mode, reverse the order
         if (this.autoAlignIsReorderMode) {
             sortedNodes = sortedNodes.reverse();
-            console.log('[ALIGN_DEBUG] Reversed order:', sortedNodes.map(n => n.title || n.id));
         }
         
         // For reorder mode, we want to keep nodes on the same alignment line
@@ -453,16 +411,14 @@ class AutoAlignmentManager {
             const firstY = nodes[0].pos[1];
             const aligned = nodes.every(n => Math.abs(n.pos[1] - firstY) < tolerance);
             if (!aligned) {
-                console.log('[ALIGN_DEBUG] Not aligned horizontally - Y positions:', 
-                    nodes.map(n => ({ id: n.id, y: n.pos[1], diff: Math.abs(n.pos[1] - firstY) })));
+                // Not aligned horizontally
             }
             return aligned;
         } else if (axis === 'vertical') {
             const firstX = nodes[0].pos[0];
             const aligned = nodes.every(n => Math.abs(n.pos[0] - firstX) < tolerance);
             if (!aligned) {
-                console.log('[ALIGN_DEBUG] Not aligned vertically - X positions:', 
-                    nodes.map(n => ({ id: n.id, x: n.pos[0], diff: Math.abs(n.pos[0] - firstX) })));
+                // Not aligned vertically
             }
             return aligned;
         }
@@ -476,7 +432,7 @@ class AutoAlignmentManager {
     startGridAlign(startPos) {
         if (this.selection.size() === 0) return false;
         
-        console.log('[ALIGN_DEBUG] startGridAlign');
+
         this.gridAlignMode = true;
         this.gridAlignDragging = true;
         this.gridAlignAnchor = [...startPos];
@@ -493,7 +449,6 @@ class AutoAlignmentManager {
     
     updateGridAlign(currentPos) {
         if (!this.gridAlignMode || !this.gridAlignDragging || !this.gridAlignAnchor) return;
-        console.log('[ALIGN_DEBUG] updateGridAlign');
         
         // Update bounding box
         const ax = this.gridAlignAnchor[0];
@@ -570,11 +525,9 @@ class AutoAlignmentManager {
         // Start animation
         this.gridAlignAnimNodes = selectedNodes;
         this.gridAlignAnimTargets = targets;
-        console.log('[ALIGN_DEBUG] Grid targets set:', {
-            targetCount: Object.keys(targets).length,
-            nodeCount: selectedNodes.length,
-            columns: this.gridAlignColumns
-        });
+        // Also store a backup copy for finishGridAlign in case animation completes first
+        this.gridAlignFinalTargets = { ...targets };
+
         if (!this.gridAlignAnimating) {
             for (const node of selectedNodes) {
                 node._gridAnimPos = [...node.pos];
@@ -587,42 +540,29 @@ class AutoAlignmentManager {
     }
     
     finishGridAlign() {
-        console.log('[ALIGN_DEBUG] finishGridAlign', {
-            hasTargets: !!this.gridAlignAnimTargets,
-            targetCount: this.gridAlignAnimTargets ? Object.keys(this.gridAlignAnimTargets).length : 0,
-            selectionSize: this.selection.size(),
-            gridAlignMode: this.gridAlignMode,
-            gridAlignDragging: this.gridAlignDragging
-        });
-        if (this.gridAlignAnimTargets) {
-            // Use the same pattern as finishAutoAlign to ensure nodeIds and positions match
+
+        
+        // Capture the current targets for saving (before they might get cleared by animation)
+        // Use the final targets backup if animation already cleared the main targets
+        const targetsForSave = this.gridAlignAnimTargets ? { ...this.gridAlignAnimTargets } : 
+                              this.gridAlignFinalTargets ? { ...this.gridAlignFinalTargets } : null;
+        
+        if (targetsForSave) {
+            // During animation - use the target positions
             const selectedNodes = this.selection.getSelectedNodes();
             const nodeIds = [];
             const positions = [];
             
+
+            
             for (const node of selectedNodes) {
-                if (this.gridAlignAnimTargets[node.id]) {
+                if (targetsForSave[node.id]) {
                     nodeIds.push(node.id);
-                    positions.push(this.gridAlignAnimTargets[node.id]);
+                    positions.push(targetsForSave[node.id]);
                 }
             }
             
-            console.log('[ALIGN_DEBUG] Grid align sending positions:', { 
-                nodeIds, 
-                positions,
-                nodeCount: nodeIds.length,
-                columns: this.gridAlignColumns,
-                hasUndoManager: !!window.app.undoManager,
-                hasInteractionState: !!window.app.undoManager.interactionInitialState
-            });
-            
-            // Log each node's target position for debugging
-            nodeIds.forEach((id, i) => {
-                const node = selectedNodes.find(n => n.id === id);
-                if (node) {
-                    console.log(`[ALIGN_DEBUG] Node ${id}: current=[${node.pos[0].toFixed(0)}, ${node.pos[1].toFixed(0)}] target=[${positions[i][0].toFixed(0)}, ${positions[i][1].toFixed(0)}]`);
-                }
-            });
+
             
             window.app.undoManager.endInteraction('node_align', { 
                 nodeIds, 
@@ -630,7 +570,22 @@ class AutoAlignmentManager {
                 axis: 'grid' 
             });
         } else {
-            window.app.undoManager.cancelInteraction();
+            // After animation completed - use current node positions
+            const selectedNodes = this.selection.getSelectedNodes();
+            if (selectedNodes.length > 0) {
+                const nodeIds = selectedNodes.map(node => node.id);
+                const positions = selectedNodes.map(node => [...node.pos]);
+                
+
+                
+                window.app.undoManager.endInteraction('node_align', { 
+                    nodeIds, 
+                    positions, 
+                    axis: 'grid' 
+                });
+            } else {
+                window.app.undoManager.cancelInteraction();
+            }
         }
 
         this.gridAlignMode = false;
@@ -639,9 +594,12 @@ class AutoAlignmentManager {
         this.gridAlignBox = null;
         this.gridAlignColumns = 1;
         this.gridAlignTargets = null;
-        // Don't clear animation state - let the animation complete naturally
-        // this.gridAlignAnimNodes = null;
+        // Don't clear animation targets - let the animation complete naturally
+        // The animation needs these targets to continue running
+        // They will be cleared by completeAnimation() when the animation finishes
         // this.gridAlignAnimTargets = null;
+        // this.gridAlignFinalTargets = null;
+        // this.gridAlignAnimNodes = null;
         this.canvas.dirty_canvas = true;
     }
     
@@ -656,6 +614,9 @@ class AutoAlignmentManager {
         const currentTime = performance.now() / 1000; // Convert to seconds
         const deltaTime = this.lastUpdateTime ? Math.min(currentTime - this.lastUpdateTime, 0.033) : 0.016; // Cap at ~30fps min
         this.lastUpdateTime = currentTime;
+        
+        // Clean up any stale animation properties on nodes
+        this.cleanupStaleAnimationProperties();
         
         // Update auto-align animations
         if (this.autoAlignAnimating && this.autoAlignAnimNodes && this.autoAlignAnimTargets) {
@@ -840,7 +801,6 @@ class AutoAlignmentManager {
     // ===================================
     
     completeAnimation(animNodes, animTargets, isGridAlign) {
-        console.log(`[ALIGN_DEBUG] completeAnimation: isGridAlign=${isGridAlign}`);
         const nodeIds = [];
         const finalPositions = [];
         const posKey = isGridAlign ? '_gridAnimPos' : '_animPos';
@@ -848,6 +808,7 @@ class AutoAlignmentManager {
         
         for (const node of animNodes) {
             if (node[posKey]) {
+                // Update the actual node position to match the animation position
                 node.pos[0] = node[posKey][0];
                 node.pos[1] = node[posKey][1];
                 
@@ -857,6 +818,14 @@ class AutoAlignmentManager {
                 delete node[posKey];
                 delete node[velKey];
             }
+        }
+        
+        // Mark nodes as having completed animation to prevent server updates from interfering
+        if (isGridAlign && animNodes.length > 0) {
+            const completionTime = Date.now();
+            animNodes.forEach(node => {
+                node._alignmentCompletedAt = completionTime;
+            });
         }
         
         // This is now handled by the endInteraction call in the canvas
@@ -878,10 +847,10 @@ class AutoAlignmentManager {
         
         if (isGridAlign) {
             this.gridAlignAnimating = false;
-            // Clear animation state now that animation is complete
-            // This is safe because finishGridAlign has already been called
+            // Clear all animation state now that animation is complete
             this.gridAlignAnimNodes = null;
             this.gridAlignAnimTargets = null;
+            this.gridAlignFinalTargets = null;
         } else {
             if (!this.autoAlignMode) {
                 this.autoAlignOriginals = null;
@@ -896,6 +865,48 @@ class AutoAlignmentManager {
                 this.autoAlignAnimating = false;
                 // Don't clear targets while still dragging
             }
+        }
+    }
+    
+    // ===================================
+    // CLEANUP
+    // ===================================
+    
+    cleanupStaleAnimationProperties() {
+        // Only run cleanup occasionally to avoid performance impact
+        if (!this._lastCleanupTime) this._lastCleanupTime = 0;
+        const now = Date.now();
+        if (now - this._lastCleanupTime < 1000) return; // Run at most once per second
+        this._lastCleanupTime = now;
+        
+        // Clean up animation properties from all nodes if no animations are active
+        if (!this.autoAlignAnimating && !this.gridAlignAnimating) {
+            const allNodes = this.canvas.graph?.nodes || [];
+            let cleanedCount = 0;
+            
+            for (const node of allNodes) {
+                let hadAnimProps = false;
+                if (node._animPos || node._animVel) {
+                    delete node._animPos;
+                    delete node._animVel;
+                    hadAnimProps = true;
+                }
+                if (node._gridAnimPos || node._gridAnimVel) {
+                    delete node._gridAnimPos;
+                    delete node._gridAnimVel;
+                    hadAnimProps = true;
+                }
+                // Also clean up the alignment completion flag if it's old
+                if (node._alignmentCompletedAt && (now - node._alignmentCompletedAt > 3000)) {
+                    delete node._alignmentCompletedAt;
+                    hadAnimProps = true;
+                }
+                if (hadAnimProps) {
+                    cleanedCount++;
+                }
+            }
+            
+
         }
     }
     
@@ -937,7 +948,6 @@ class AutoAlignmentManager {
     
     clearMasterOrder() {
         // Call this when selection changes or nodes are deleted
-        console.log('[ALIGN_DEBUG] Clearing master order');
         this.autoAlignMasterOrder = null;
     }
     
@@ -993,6 +1003,7 @@ class AutoAlignmentManager {
         this.gridAlignTargets = null;
         this.gridAlignAnimNodes = null;
         this.gridAlignAnimTargets = null;
+        this.gridAlignFinalTargets = null;
         
         // Reset performance tracking
         this.animationNodeIndex = 0;

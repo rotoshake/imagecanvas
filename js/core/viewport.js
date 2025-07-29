@@ -383,6 +383,20 @@ class ViewportManager {
         this.isAnimating = true;
         this.movementTimeout = setTimeout(() => {
             this.isAnimating = false;
-        }, 100); // Consider movement stopped after 100ms of no updates
+            // Trigger quality update after movement stops
+            if (this.graphCanvas) {
+                this.graphCanvas.dirty_canvas = true;
+            }
+        }, 150); // Consider movement stopped after 150ms of no updates
+    }
+    
+    // Check if we should defer quality updates
+    shouldDeferQualityUpdate() {
+        // Defer during animation or recent movement
+        if (this.isAnimating) return true;
+        
+        // Also defer if movement was very recent
+        const timeSinceMovement = performance.now() - this.lastMovementTime;
+        return timeSinceMovement < 200; // Defer for 200ms after last movement
     }
 }

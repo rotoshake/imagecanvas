@@ -19,7 +19,6 @@
             window.app.collaborativeArchitecture = arch;
             await arch.initialize();
             
-            console.log('✅ Collaborative architecture auto-initialized');
             
             // Initialize systems that depend on the collaborative architecture
             if (window.app.collaborativeArchitecture) {

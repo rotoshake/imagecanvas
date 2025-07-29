@@ -33,7 +33,6 @@ class GalleryViewManager {
         this.handleKeyDown = this.handleKeyDown.bind(this);
         this.handleCloseClick = this.handleCloseClick.bind(this);
         
-        console.log('🖼️ GalleryViewManager initialized');
     }
     
     /**

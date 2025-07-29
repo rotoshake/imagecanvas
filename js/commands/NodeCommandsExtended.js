@@ -2,8 +2,6 @@
  * Extended node commands for all operations
  */
 
-console.log('📄 NodeCommandsExtended.js loading...');
-console.log('🔍 Command base class available?', typeof Command);
 
 class ResizeNodeCommand extends Command {
     constructor(params, origin = 'local') {
@@ -51,7 +49,6 @@ class ResizeNodeCommand extends Command {
             }
         });
         
-        console.log(`📝 Prepared undo data for ResizeNodeCommand: ${Object.keys(this.undoData.previousSizes).length} nodes`);
     }
     
     async execute(context) {
@@ -223,7 +220,6 @@ class ResetNodeCommand extends Command {
             this.undoData.nodes.push(undoInfo);
         });
         
-        console.log(`📝 Prepared undo data for ResetNodeCommand: ${this.undoData.nodes.length} nodes`);
     }
     
     async execute(context) {
@@ -422,7 +418,6 @@ class RotateNodeCommand extends Command {
             });
         }
         
-        console.log(`📝 Prepared undo data for RotateNodeCommand:`, JSON.stringify(this.undoData, null, 2));
     }
     
     async execute(context) {
@@ -522,7 +517,6 @@ class VideoToggleCommand extends Command {
             };
         }
         
-        console.log(`📝 Prepared undo data for VideoToggleCommand`);
     }
     
     async execute(context) {
@@ -622,7 +616,6 @@ class BatchPropertyUpdateCommand extends Command {
             });
         }
         
-        console.log(`📝 Prepared undo data for BatchPropertyUpdateCommand: ${this.undoData.updates.length} updates`);
     }
     
     async execute(context) {
@@ -705,7 +698,6 @@ class DuplicateNodesCommand extends Command {
         this.undoData = {
             createdNodeIds: [] // Will be populated during execute
         };
-        console.log('📝 Prepared undo data for DuplicateNodesCommand');
     }
     
     async execute(context) {
@@ -745,6 +737,12 @@ class DuplicateNodesCommand extends Command {
                         duplicate._operationId = `${this.id}-${nodeData.id || duplicate.id}`;
                     }
                     duplicate._syncPending = true;
+                    
+                    // Mark as temporary for optimistic updates
+                    if (optimisticEnabled && !isRemoteOrigin) {
+                        duplicate._isTemporary = true;
+                        duplicate._temporaryCreatedAt = Date.now();
+                    }
                     
                     // For Alt+drag with explicit nodeData, nodes are ALREADY in the graph from drag operation
                     // Don't add them again - this would create phantom duplicates
@@ -788,6 +786,12 @@ class DuplicateNodesCommand extends Command {
                     }
                     duplicate._syncPending = true;
                     
+                    // Mark as temporary for optimistic updates
+                    if (optimisticEnabled && !isRemoteOrigin) {
+                        duplicate._isTemporary = true;
+                        duplicate._temporaryCreatedAt = Date.now();
+                    }
+                    
                     // For Ctrl+D: Only add to graph if optimistic updates enabled OR server/remote operation
                     if (optimisticEnabled || isRemoteOrigin) {
                         graph.add(duplicate);
@@ -797,6 +801,16 @@ class DuplicateNodesCommand extends Command {
                     this.undoData.createdNodeIds.push(duplicate.id);
                 }
             }
+        }
+        
+        // Select the created nodes for optimistic updates
+        if (optimisticEnabled && !isRemoteOrigin && createdNodes.length > 0 && context.canvas?.selection) {
+            // Clear existing selection
+            context.canvas.selection.clear();
+            // Select all created nodes
+            createdNodes.forEach(node => {
+                context.canvas.selection.selectNode(node, true);
+            });
         }
         
         // Force immediate canvas redraw to show loading states
@@ -849,7 +863,10 @@ class DuplicateNodesCommand extends Command {
         node.size = [...nodeData.size];
         node.properties = { ...nodeData.properties };
         node.rotation = nodeData.rotation || 0;
-        node.flags = { ...nodeData.flags };
+        // Merge flags preserving constructor defaults (like hide_title: true)
+        if (nodeData.flags) {
+            node.flags = { ...node.flags, ...nodeData.flags };
+        }
         node.title = nodeData.title;
         node.aspectRatio = nodeData.aspectRatio;
         
@@ -973,7 +990,6 @@ class PasteNodesCommand extends Command {
         this.undoData = {
             createdNodeIds: [] // Will be populated during execute
         };
-        console.log('📝 Prepared undo data for PasteNodesCommand');
     }
     
     async execute(context) {
@@ -1016,6 +1032,12 @@ class PasteNodesCommand extends Command {
                 // Generate new ID
                 node.id = Date.now() + Math.floor(Math.random() * 1000);
                 
+                // Mark as temporary for optimistic updates
+                if (optimisticEnabled && !isRemoteOrigin) {
+                    node._isTemporary = true;
+                    node._temporaryCreatedAt = Date.now();
+                }
+                
                 // Only add to graph if optimistic updates are enabled OR this is a server/remote operation
                 if (optimisticEnabled || isRemoteOrigin) {
                     graph.add(node);
@@ -1023,6 +1045,16 @@ class PasteNodesCommand extends Command {
                 createdNodes.push(node);
                 this.undoData.createdNodeIds.push(node.id);
             }
+        }
+        
+        // Select the created nodes for optimistic updates
+        if (optimisticEnabled && !isRemoteOrigin && createdNodes.length > 0 && context.canvas?.selection) {
+            // Clear existing selection
+            context.canvas.selection.clear();
+            // Select all created nodes
+            createdNodes.forEach(node => {
+                context.canvas.selection.selectNode(node, true);
+            });
         }
         
         // Force immediate canvas redraw to show loading states
@@ -1062,7 +1094,10 @@ class PasteNodesCommand extends Command {
         node.size = [...nodeData.size];
         node.properties = { ...nodeData.properties };
         node.rotation = nodeData.rotation || 0;
-        node.flags = { ...nodeData.flags };
+        // Merge flags preserving constructor defaults (like hide_title: true)
+        if (nodeData.flags) {
+            node.flags = { ...node.flags, ...nodeData.flags };
+        }
         node.title = nodeData.title;
         node.aspectRatio = nodeData.aspectRatio;
         
@@ -1206,11 +1241,8 @@ if (typeof window !== 'undefined') {
         };
         
         // Log which classes are available
-        console.log('🔍 Available command classes:', Object.entries(classes).filter(([k,v]) => v !== null).map(([k]) => k));
-        console.log('❌ Missing command classes:', Object.entries(classes).filter(([k,v]) => v === null).map(([k]) => k));
         
         window.NodeCommandsExtended = classes;
-        console.log('✅ NodeCommandsExtended registered to window');
     } catch (error) {
         console.error('❌ Failed to register NodeCommandsExtended:', error);
         console.error('Stack:', error.stack);

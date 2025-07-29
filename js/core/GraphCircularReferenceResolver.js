@@ -74,7 +74,6 @@ class GraphCircularReferenceResolver {
         };
         
         this.initialized = true;
-        console.log('✅ Graph Circular Reference Resolver initialized');
     }
     
     /**

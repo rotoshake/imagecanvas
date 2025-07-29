@@ -19,15 +19,15 @@
     top: 100px;
     left: 100px;
     min-width: 100px;
-    color: #aaf;
+    color: var(--color-litegraph-text-primary);
     padding: 0;
     box-shadow: 0 0 10px black !important;
-    background-color: #2e2e2e !important;
+    background-color: var(--color-litegraph-background) !important;
 	z-index: 10;
 }
 
 .litegraph.litecontextmenu.dark {
-    background-color: #000 !important;
+    background-color: var(--color-litegraph-background-dark) !important;
 }
 
 .litegraph.litecontextmenu .litemenu-title img {
@@ -57,7 +57,7 @@
 
 .litegraph .litemenubar li {
     font-size: 14px;
-    color: #999;
+    color: var(--color-litegraph-text-secondary);
     display: inline-block;
     min-width: 50px;
     padding-left: 10px;
@@ -216,7 +216,7 @@
 .litegraph.lite-search-item.generic_type{
     /*background-color: rgba(50, 50, 50, 0.5);*/
     /*color: #DD9;*/
-    color: #999;
+    color: var(--color-litegraph-text-secondary);
     font-style: italic;
 }
 

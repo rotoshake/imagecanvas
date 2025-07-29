@@ -85,7 +85,6 @@ class ImageLoadManager {
                 // Queue for later
                 this.loadQueue.push(loadRequest);
                 this.stats.queuedRequests++;
-                console.log(`🔄 Queued load for ${hash.substring(0, 8)}... (${this.loadQueue.length} in queue)`);
             }
         });
     }
@@ -97,7 +96,6 @@ class ImageLoadManager {
         this.activeLoads++;
         this.stats.concurrentHighWaterMark = Math.max(this.stats.concurrentHighWaterMark, this.activeLoads);
         
-        console.log(`📥 Starting load for ${request.hash.substring(0, 8)}... (${this.activeLoads}/${this.maxConcurrent} active)`);
         
         // Use the optimized loading approach with progress tracking
         this._loadImageWithProgress(request.url, request.hash)

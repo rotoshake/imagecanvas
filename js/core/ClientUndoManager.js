@@ -46,7 +46,6 @@ class ClientUndoManager {
         // Flag to indicate we're handling keyboard shortcuts
         this.keyboardShortcutsEnabled = true;
         
-        console.log('🎯 ClientUndoManager initialized');
     }
     
     /**
@@ -59,19 +58,14 @@ class ClientUndoManager {
         this.networkLayer.on('connected', (data) => {
             const oldUserId = this.userId;
             this.userId = data.userId || data.sessionId || data.id;
-            console.log(`👤 Undo manager user ID set: ${this.userId} (was: ${oldUserId})`);
-            console.log('📊 Connected data:', data);
-            console.log('📊 Connected data:', data);
             
             // Request initial undo state after a short delay to ensure server is ready
             setTimeout(() => {
-                console.log('📋 Requesting initial undo state after connection');
                 this.requestUndoState();
             }, 100);
         });
         
         this.networkLayer.on('project_joined', (data) => {
-            console.log('📁 Project joined event received:', data);
             const oldUserId = this.userId;
             const oldProjectId = this.projectId;
             
@@ -88,20 +82,15 @@ class ClientUndoManager {
                 this.projectId = data.project.id;
             }
             
-            console.log(`📁 Joined project ${this.projectId}, user ID: ${this.userId} (was: ${oldUserId}, project was: ${oldProjectId})`);
-            console.log('📊 Full session data:', data.session);
-            console.log('📊 Full project data:', data.project);
             
             // Request undo state for the project after a short delay
             setTimeout(() => {
-                console.log(`📋 Requesting undo state for project ${this.projectId}, user ${this.userId}`);
                 this.requestUndoState();
             }, 100);
         });
         
         // Undo state updates
         this.networkLayer.on('undo_state_update', (data) => {
-            console.log('📨 Received undo state update:', data);
             this.updateUndoState(data.undoState);
         });
         
@@ -148,7 +137,6 @@ class ClientUndoManager {
         });
         
         this.networkLayer.on('transaction_committed', (data) => {
-            console.log(`✅ Transaction committed: ${data.transactionId} (${data.operationCount} operations)`);
             this.currentTransaction = null;
         });
         
@@ -273,7 +261,6 @@ class ClientUndoManager {
             return;
         }
         
-        console.log(`📤 Requesting undo state from server for user ${this.userId}, project ${this.projectId}`);
         this.networkLayer.emit('request_undo_state', {
             userId: this.userId,
             projectId: this.projectId
@@ -287,16 +274,6 @@ class ClientUndoManager {
         const previousState = { ...this.undoState };
         this.undoState = undoState;
         
-        console.log('📊 Undo state updated:', {
-            previous: previousState,
-            current: this.undoState,
-            changes: {
-                canUndo: previousState.canUndo !== this.undoState.canUndo,
-                canRedo: previousState.canRedo !== this.undoState.canRedo,
-                undoCount: previousState.undoCount !== this.undoState.undoCount,
-                redoCount: previousState.redoCount !== this.undoState.redoCount
-            }
-        });
         
         // Update UI
         this.updateUndoRedoUI();
@@ -311,12 +288,6 @@ class ClientUndoManager {
      * Perform undo operation
      */
     async undo() {
-        console.log('⏪ Undo requested, current state:', JSON.stringify(this.undoState));
-        console.log('📊 Undo details:', {
-            userId: this.userId,
-            connected: this.networkLayer?.isConnected,
-            pendingOperation: this.pendingUndoRedo
-        });
         
         if (!this.undoState.canUndo || this.pendingUndoRedo) {
             console.log('❌ Cannot undo:', { canUndo: this.undoState.canUndo, pending: this.pendingUndoRedo });
@@ -336,7 +307,6 @@ class ClientUndoManager {
             return;
         }
         
-        console.log('🔄 Sending undo request to server...');
         this.pendingUndoRedo = 'undo';
         
         // Optimistically update UI
@@ -354,7 +324,6 @@ class ClientUndoManager {
             return;
         }
         
-        console.log('🔄 Requesting redo...');
         this.pendingUndoRedo = 'redo';
         
         // Optimistically update UI
@@ -368,29 +337,6 @@ class ClientUndoManager {
      * Handle successful undo from server
      */
     handleUndoSuccess(data) {
-        console.log('✅ Undo successful:', data);
-        console.log('📊 Undo operation details:', {
-            operationType: data.operation?.type,
-            operationId: data.operation?.id,
-            affectedNodes: data.affectedNodes,
-            hasStateUpdate: !!data.stateUpdate
-        });
-        
-        // Debug: Log the actual state update content
-        if (data.stateUpdate && data.stateUpdate.updated) {
-            console.log('📋 State update contains:');
-            data.stateUpdate.updated.forEach(node => {
-                console.log(`  Node ${node.id}:`, {
-                    hasRotation: 'rotation' in node,
-                    rotation: node.rotation,
-                    hasSize: 'size' in node,
-                    size: node.size,
-                    hasPos: 'pos' in node,
-                    pos: node.pos,
-                    allKeys: Object.keys(node).join(', ')
-                });
-            });
-        }
         
         this.pendingUndoRedo = null;
         
@@ -440,7 +386,6 @@ class ClientUndoManager {
         
         // Remove nodes
         if (removed && removed.length > 0) {
-            console.log(`🗑️ Removing ${removed.length} nodes`);
             for (const nodeId of removed) {
                 const node = this.app.graph.getNodeById(nodeId);
                 if (node) {
@@ -451,7 +396,6 @@ class ClientUndoManager {
         
         // Add nodes
         if (added && added.length > 0) {
-            console.log(`➕ Adding ${added.length} nodes`);
             for (const nodeData of added) {
                 // Create node from server data
                 const NodeClass = LiteGraph.registered_node_types[nodeData.type];
@@ -470,13 +414,11 @@ class ClientUndoManager {
         
         // Update nodes
         if (updated && updated.length > 0) {
-            console.log(`🔄 Updating ${updated.length} nodes`);
             for (const nodeData of updated) {
                 const node = this.app.graph.getNodeById(nodeData.id);
                 if (node) {
                     // Update position (modify in-place for LiteGraph)
                     if (nodeData.pos) {
-                        console.log(`📍 Moving node ${nodeData.id} from [${node.pos[0]}, ${node.pos[1]}] to [${nodeData.pos[0]}, ${nodeData.pos[1]}]`);
                         node.pos[0] = nodeData.pos[0];
                         node.pos[1] = nodeData.pos[1];
                     }
@@ -491,7 +433,6 @@ class ClientUndoManager {
                     }
                     // Update rotation if present
                     if (nodeData.rotation !== undefined) {
-                        console.log(`🔄 Updating rotation for node ${nodeData.id}: ${node.rotation} -> ${nodeData.rotation}`);
                         node.rotation = nodeData.rotation;
                     }
                     // Update aspect ratio if present
@@ -508,14 +449,12 @@ class ClientUndoManager {
             this.app.graphCanvas.dirty_bgcanvas = true;
         }
         
-        console.log('✅ State changes applied to graph');
     }
     
     /**
      * Handle successful redo from server
      */
     handleRedoSuccess(data) {
-        console.log('✅ Redo successful:', data);
         this.pendingUndoRedo = null;
         
         // NOTE: State changes are already applied by the state_update event
@@ -550,11 +489,9 @@ class ClientUndoManager {
      * Handle undo from another tab (same user)
      */
     handleCrossTabUndo(data) {
-        console.log('🔄 Cross-tab undo:', data);
         
         // CRITICAL: Apply state changes to the graph
         if (data.stateChanges) {
-            console.log('📝 Applying cross-tab undo state changes:', data.stateChanges);
             this.applyStateChanges(data.stateChanges);
         }
         
@@ -571,11 +508,9 @@ class ClientUndoManager {
      * Handle redo from another tab (same user)
      */
     handleCrossTabRedo(data) {
-        console.log('🔄 Cross-tab redo:', data);
         
         // CRITICAL: Apply state changes to the graph
         if (data.stateChanges) {
-            console.log('📝 Applying cross-tab redo state changes:', data.stateChanges);
             this.applyStateChanges(data.stateChanges);
         }
         
@@ -592,7 +527,6 @@ class ClientUndoManager {
      * Handle undo by remote user
      */
     handleRemoteUndo(data) {
-        console.log('👥 Remote user undo:', data);
         
         // Highlight affected nodes briefly
         if (data.affectedNodes && data.affectedNodes.length > 0) {
@@ -604,7 +538,6 @@ class ClientUndoManager {
      * Handle redo by remote user
      */
     handleRemoteRedo(data) {
-        console.log('👥 Remote user redo:', data);
         
         // Highlight affected nodes briefly
         if (data.affectedNodes && data.affectedNodes.length > 0) {
@@ -630,7 +563,6 @@ class ClientUndoManager {
         // Notify server
         this.networkLayer.emit('begin_transaction', { source });
         
-        console.log(`📝 Transaction started: ${source}`);
     }
     
     /**
@@ -647,7 +579,6 @@ class ClientUndoManager {
         // Notify server
         this.networkLayer.emit('commit_transaction', {});
         
-        console.log(`✅ Transaction committed: ${this.currentTransaction.source} (${operationCount} operations in ${duration}ms)`);
         
         this.currentTransaction = null;
     }
@@ -663,7 +594,6 @@ class ClientUndoManager {
         // Notify server
         this.networkLayer.emit('abort_transaction', {});
         
-        console.log(`❌ Transaction aborted: ${this.currentTransaction.source}`);
         
         this.currentTransaction = null;
     }
@@ -672,13 +602,6 @@ class ClientUndoManager {
      * Track an operation (called by StateSyncManager)
      */
     trackOperation(operation) {
-        console.log(`📝 Tracking operation: ${operation.type}`, {
-            id: operation.id,
-            hasUndoData: !!operation.undoData,
-            userId: this.userId,
-            projectId: this.projectId,
-            inTransaction: !!this.currentTransaction
-        });
         
         if (this.currentTransaction) {
             this.currentTransaction.operations.push(operation.id);

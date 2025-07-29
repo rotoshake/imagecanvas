@@ -256,7 +256,7 @@ class CreateNodeCommand extends Command {
             // This should match what will be generated on the server
             this.undoData = { nodeId: 'temp_' + Date.now() };
         }
-        console.log(`📝 Prepared undo data for CreateNodeCommand: nodeId=${this.undoData.nodeId}`);
+        // console.log(`📝 Prepared undo data for CreateNodeCommand: nodeId=${this.undoData.nodeId}`);
     }
     
     async execute(context) {
@@ -298,7 +298,13 @@ class CreateNodeCommand extends Command {
         }
         
         if (this.params.flags) {
-            Object.assign(node.flags, this.params.flags);
+            // Only override specific flags that are explicitly provided
+            // This preserves constructor defaults (like hide_title: true)
+            for (const [key, value] of Object.entries(this.params.flags)) {
+                if (value !== undefined) {
+                    node.flags[key] = value;
+                }
+            }
         }
         
         // Handle media nodes
@@ -324,9 +330,8 @@ class CreateNodeCommand extends Command {
                     this.params.properties.hash
                 );
                 
-                // Mark as already loaded since it's from server
-                node.loadingState = 'loaded';
-                node.loadingProgress = 100;
+                // Don't mark as loaded - let the image node handle loading state
+                // This ensures loading ring shows while image loads
             } else if (this.params.imageData) {
                 // Legacy: embedded image data (should be avoided)
                 console.warn('⚠️ Using legacy embedded image data - this should be avoided');
@@ -365,11 +370,11 @@ class CreateNodeCommand extends Command {
             
             // Handle background upload if needed
             if (needsUpload && window.imageUploadManager) {
-                console.log(`🔍 Upload needed for node ${node.id}:`, {
-                    hash: this.params.properties.hash,
-                    filename: this.params.properties.filename,
-                    srcLength: this.params.properties.src?.length || 0
-                });
+                // console.log(`🔍 Upload needed for node ${node.id}:`, {
+                //     hash: this.params.properties.hash,
+                //     filename: this.params.properties.filename,
+                //     srcLength: this.params.properties.src?.length || 0
+                // });
                 
                 // Pre-populate cache with local data URL so duplicates can use it immediately
                 if (window.app?.imageResourceCache && this.params.properties.hash) {
@@ -413,6 +418,17 @@ class CreateNodeCommand extends Command {
                     const fullUrl = CONFIG.SERVER.API_BASE + uploadResult.url;
                     if (currentNode.img) {
                         currentNode.img.src = fullUrl;
+                    }
+                    
+                    // Force aggressive redraw to show updated image
+                    const canvas = window.app?.graphCanvas || window.app?.graph?.canvas;
+                    if (canvas) {
+                        canvas.dirty_canvas = true;
+                        canvas.dirty_bgcanvas = true;
+                        // Use requestAnimationFrame to ensure redraw happens
+                        requestAnimationFrame(() => {
+                            canvas.draw();
+                        });
                     }
                     
                     // Store upload result for future syncs
@@ -773,7 +789,10 @@ class DeleteNodeCommand extends Command {
                 node.size = [...nodeData.size];
                 node.properties = { ...nodeData.properties };
                 node.rotation = nodeData.rotation || 0;
-                node.flags = { ...nodeData.flags };
+                // Merge flags preserving constructor defaults (like hide_title: true)
+                if (nodeData.flags) {
+                    node.flags = { ...node.flags, ...nodeData.flags };
+                }
                 node.title = nodeData.title;
                 
                 // Restore media if needed

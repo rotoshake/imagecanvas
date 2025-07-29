@@ -13,10 +13,10 @@ class ImageNode extends BaseNode {
             filename: null,       // Original filename
             scale: 1.0           // Display scale
         };
-        this.flags = { hide_title: false };
+        this.flags = { hide_title: true };
         this.img = null;
         // Remove individual thumbnail storage - use global cache
-        this.thumbnailSizes = [64, 128, 256, 512, 1024, 2048];
+        this.thumbnailSizes = CONFIG.THUMBNAILS.SIZES; // Use config sizes: [64, 256, 512]
         this.aspectRatio = 1;
         this.originalAspect = 1;
         this.originalWidth = null;
@@ -25,12 +25,18 @@ class ImageNode extends BaseNode {
         this.aspectRatioLocked = true; // Lock aspect ratio by default
         this.lockedAspectRatio = 1; // Will be updated when image loads
         
+        this._thumbnailUpdateCallback = null; // For cache notifications
+
         // Progressive loading state
-        this.loadingState = 'idle'; // idle, loading, loaded, error - start as idle
+        this.loadingState = 'idle'; // idle, loading, loaded, error - start as idle, will be set to loading when needed
         this.loadingProgress = 0; // 0-1 for unified progress tracking
         this.thumbnailProgress = 0; // Separate progress for thumbnail generation
         this.displayedProgress = 0; // Smoothed progress for display
         this.primaryLoadCompleteTime = null; // Track when primary loading finished to prevent flicker
+        
+        // Memory management
+        this.isUnloaded = false; // Track if image was unloaded due to memory pressure
+        this._forceThumbnailSize = null; // Force specific thumbnail size during memory pressure
     }
     
     async setImage(src, filename = null, hash = null) {
@@ -52,11 +58,14 @@ class ImageNode extends BaseNode {
         // Check if we already have thumbnails
         const hasThumbnails = hash && window.thumbnailCache && window.thumbnailCache.hasThumbnails(hash);
         
-        // Only set loading state if we don't have thumbnails (no visual content yet)
-        if (!hasThumbnails && (!this.loadingState || this.loadingState === 'idle')) {
+        // Only set loading state if we don't have thumbnails or preview (no visual content yet)
+        if (!hasThumbnails && this.loadingState !== 'preview' && (!this.loadingState || this.loadingState === 'idle')) {
             this.loadingState = 'loading';
             this.loadingProgress = 0.1; // 10% for starting load
             this.thumbnailProgress = 0; // Reset thumbnail progress for new load
+        } else if (this.loadingState === 'preview' && !hasThumbnails) {
+            // Keep preview state but start loading full image
+            this.loadingProgress = 0.1;
         }
         
         // console.log(`🖼️ setImage called - node:${this.id || 'pending'} loadingState:${this.loadingState} hash:${hash?.substring(0, 8) || 'none'}`)
@@ -93,7 +102,25 @@ class ImageNode extends BaseNode {
             this.img = await this.loadImageAsyncOptimized(imageSrc);
             this.loadingState = 'loaded';
             this.primaryLoadCompleteTime = Date.now(); // Track completion time to prevent flicker
+            this.isUnloaded = false; // Reset unloaded flag
+            
+            // Keep preview data until image is fully decoded and displayed
+            // This prevents flickering during the transition
+            if (this._previewUrl && this.img.complete) {
+                // Schedule preview cleanup after a short delay to ensure smooth transition
+                setTimeout(() => {
+                    if (this.img && this.img.complete && this.loadingState === 'loaded') {
+                        delete this._previewUrl;
+                        delete this._previewImg;
+                    }
+                }, 100);
+            }
             // Progress is now handled in loadImageAsyncOptimized
+            
+            // Register with memory manager
+            if (window.memoryManager) {
+                window.memoryManager.registerImage(this.id, this.img);
+            }
             
             // Force immediate redraw to show loaded image
             const canvas = this.graph?.canvas || window.app?.graphCanvas;
@@ -107,13 +134,24 @@ class ImageNode extends BaseNode {
             this.originalWidth = this.img.width || this.img.naturalWidth;
             this.originalHeight = this.img.height || this.img.naturalHeight;
             
-            // Set aspect ratio immediately
-            if (this.aspectRatio === 1) {
-                this.aspectRatio = this.img.width / this.img.height;
-                this.originalAspect = this.aspectRatio;
+            // Calculate actual aspect ratio from loaded image
+            const actualAspectRatio = this.img.width / this.img.height;
+            this.originalAspect = actualAspectRatio;
+            
+            // Only update node aspect ratio and size if it's significantly different or was default
+            const currentAspectRatio = this.size[0] / this.size[1];
+            const aspectDifference = Math.abs(currentAspectRatio - actualAspectRatio);
+            const isDefaultAspect = Math.abs(this.aspectRatio - 1) < 0.001; // Was default square
+            
+            if (isDefaultAspect || aspectDifference > 0.1) {
+                // Update aspect ratio and size only if needed
+                this.aspectRatio = actualAspectRatio;
                 this.size[0] = this.size[1] * this.aspectRatio;
+                // console.log(`📐 Updated aspect ratio for ${this.properties?.filename}: ${actualAspectRatio.toFixed(3)} (was ${currentAspectRatio.toFixed(3)})`);
             } else {
-                this.originalAspect = this.img.width / this.img.height;
+                // Keep existing size but update internal aspect ratio
+                this.aspectRatio = actualAspectRatio;
+                //console.log(`📐 Preserved aspect ratio for ${this.properties?.filename}: ${currentAspectRatio.toFixed(3)} (actual: ${actualAspectRatio.toFixed(3)})`);
             }
             
             // Update locked aspect ratio
@@ -124,6 +162,15 @@ class ImageNode extends BaseNode {
                 window.imageProcessingProgress.updateLoadProgress(hash, 1);
             }
             
+            // Clear render cache when image changes
+            this._cachedRenderData = null;
+            this._lastScale = null;
+            
+            // Invalidate offscreen render cache
+            if (window.offscreenRenderCache) {
+                window.offscreenRenderCache.invalidate(this.id);
+            }
+            
             // Use global thumbnail cache - non-blocking and shared!
             if (hash && window.thumbnailCache) {
                 // Add filename to image element for thumbnail cache access
@@ -131,18 +178,53 @@ class ImageNode extends BaseNode {
                     this.img.setAttribute('data-filename', this.properties.filename);
                 }
                 
-                // Start thumbnail generation if not already available
-                // This will be shared between all nodes with the same hash
+                // Generate thumbnails for better performance
+                const isVisible = this._isNodeVisible();
+                const priority = isVisible ? 'high' : 'normal';
+                
+                console.log(`🎬 Triggering thumbnail generation for ${hash.substring(0, 8)} (visible: ${isVisible}, priority: ${priority})`);
                 window.thumbnailCache.generateThumbnailsProgressive(
                     hash, 
                     this.img, 
                     (progress) => {
                         this.thumbnailProgress = progress;
+                        console.log(`📊 Thumbnail progress for ${hash.substring(0, 8)}: ${(progress * 100).toFixed(0)}%`);
+                        
+                        // When thumbnails are complete, invalidate cached render data
+                        if (progress >= 1.0) {
+                            console.log(`🎉 Thumbnails complete for ${hash.substring(0, 8)}, invalidating render cache`);
+                            // Small delay to ensure thumbnails are actually stored in cache
+                            setTimeout(() => {
+                                console.log(`🧹 Clearing cached render data for ${hash.substring(0, 8)} to use new thumbnails`);
+                                this._cachedRenderData = null;
+                                this._lastScale = null;
+                                this._cachedThumbnailSize = null;
+                                this._cachedScreenSize = null;
+                                
+                                // Verify thumbnails are actually available now
+                                if (window.thumbnailCache.hasThumbnails(hash)) {
+                                    const sizes = window.thumbnailCache.getAvailableSizes(hash);
+                                    console.log(`✅ Thumbnails now available for ${hash.substring(0, 8)}:`, sizes);
+                                    
+                                    // Force immediate redraw to show new thumbnails
+                                    if (this.graph?.canvas) {
+                                        this.graph.canvas.dirty_canvas = true;
+                                        console.log(`🎨 Forcing canvas redraw for ${hash.substring(0, 8)}`);
+                                        // Also immediately trigger a render to see new thumbnails
+                                        this.graph.canvas.draw(true, true);
+                                    }
+                                } else {
+                                    console.log(`⚠️ Thumbnails still not available for ${hash.substring(0, 8)} after completion`);
+                                }
+                            }, 100); // Increased delay to 100ms to ensure thumbnails are fully stored
+                        }
+                        
                         // Trigger redraw for progress updates
                         if (this.graph?.canvas) {
                             this.graph.canvas.dirty_canvas = true;
                         }
-                    }
+                    },
+                    priority
                 );
             }
             
@@ -209,7 +291,9 @@ class ImageNode extends BaseNode {
         // 4. Try resource cache (for duplicated nodes)
         if (this.properties.hash && window.app?.imageResourceCache) {
             const resource = window.app.imageResourceCache.get(this.properties.hash);
+            console.log(`🔍 Resource cache lookup for ${this.properties.hash.substring(0, 8)}:`, resource);
             if (resource?.url) {
+                console.log(`📂 Found resource cache URL for ${this.properties.hash.substring(0, 8)}: ${resource.url.substring(0, 50)}...`);
                 return resource.url;
             }
         }
@@ -438,44 +522,113 @@ class ImageNode extends BaseNode {
         });
     }
     
+    /**
+     * Degrade image quality due to memory pressure
+     */
+    degradeQuality(level) {
+        if (level === 'thumbnail-only') {
+            // Free full image, keep thumbnails
+            if (this.img) {
+                if (window.memoryManager) {
+                    window.memoryManager.unregisterImage(this.id);
+                }
+                this.img = null;
+                this.isUnloaded = true;
+                console.log(`💾 Degraded node ${this.id} to thumbnail-only`);
+            }
+        } else if (level === 'minimal') {
+            // Only use smallest thumbnail (64px)
+            this._forceThumbnailSize = 64;
+            if (this.img) {
+                if (window.memoryManager) {
+                    window.memoryManager.unregisterImage(this.id);
+                }
+                this.img = null;
+                this.isUnloaded = true;
+                console.log(`💾 Degraded node ${this.id} to minimal quality`);
+            }
+        }
+        
+        // Mark canvas dirty for redraw
+        const canvas = this.graph?.canvas || window.app?.graphCanvas;
+        if (canvas) {
+            canvas.dirty_canvas = true;
+        }
+    }
+    
+    /**
+     * Restore full quality (reload image)
+     */
+    restoreQuality() {
+        if (this.isUnloaded && this.properties.hash) {
+            this._forceThumbnailSize = null;
+            this.isUnloaded = false;
+            console.log(`🔄 Restoring full quality for node ${this.id}`);
+            
+            // Trigger image reload
+            this.setImage(
+                this.properties.serverUrl,
+                this.properties.filename,
+                this.properties.hash
+            );
+        }
+    }
+    
     // Use global thumbnail cache instead of individual generation
     getBestThumbnail(targetWidth, targetHeight) {
         if (!this.properties.hash || !window.thumbnailCache) return null;
         return window.thumbnailCache.getBestThumbnail(this.properties.hash, targetWidth, targetHeight);
     }
     
-    getOptimalLOD(screenWidth, screenHeight) {
-        // Smart LOD selection based on screen size and movement state
-        const canvas = this.graph?.canvas;
-        const viewport = canvas?.viewport;
-        const mouseState = canvas?.mouseState;
-        const isMoving = mouseState?.isDragging || viewport?.isAnimating || false;
-        
-        // Use the larger dimension for quality assessment
-        const screenSize = Math.max(screenWidth, screenHeight);
-        
-        // Quality buffer: switch to higher res before it looks pixelated
-        // More responsive buffers to prevent getting stuck on lower quality
-        const qualityBuffer = isMoving ? 1.1 : 1.5; // Less conservative, more responsive
-        
-        // LOD levels optimized for smooth quality transitions
-        const LOD_LEVELS = [
-            { maxSize: 64 * qualityBuffer,   useSize: 64 },    // Very small
-            { maxSize: 128 * qualityBuffer,  useSize: 128 },   // Small  
-            { maxSize: 256 * qualityBuffer,  useSize: 256 },   // Medium
-            { maxSize: 512 * qualityBuffer,  useSize: 512 },   // Large
-            { maxSize: 1024 * qualityBuffer, useSize: 1024 },  // Very large
-            { maxSize: 2048 * qualityBuffer, useSize: 2048 },  // Huge
-            { maxSize: Infinity, useSize: null }               // Full resolution for 1:1 viewing
-        ];
-        
-        for (const level of LOD_LEVELS) {
-            if (screenSize <= level.maxSize) {
-                return level.useSize;
+    /**
+     * Get the best available image to render based on current state
+     * Returns: { image, quality, useSmoothing } or null
+     */
+    getBestAvailableImage() {
+        const scale = this.graph?.canvas?.viewport?.scale || 1;
+        const screenWidth = this.size[0] * scale;
+        const screenHeight = this.size[1] * scale;
+        const requiredLOD = this.getOptimalLOD(screenWidth, screenHeight);
+
+        // If high resolution is required, try to use the full image first.
+        if (requiredLOD === null) {
+            if (this.img && this.img.complete) {
+                return { image: this.img, quality: 'full', useSmoothing: true };
             }
         }
         
-        return null; // Use full resolution
+        // Try to find the best available thumbnail using the cache's own logic
+        if (this.properties.hash && window.thumbnailCache?.getBestThumbnail) {
+            const bestThumbnail = window.thumbnailCache.getBestThumbnail(this.properties.hash, screenWidth, screenHeight);
+            if (bestThumbnail) {
+                // Infer size from the canvas dimensions (e.g., max of width/height)
+                const inferredSize = Math.max(bestThumbnail.width, bestThumbnail.height);
+                return { image: bestThumbnail, quality: `thumbnail-${inferredSize}`, useSmoothing: true };
+            }
+        }
+
+        // Fallback to full image if no suitable thumbnail was found
+        if (this.img && this.img.complete) {
+            return { image: this.img, quality: 'full-fallback', useSmoothing: true };
+        }
+        
+        // Fallback to preview image
+        if (this._previewImg && this._previewImg.complete) {
+            return { image: this._previewImg, quality: 'preview', useSmoothing: true };
+        }
+        
+        return null;
+    }
+    
+    getOptimalLOD(screenWidth, screenHeight) {
+        // Simple LOD selection based on screen size
+        const screenSize = Math.max(screenWidth, screenHeight);
+        
+        // Fixed thresholds with small buffer
+        if (screenSize <= 96) return 64;
+        if (screenSize <= 384) return 256;
+        if (screenSize <= 768) return 512;
+        return null; // Full resolution
     }
     
     onResize() {
@@ -504,8 +657,13 @@ class ImageNode extends BaseNode {
             return false; // Never show loading ring if we have thumbnails
         }
         
-        // Only show loading ring during initial load when we have nothing to show
-        if (this.loadingState === 'loading' && !this.img) {
+        // Show loading ring during initial load when we have nothing to show
+        if (this.loadingState === 'loading' && !this.img && !this._previewImg) {
+            return true;
+        }
+        
+        // Also show for new nodes that haven't started loading yet
+        if (this.loadingState === 'idle' && this.properties.hash && !this.img && !this._previewImg) {
             return true;
         }
         
@@ -521,19 +679,98 @@ class ImageNode extends BaseNode {
         }
     }
     
+    /**
+     * Check if this node is currently visible in the viewport
+     */
+    _isNodeVisible() {
+        try {
+            if (!this.graph?.canvas?.viewport) return false;
+            
+            const viewport = this.graph.canvas.viewport;
+            const padding = 100; // Small padding for near-visible nodes
+            
+            // Get viewport bounds
+            const viewBounds = {
+                left: -viewport.offset[0] - padding,
+                top: -viewport.offset[1] - padding,
+                right: -viewport.offset[0] + viewport.canvas.width / viewport.scale + padding,
+                bottom: -viewport.offset[1] + viewport.canvas.height / viewport.scale + padding
+            };
+            
+            // Check if node intersects with viewport
+            const [x, y] = this.pos;
+            const [w, h] = this.size;
+            
+            return (x + w >= viewBounds.left && x <= viewBounds.right &&
+                    y + h >= viewBounds.top && y <= viewBounds.bottom);
+        } catch (error) {
+            console.warn('Failed to check node visibility:', error);
+            return false;
+        }
+    }
+    
+    /**
+     * Defer thumbnail generation for later when node becomes visible
+     */
+    _deferThumbnailGeneration(hash) {
+        // Mark that thumbnails are needed but deferred
+        this._thumbnailsDeferred = true;
+        
+        // Register for viewport change notifications if not already registered
+        if (!this._viewportObserver && window.app?.graphCanvas) {
+            this._viewportObserver = () => {
+                // Check if node is now visible and needs thumbnails
+                if (this._thumbnailsDeferred && this._isNodeVisible() && this.img) {
+                    console.log(`👁️ Node visible, generating deferred thumbnails for ${this.properties?.filename}`);
+                    this._thumbnailsDeferred = false;
+                    
+                    window.thumbnailCache.generateThumbnailsProgressive(
+                        hash, 
+                        this.img, 
+                        (progress) => {
+                            this.thumbnailProgress = progress;
+                            if (this.graph?.canvas) {
+                                this.graph.canvas.dirty_canvas = true;
+                            }
+                        },
+                        'high' // High priority since node is now visible
+                    );
+                    
+                    // Unregister observer after generating thumbnails
+                    if (window.app.graphCanvas.viewport.removeChangeListener) {
+                        window.app.graphCanvas.viewport.removeChangeListener(this._viewportObserver);
+                        this._viewportObserver = null;
+                    }
+                }
+            };
+            
+            // Register viewport change listener if available
+            if (window.app.graphCanvas.viewport.addChangeListener) {
+                window.app.graphCanvas.viewport.addChangeListener(this._viewportObserver);
+            } else {
+                // Fallback: check periodically
+                setTimeout(() => this._viewportObserver(), 5000);
+            }
+        }
+        
+        console.log(`⏸️ Deferred thumbnail generation for ${this.properties?.filename} until visible`);
+    }
+    
     drawProgressRingOnly(ctx, progress = 0) {
         const centerX = this.size[0] / 2;
         const centerY = this.size[1] / 2;
         
-        // Calculate screen-space consistent line width (4px)
-        const scale = this.graph?.canvas?.viewport?.scale || 1;
+        // Get scale for screen-space calculations with fallbacks
+        const scale = this.graph?.canvas?.viewport?.scale || 
+                     window.app?.graphCanvas?.viewport?.scale ||
+                     1;
+        
+        // Screen-space consistent line width (4px on screen)
         const lineWidth = 4 / scale;
         
-        // Calculate radius with screen-space limits
+        // Simple radius calculation - just percentage of node size
         const baseRadius = Math.min(this.size[0], this.size[1]) * 0.15; // 15% of smallest dimension
-        const minRadius = 20 / scale;  // 20px minimum in screen space
-        const maxRadius = 100 / scale; // 100px maximum in screen space
-        const radius = Math.max(minRadius, Math.min(baseRadius, maxRadius));
+        const radius = baseRadius;
         
         // Draw background ring
         ctx.beginPath();
@@ -566,34 +803,94 @@ class ImageNode extends BaseNode {
     }
     
     onDrawForeground(ctx) {
-        this.validate();
+        const scale = this.graph?.canvas?.viewport?.scale || 1;
         
-        // Check if we have thumbnails available to show immediately
+        // Only use offscreen render cache for loaded images, not during loading
+        const shouldUseCache = window.offscreenRenderCache && 
+                             this.loadingState === 'loaded' && 
+                             (this.img || (this.properties.hash && window.thumbnailCache?.hasThumbnails(this.properties.hash)));
+        
+        if (shouldUseCache) {
+            // Check if cache needs invalidation due to changes
+            window.offscreenRenderCache.invalidateChanged(this);
+            
+            const cachedRender = window.offscreenRenderCache.getCachedRender(
+                this, 
+                scale, 
+                (offscreenCtx, node) => {
+                    // Render to offscreen canvas
+                    const imageData = this.getBestAvailableImage();
+                    if (imageData) {
+                        offscreenCtx.imageSmoothingEnabled = imageData.useSmoothing;
+                        offscreenCtx.drawImage(imageData.image, 0, 0, node.size[0], node.size[1]);
+                    }
+                }
+            );
+            
+            if (cachedRender) {
+                // Draw the cached render
+                ctx.drawImage(cachedRender, 0, 0, this.size[0], this.size[1]);
+                
+                // Still need to check for lazy load
+                this._cachedRenderData = this._cachedRenderData || this.getBestAvailableImage();
+                if (this._cachedRenderData?.quality === 'preview' && !this._lazyLoadScheduled) {
+                    this._lazyLoadScheduled = true;
+                    requestIdleCallback(() => {
+                        if (!this.img && this.properties.hash) {
+                            console.log(`⏰ Background loading full image for ${this.properties.hash.substring(0, 8)}...`);
+                            this.setImage(this.properties.serverUrl, this.properties.filename, this.properties.hash);
+                        }
+                    }, { timeout: 2000 });
+                }
+                return;
+            }
+        }
+        
+        // Fallback to direct rendering if no cache available
+        const screenWidth = this.size[0] * scale;
+        const screenHeight = this.size[1] * scale;
+        const requiredLOD = this.getOptimalLOD(screenWidth, screenHeight);
+
+        // Only recalculate if we don't have cached data or if the required LOD has changed
+        if (!this._cachedRenderData || this._cachedLOD !== requiredLOD) {
+            this._cachedRenderData = this.getBestAvailableImage();
+            this._cachedLOD = requiredLOD;
+        }
+        
+        if (this._cachedRenderData) {
+            const imageData = this._cachedRenderData;
+            
+            // Set smoothing based on image quality
+            ctx.imageSmoothingEnabled = imageData.useSmoothing;
+            
+            // Draw the image
+            //console.log(`🎨 ACTUALLY DRAWING: quality=${imageData.quality} size=${imageData.image.width}x${imageData.image.height} for ${this.properties.hash?.substring(0, 8)}`);
+            ctx.drawImage(imageData.image, 0, 0, this.size[0], this.size[1]);
+            
+            // If we're only showing a low-quality image, schedule lazy load of better quality
+            if ((imageData.quality === 'preview' || (imageData.quality === 'thumbnail' && !this.img)) && !this._lazyLoadScheduled && !this.img) {
+                this._lazyLoadScheduled = true;
+                console.log(`📸 Scheduling lazy load for ${this.properties.hash?.substring(0, 8)} (current: ${imageData.quality})`);
+                requestIdleCallback(() => {
+                    if (!this.img && this.properties.hash) {
+                        console.log(`⏰ Background loading full image for ${this.properties.hash.substring(0, 8)}...`);
+                        this.setImage(this.properties.serverUrl, this.properties.filename, this.properties.hash);
+                    }
+                }, { timeout: 2000 });
+            }
+            return;
+        }
+        
+        // Check if we have thumbnails available
         const hasThumbnails = this.properties.hash && window.thumbnailCache && 
                              window.thumbnailCache.hasThumbnails(this.properties.hash);
         
-        // If we have thumbnails, we're effectively "loaded" for display purposes
-        if (hasThumbnails && this.loadingState === 'idle') {
-            this.loadingState = 'loaded'; // Mark as loaded since we can display content
-        }
-        
         // Auto-start loading if we have a source but haven't started yet
-        if (this.loadingState === 'idle' && 
+        if ((this.loadingState === 'idle' || this.loadingState === 'preview') && 
             (this.properties.serverUrl || this.properties.hash) && !this.img && !hasThumbnails) {
             // No thumbnails available, need to load full image
+            console.log(`🔄 Auto-starting image load for ${this.properties.hash?.substring(0, 8)} (state: ${this.loadingState})`);
             this.setImage(this.properties.serverUrl, this.properties.filename, this.properties.hash);
-        }
-        
-        // Schedule lazy load of full image if we only have thumbnails
-        if (hasThumbnails && !this.img && !this._lazyLoadScheduled) {
-            this._lazyLoadScheduled = true;
-            requestIdleCallback(() => {
-                if (!this.img && this.properties.hash) {
-                    console.log(`⏰ Background loading full image for ${this.properties.hash.substring(0, 8)}...`);
-                    // Load silently in background without changing loading state
-                    this.setImage(this.properties.serverUrl, this.properties.filename, this.properties.hash);
-                }
-            }, { timeout: 2000 });
         }
         
         // Check unified loading ring condition
@@ -647,86 +944,29 @@ class ImageNode extends BaseNode {
             return;
         }
         
-        // Check if we can show thumbnails even without full image
-        if (!this.img && this.properties.hash && window.thumbnailCache) {
-            const thumbnail = this.getBestThumbnail(this.size[0], this.size[1]);
-            if (thumbnail) {
-                // Show thumbnail at full opacity - it's our primary display
-                ctx.save();
-                ctx.imageSmoothingEnabled = true;
-                ctx.imageSmoothingQuality = CONFIG.THUMBNAILS.QUALITY;
-                ctx.drawImage(thumbnail, 0, 0, this.size[0], this.size[1]);
-                ctx.restore();
-                
-                // Trigger lazy load if not already scheduled
-                if (!this._lazyLoadScheduled) {
-                    this._lazyLoadScheduled = true;
-                    requestIdleCallback(() => {
-                        if (!this.img && this.properties.hash) {
-                            console.log(`⏰ Background loading full image for ${this.properties.hash.substring(0, 8)}...`);
-                            this.setImage(this.properties.serverUrl, this.properties.filename, this.properties.hash);
-                        }
-                    }, { timeout: 2000 });
-                }
-                return;
-            }
-        }
-        
-        if (!this.img) return;
-        
-        const scale = this.graph?.canvas?.viewport?.scale || 1;
-        const screenWidth = this.size[0] * scale;
-        const screenHeight = this.size[1] * scale;
-        
-        // Use smart LOD selection
-        const optimalSize = this.getOptimalLOD(screenWidth, screenHeight);
-        const useThumbnail = optimalSize !== null;
-        
-        // Draw image or thumbnail
-        if (useThumbnail) {
-            const thumbnail = this.getBestThumbnail(optimalSize, optimalSize);
-            
-            if (thumbnail) {
-                ctx.save();
-                ctx.imageSmoothingEnabled = true;
-                ctx.imageSmoothingQuality = CONFIG.THUMBNAILS.QUALITY;
-                ctx.drawImage(thumbnail, 0, 0, this.size[0], this.size[1]);
-                ctx.restore();
-            } else if (this.img) {
-                // Fall back to full image if no thumbnails available but image is loaded
-                ctx.save();
-                ctx.imageSmoothingEnabled = true;
-                ctx.imageSmoothingQuality = CONFIG.THUMBNAILS.QUALITY;
-                ctx.drawImage(this.img, 0, 0, this.size[0], this.size[1]);
-                ctx.restore();
-            } else if (this.properties.hash && window.thumbnailCache) {
-                // No thumbnail or full image - trigger lazy load if needed
-                this._triggerLazyLoad();
-            }
-        } else {
-            // Full resolution for 1:1 viewing - need full image
-            if (this.img) {
-                ctx.save();
-                ctx.imageSmoothingEnabled = false; // Preserve pixel-perfect quality
-                ctx.drawImage(this.img, 0, 0, this.size[0], this.size[1]);
-                ctx.restore();
-            } else {
-                // Need to load full image for 1:1 viewing
-                this._triggerLazyLoad();
-                
-                // Show best available thumbnail while loading
-                const thumbnail = this.getBestThumbnail(this.size[0], this.size[1]);
-                if (thumbnail) {
-                    ctx.save();
-                    ctx.globalAlpha = 0.7; // Slightly faded to indicate it's not full res
-                    ctx.imageSmoothingEnabled = true;
-                    ctx.drawImage(thumbnail, 0, 0, this.size[0], this.size[1]);
-                    ctx.restore();
-                }
-            }
-        }
-        
         // Title rendering is handled at canvas level by drawNodeTitle()
+    }
+
+    initSubscriptions() {
+        if (this.properties.hash && window.thumbnailCache?.subscribe && !this._thumbnailUpdateCallback) {
+            this._thumbnailUpdateCallback = () => {
+                console.log(`🔔 Thumbnail update for ${this.properties.hash.substring(0,8)}, invalidating render cache.`);
+                this._cachedRenderData = null;
+                this._cachedLOD = null;
+                if (this.graph) {
+                    this.graph.canvas.dirty_canvas = true;
+                }
+            };
+            window.thumbnailCache.subscribe(this.properties.hash, this._thumbnailUpdateCallback);
+        }
+    }
+
+    onRemoved() {
+        // Unsubscribe from thumbnail updates to prevent memory leaks
+        if (this.properties.hash && this._thumbnailUpdateCallback && window.thumbnailCache?.unsubscribe) {
+            window.thumbnailCache.unsubscribe(this.properties.hash, this._thumbnailUpdateCallback);
+            this._thumbnailUpdateCallback = null;
+        }
     }
 }
 

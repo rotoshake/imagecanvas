@@ -47,7 +47,6 @@ class OperationPersistence {
         }
         
         this.initialized = true;
-        console.log('✅ Operation persistence initialized');
     }
     
     /**

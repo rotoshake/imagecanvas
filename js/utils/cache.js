@@ -8,7 +8,7 @@ class ImageCache {
         this.db = null;
         this.dbName = 'ImageCanvasCache';
         this.storeName = 'images';
-        this.maxMemoryItems = 100; // Limit memory cache size
+        this.maxMemoryItems = 100; // Balanced for performance without excessive memory usage
     }
     
     async init() {
@@ -129,20 +129,55 @@ class ThumbnailCache {
         // Structure: hash -> { 64: canvas, 128: canvas, 256: canvas, ... }
         this.cache = new Map();
         this.generationQueues = new Map(); // Track ongoing generation to avoid duplication
-        this.thumbnailSizes = [64, 128, 256, 512, 1024, 2048];
+        this.subscribers = new Map(); // For notifying nodes of updates
+        this.thumbnailSizes = CONFIG.THUMBNAILS.SIZES || [64, 256, 512]; // Use config sizes
+        // Dynamically set priority and quality sizes from config
+        this.prioritySizes = this.thumbnailSizes.slice(0, 1); // Smallest size is priority
+        this.qualitySizes = this.thumbnailSizes.slice(1); // The rest are for quality
         
-        // Bundled tracking removed - now handled by unified progress system
+        // Memory management - significantly increased to prevent cache thrashing
+        this.maxHashEntries = 5000; // Much higher limit to utilize available memory
+        this.maxMemoryBytes = 1 * 1024 * 1024 * 1024; // 1GB for thumbnails (half of total 2GB)
+        this.currentMemoryUsage = 0; // Track actual memory usage
+        this.accessOrder = new Map(); // Track access order for LRU eviction
+        this.lastCleanup = Date.now();
+        this.cleanupInterval = 120000; // Cleanup every 2 minutes (less frequent to reduce overhead)
+        
+        // Throttling for performance
+        this.activeGenerations = 0;
+        this.maxConcurrentGenerations = 2; // Limit concurrent thumbnail generation
+        this.generationQueue = []; // Queue for pending generations
+        this.lowPriorityQueue = []; // Separate queue for low priority (preload) requests
+        this.frameRateThrottle = 16; // Minimum 16ms between operations to maintain 60fps
+        
+        console.log(`🧹 ThumbnailCache initialized with ${this.maxHashEntries} entries / ${(this.maxMemoryBytes / (1024 * 1024)).toFixed(0)}MB limit`);
     }
     
     // Get thumbnails for a specific hash (returns Map of size -> canvas)
     getThumbnails(hash) {
+        this._trackAccess(hash);
         return this.cache.get(hash) || new Map();
     }
     
     // Get a specific thumbnail size for a hash
     getThumbnail(hash, size) {
+        // PERFORMANCE: Skip access tracking during renders for speed
         const thumbnails = this.cache.get(hash);
         return thumbnails ? thumbnails.get(size) : null;
+    }
+    
+    // Track access for LRU eviction
+    _trackAccess(hash) {
+        if (this.cache.has(hash)) {
+            // Update access time
+            this.accessOrder.set(hash, Date.now());
+        }
+        
+        // Periodic cleanup check
+        const now = Date.now();
+        if (now - this.lastCleanup > this.cleanupInterval) {
+            this._performCleanup();
+        }
     }
     
     // Check if thumbnails exist for a hash
@@ -162,16 +197,159 @@ class ThumbnailCache {
         return thumbnails ? Array.from(thumbnails.keys()) : [];
     }
     
-    // Store a thumbnail
+    // Store a thumbnail (with memory management)
     setThumbnail(hash, size, canvas) {
         if (!this.cache.has(hash)) {
             this.cache.set(hash, new Map());
+            this.accessOrder.set(hash, Date.now());
         }
-        this.cache.get(hash).set(size, canvas);
+        
+        const thumbnails = this.cache.get(hash);
+        const oldCanvas = thumbnails.get(size);
+        
+        // Update memory tracking
+        if (oldCanvas) {
+            this.currentMemoryUsage -= this._calculateCanvasMemory(oldCanvas);
+        }
+        this.currentMemoryUsage += this._calculateCanvasMemory(canvas);
+        
+        thumbnails.set(size, canvas);
+        this._trackAccess(hash);
+        this._notify(hash); // Notify subscribers that a new thumbnail is available
+        
+        // Check if we need to evict based on memory OR count
+        if (this.currentMemoryUsage > this.maxMemoryBytes || this.cache.size > this.maxHashEntries) {
+            this._evictOldEntries();
+        }
+    }
+    
+    // Calculate memory usage of a canvas
+    _calculateCanvasMemory(canvas) {
+        return canvas.width * canvas.height * 4; // 4 bytes per pixel (RGBA)
+    }
+    
+    // Perform smart eviction with viewport awareness
+    _evictOldEntries() {
+        // Determine if we need to evict based on count or memory
+        const needCountEviction = this.cache.size > this.maxHashEntries;
+        const needMemoryEviction = this.currentMemoryUsage > this.maxMemoryBytes;
+        
+        if (!needCountEviction && !needMemoryEviction) return;
+        
+        // Calculate targets
+        const entriesToRemove = needCountEviction ? this.cache.size - this.maxHashEntries : 0;
+        const memoryToFree = needMemoryEviction ? this.currentMemoryUsage - (this.maxMemoryBytes * 0.9) : 0; // Free to 90% of limit
+        
+        // Get currently visible nodes to protect them from eviction
+        const visibleHashes = this._getVisibleNodeHashes();
+        
+        // Sort entries by priority: visible nodes last (lowest priority for eviction)
+        const sortedEntries = Array.from(this.accessOrder.entries())
+            .map(([hash, accessTime]) => ({
+                hash,
+                accessTime,
+                isVisible: visibleHashes.has(hash),
+                priority: visibleHashes.has(hash) ? 1000000 + accessTime : accessTime // Visible nodes get high priority
+            }))
+            .sort((a, b) => a.priority - b.priority); // Lowest priority first (oldest non-visible)
+        
+        let removed = 0;
+        let freedMemory = 0;
+        
+        for (const entry of sortedEntries) {
+            // Check if we've met our targets
+            if (removed >= entriesToRemove && freedMemory >= memoryToFree) break;
+            
+            const { hash, accessTime, isVisible } = entry;
+            
+            // Skip visible nodes unless we're under extreme memory pressure
+            if (isVisible && freedMemory < memoryToFree * 0.8) {
+                continue;
+            }
+            
+            // Clean up canvas elements to free memory
+            const thumbnails = this.cache.get(hash);
+            if (thumbnails) {
+                let hashMemory = 0;
+                for (const [size, canvas] of thumbnails) {
+                    hashMemory += this._calculateCanvasMemory(canvas);
+                    // Clear canvas to help GC
+                    if (canvas && canvas.getContext) {
+                        const ctx = canvas.getContext('2d');
+                        ctx.clearRect(0, 0, canvas.width, canvas.height);
+                    }
+                }
+                freedMemory += hashMemory;
+                this.currentMemoryUsage -= hashMemory;
+            }
+            
+            this.cache.delete(hash);
+            this.accessOrder.delete(hash);
+            removed++;
+        }
+        
+        console.log(`🧹 Evicted ${removed} entries, freed ${(freedMemory / (1024 * 1024)).toFixed(1)}MB. Cache: ${this.cache.size} entries, ${(this.currentMemoryUsage / (1024 * 1024)).toFixed(1)}MB`);
+    }
+    
+    // Get hashes of currently visible nodes
+    _getVisibleNodeHashes() {
+        const visibleHashes = new Set();
+        
+        try {
+            if (window.app?.graph?.nodes && window.app?.graphCanvas?.viewport) {
+                const viewport = window.app.graphCanvas.viewport;
+                const nodes = window.app.graph.nodes;
+                
+                // Get viewport bounds with some padding
+                const padding = 200; // Extra padding to preload nearby images
+                const viewBounds = {
+                    left: -viewport.offset[0] - padding,
+                    top: -viewport.offset[1] - padding,
+                    right: -viewport.offset[0] + viewport.canvas.width / viewport.scale + padding,
+                    bottom: -viewport.offset[1] + viewport.canvas.height / viewport.scale + padding
+                };
+                
+                // Check which nodes are visible or near-visible
+                for (const node of nodes) {
+                    if (node.type === 'media/image' && node.properties?.hash) {
+                        const [x, y] = node.pos;
+                        const [w, h] = node.size;
+                        
+                        // Check if node intersects with padded viewport
+                        if (x + w >= viewBounds.left && x <= viewBounds.right &&
+                            y + h >= viewBounds.top && y <= viewBounds.bottom) {
+                            visibleHashes.add(node.properties.hash);
+                        }
+                    }
+                }
+            }
+        } catch (error) {
+            console.warn('Failed to get visible node hashes:', error);
+        }
+        
+        return visibleHashes;
+    }
+    
+    // Periodic cleanup
+    _performCleanup() {
+        this.lastCleanup = Date.now();
+        
+        // Force eviction if over limit
+        if (this.cache.size > this.maxHashEntries) {
+            this._evictOldEntries();
+        }
+        
+        // Clean up any stale generation queues
+        for (const [hash, promise] of this.generationQueues) {
+            if (promise._timestamp && (Date.now() - promise._timestamp) > 60000) {
+                console.log(`🧹 Cleaning up stale generation queue for ${hash.substring(0, 8)}...`);
+                this.generationQueues.delete(hash);
+            }
+        }
     }
     
     // Generate thumbnails progressively with queue management
-    async generateThumbnailsProgressive(hash, sourceImage, progressCallback = null) {
+    async generateThumbnailsProgressive(hash, sourceImage, progressCallback = null, priority = 'normal') {
         // Check if already generating for this hash
         if (this.generationQueues.has(hash)) {
             // Return the existing promise
@@ -183,6 +361,28 @@ class ThumbnailCache {
             return this.getThumbnails(hash);
         }
         
+        // Throttle concurrent generations to maintain performance
+        if (this.activeGenerations >= this.maxConcurrentGenerations) {
+            return new Promise((resolve) => {
+                const queueItem = {
+                    hash,
+                    sourceImage,
+                    progressCallback,
+                    priority,
+                    resolve
+                };
+                
+                // Add to appropriate queue based on priority
+                if (priority === 'low') {
+                    this.lowPriorityQueue.push(queueItem);
+                    console.log(`⏳ Queued low-priority thumbnail generation for ${hash.substring(0, 8)}... (low queue: ${this.lowPriorityQueue.length})`);
+                } else {
+                    this.generationQueue.push(queueItem);
+                    console.log(`⏳ Queued thumbnail generation for ${hash.substring(0, 8)}... (queue: ${this.generationQueue.length})`);
+                }
+            });
+        }
+        
         // NEW: Check IndexedDB first
         if (window.indexedDBThumbnailStore && window.indexedDBThumbnailStore.isAvailable) {
             try {
@@ -190,14 +390,17 @@ class ThumbnailCache {
                 if (storedThumbnails) {
                     // Convert object to Map format
                     const thumbnailMap = new Map();
+                    let loadedMemory = 0;
                     Object.entries(storedThumbnails).forEach(([size, canvas]) => {
                         thumbnailMap.set(parseInt(size), canvas);
+                        loadedMemory += this._calculateCanvasMemory(canvas);
                     });
                     
-                    // Cache in memory
+                    // Cache in memory and update memory tracking
                     this.cache.set(hash, thumbnailMap);
+                    this.currentMemoryUsage += loadedMemory;
+                    this.accessOrder.set(hash, Date.now());
                     
-                    console.log(`💾 Loaded thumbnails for ${hash.substring(0, 8)}... from IndexedDB`);
                     
                     // Report completion
                     if (progressCallback) progressCallback(1);
@@ -215,8 +418,16 @@ class ThumbnailCache {
         // Try to load from server thumbnails
         const serverThumbnails = await this._loadServerThumbnails(hash, sourceImage);
         if (serverThumbnails && serverThumbnails.size > 0) {
+            // Calculate memory for loaded thumbnails
+            let loadedMemory = 0;
+            for (const [size, canvas] of serverThumbnails) {
+                loadedMemory += this._calculateCanvasMemory(canvas);
+            }
+            
             // Loaded thumbnails from server
             this.cache.set(hash, serverThumbnails);
+            this.currentMemoryUsage += loadedMemory;
+            this.accessOrder.set(hash, Date.now());
             
             // Store in IndexedDB for next time
             this._storeToIndexedDB(hash, serverThumbnails);
@@ -229,10 +440,11 @@ class ThumbnailCache {
             return serverThumbnails;
         }
         
-        // Generating thumbnails client-side
+        // Generating thumbnails client-side with throttling
+        this.activeGenerations++;
+        console.log(`🎬 Starting thumbnail generation for ${hash.substring(0, 8)}... (active: ${this.activeGenerations})`);
         
-        // Bundle tracking now handled by unified progress system
-        const generationPromise = this._generateThumbnailsInternal(hash, sourceImage, progressCallback);
+        const generationPromise = this._generateThumbnailsInternal(hash, sourceImage, progressCallback, priority);
         this.generationQueues.set(hash, generationPromise);
         
         try {
@@ -242,70 +454,189 @@ class ThumbnailCache {
             return result;
         } finally {
             this.generationQueues.delete(hash);
+            this.activeGenerations--;
+            
+            // Process next item in queue
+            this._processNextInQueue();
         }
     }
     
-    async _generateThumbnailsInternal(hash, sourceImage, progressCallback = null) {
+    /**
+     * Process the next item in the generation queue
+     */
+    _processNextInQueue() {
+        if (this.activeGenerations >= this.maxConcurrentGenerations) return;
+        
+        // Process normal/high priority queue first
+        if (this.generationQueue.length > 0) {
+            const { hash, sourceImage, progressCallback, priority, resolve } = this.generationQueue.shift();
+            
+            console.log(`🎬 Processing queued thumbnail generation for ${hash.substring(0, 8)}... (remaining: ${this.generationQueue.length})`);
+            
+            // Process the queued item directly (avoid recursion)
+            this._generateThumbnailsInternal(hash, sourceImage, progressCallback, priority)
+                .then(resolve)
+                .catch(error => {
+                    console.error(`❌ Queued thumbnail generation failed for ${hash.substring(0, 8)}...`, error);
+                    resolve(new Map()); // Return empty map on failure
+                });
+        }
+        // Then process low priority queue if no normal priority items
+        else if (this.lowPriorityQueue.length > 0) {
+            const { hash, sourceImage, progressCallback, priority, resolve } = this.lowPriorityQueue.shift();
+            
+            console.log(`🎬 Processing low-priority thumbnail generation for ${hash.substring(0, 8)}... (remaining: ${this.lowPriorityQueue.length})`);
+            
+            // Process the queued item during idle time (avoid recursion)
+            requestIdleCallback(() => {
+                this._generateThumbnailsInternal(hash, sourceImage, progressCallback, priority)
+                    .then(resolve)
+                    .catch(error => {
+                        console.error(`❌ Low-priority thumbnail generation failed for ${hash.substring(0, 8)}...`, error);
+                        resolve(new Map()); // Return empty map on failure
+                    });
+            }, { timeout: 5000 });
+        }
+    }
+    
+    async _generateThumbnailsInternal(hash, sourceImage, progressCallback = null, priority = 'normal') {
         const thumbnails = new Map();
         this.cache.set(hash, thumbnails);
         
-        // Phase 1: Generate essential small thumbnails immediately (64px, 128px)
-        const essentialSizes = [64, 128];
-        for (let i = 0; i < essentialSizes.length; i++) {
-            const size = essentialSizes[i];
-            const canvas = this._generateSingleThumbnail(sourceImage, size);
-            thumbnails.set(size, canvas);
+        // Phase 1: Generate priority thumbnails immediately (e.g., 64px)
+        console.log(`🖼️ Generating priority thumbnails for ${hash.substring(0, 8)}... Sizes:`, this.prioritySizes);
+        
+        for (let i = 0; i < this.prioritySizes.length; i++) {
+            const size = this.prioritySizes[i];
             
-            const progress = 0.3 + (0.3 * (i + 1) / essentialSizes.length);
+            // Skip if this size already exists (e.g., 64px from preview)
+            if (thumbnails.has(size)) {
+                console.log(`⏭️ Skipping ${size}px thumbnail - already exists from preview`);
+                continue;
+            }
+            
+            const canvas = this._generateSingleThumbnail(sourceImage, size);
+            
+            // Only store if we actually generated a thumbnail
+            if (canvas) {
+                thumbnails.set(size, canvas);
+                this.currentMemoryUsage += this._calculateCanvasMemory(canvas);
+            }
+            
+            const progress = 0.2 + (0.6 * (i + 1) / this.prioritySizes.length);
             if (progressCallback) {
-                progressCallback(progress); // 30-60%
+                progressCallback(progress); // 20-80% for priority sizes
             }
             // Report to unified progress system
             if (window.imageProcessingProgress) {
                 window.imageProcessingProgress.updateThumbnailProgress(hash, progress);
             }
-        }
-        
-        // Yield control after essential thumbnails
-        await new Promise(resolve => requestAnimationFrame(resolve));
-        
-        // Phase 2: Generate remaining thumbnails with yielding
-        const remainingSizes = [256, 512, 1024, 2048];
-        for (let i = 0; i < remainingSizes.length; i++) {
-            const size = remainingSizes[i];
             
-            // Use progressively larger delays for bigger thumbnails
-            const delay = size <= 256 ? 8 : size <= 512 ? 12 : 16;
-            await new Promise(resolve => {
-                setTimeout(() => {
-                    const canvas = this._generateSingleThumbnail(sourceImage, size);
-                    thumbnails.set(size, canvas);
-                    
-                    const progress = 0.6 + (0.4 * (i + 1) / remainingSizes.length);
-                    if (progressCallback) {
-                        progressCallback(progress); // 60-100%
-                    }
-                    // Report to unified progress system
-                    if (window.imageProcessingProgress) {
-                        window.imageProcessingProgress.updateThumbnailProgress(hash, progress);
-                    }
-                    resolve();
-                }, delay);
-            });
+            // Yield control after each priority thumbnail for responsiveness
+            await new Promise(resolve => setTimeout(resolve, this.frameRateThrottle));
         }
         
-        // Report completion to unified progress system
+        // Phase 2: Wait for higher quality thumbnails to be generated
+        await new Promise(resolve => {
+            const generateQuality = () => {
+                this._generateQualityThumbnails(hash, sourceImage, thumbnails, progressCallback)
+                    .finally(resolve); // Ensure we resolve whether it succeeds or fails
+            };
+
+            console.log(`Scheduling quality thumbnail generation for ${hash.substring(0, 8)}`);
+            if (priority !== 'low') {
+                requestIdleCallback(generateQuality, { timeout: 1000 }); // Reduced timeout
+            } else {
+                setTimeout(generateQuality, 3000); // Reduced timeout
+            }
+        });
+        
+        console.log(`✅ All thumbnails generated for ${hash.substring(0, 8)}. Returning map.`);
+        return thumbnails;
+    }
+    
+    /**
+     * Generate higher quality thumbnails (256px, 512px) when system is idle
+     */
+    async _generateQualityThumbnails(hash, sourceImage, thumbnails, progressCallback = null) {
+        console.log(`🎨🎨🎨 STARTING quality thumbnail generation for ${hash.substring(0, 8)}. Sizes:`, this.qualitySizes);
+        
+        for (let i = 0; i < this.qualitySizes.length; i++) {
+            const size = this.qualitySizes[i];
+            
+            // Check if we still need this thumbnail (cache might have been evicted)
+            if (!this.cache.has(hash)) {
+                console.log(`🚫 Cache evicted for ${hash.substring(0, 8)}..., stopping quality generation`);
+                return;
+            }
+            
+            // Skip if this size already exists
+            if (thumbnails.has(size)) {
+                console.log(`⏭️ Skipping ${size}px thumbnail - already exists`);
+                continue;
+            }
+            
+            const canvas = this._generateSingleThumbnail(sourceImage, size);
+            console.log(`🔧 Generated ${size}px thumbnail:`, canvas ? `${canvas.width}x${canvas.height}` : 'FAILED');
+            
+            // Only store if we actually generated a thumbnail
+            if (canvas) {
+                thumbnails.set(size, canvas);
+                this.currentMemoryUsage += this._calculateCanvasMemory(canvas);
+                console.log(`✅ Stored ${size}px thumbnail in cache for ${hash.substring(0, 8)}`);
+            }
+            
+            const progress = 0.8 + (0.2 * (i + 1) / this.qualitySizes.length);
+            if (progressCallback) {
+                progressCallback(progress); // 80-100% for quality sizes
+            }
+            // Report to unified progress system
+            if (window.imageProcessingProgress) {
+                window.imageProcessingProgress.updateThumbnailProgress(hash, progress);
+            }
+            
+            // Longer yield for quality thumbnails to maintain responsiveness
+            await new Promise(resolve => setTimeout(resolve, this.frameRateThrottle * 2));
+        }
+        
+        // All quality thumbnails generated, report final completion
+        if (progressCallback) {
+            progressCallback(1.0);
+        }
+        // Report to unified progress system
         if (window.imageProcessingProgress) {
             window.imageProcessingProgress.updateThumbnailProgress(hash, 1);
         }
+        console.log(`✅ All quality thumbnails complete for ${hash.substring(0, 8)}`);
         
         return thumbnails;
     }
     
     _generateSingleThumbnail(sourceImage, size) {
+        // If source is already a canvas, use it directly
+        if (sourceImage instanceof HTMLCanvasElement) {
+            const canvas = document.createElement('canvas');
+            canvas.width = sourceImage.width;
+            canvas.height = sourceImage.height;
+            const ctx = canvas.getContext('2d');
+            ctx.drawImage(sourceImage, 0, 0);
+            return canvas;
+        }
+
+        // Get original dimensions
+        const originalWidth = sourceImage.width || sourceImage.videoWidth;
+        const originalHeight = sourceImage.height || sourceImage.videoHeight;
+        
+        // Skip if original is smaller than or equal to target size
+        // For example, a 300x300 image doesn't need a 512px thumbnail
+        if (Math.max(originalWidth, originalHeight) <= size) {
+            console.log(`⏭️ Skipping ${size}px thumbnail - original is only ${Math.max(originalWidth, originalHeight)}px`);
+            return null; // Signal to use original instead
+        }
+        
         // Calculate dimensions maintaining aspect ratio
-        let width = sourceImage.width || sourceImage.videoWidth;
-        let height = sourceImage.height || sourceImage.videoHeight;
+        let width = originalWidth;
+        let height = originalHeight;
         
         if (width > height && width > size) {
             height = Math.round(height * (size / width));
@@ -330,6 +661,7 @@ class ThumbnailCache {
         ctx.imageSmoothingQuality = CONFIG.THUMBNAILS.QUALITY;
         ctx.drawImage(sourceImage, 0, 0, width, height);
         
+        
         return canvas;
     }
     
@@ -340,15 +672,17 @@ class ThumbnailCache {
         
         const targetSize = Math.max(targetWidth, targetHeight);
         
-        // Find the best thumbnail, prioritizing those that meet quality needs
-        for (let i = this.thumbnailSizes.length - 1; i >= 0; i--) {
+        // Find the best thumbnail, prioritizing the smallest that meets quality needs
+        for (let i = 0; i < this.thumbnailSizes.length; i++) {
             const size = this.thumbnailSizes[i];
             if (thumbnails.has(size)) {
                 const thumbnail = thumbnails.get(size);
                 const thumbnailSize = Math.max(thumbnail.width, thumbnail.height);
                 
-                // If this thumbnail is good enough quality (>= 90% of target), use it
-                if (thumbnailSize >= targetSize * 0.9) {
+                // If this thumbnail is good enough quality, use it
+                // Use a sliding scale: be more permissive for smaller targets
+                const qualityThreshold = targetSize <= 128 ? 0.5 : 0.8;
+                if (thumbnailSize >= targetSize * qualityThreshold) {
                     return thumbnail;
                 }
             }
@@ -375,6 +709,8 @@ class ThumbnailCache {
     clear() {
         this.cache.clear();
         this.generationQueues.clear();
+        this.currentMemoryUsage = 0;
+        this.accessOrder.clear();
         // Bundle tracking no longer needed - handled by unified progress system
     }
     
@@ -408,25 +744,42 @@ class ThumbnailCache {
         }
     }
     
-    // Get cache statistics
+    // Get cache statistics (enhanced with memory monitoring)
     getStats() {
         const totalHashes = this.cache.size;
         let totalThumbnails = 0;
-        let memoryUsage = 0;
         
         for (const [hash, thumbnails] of this.cache) {
             totalThumbnails += thumbnails.size;
-            for (const [size, canvas] of thumbnails) {
-                memoryUsage += canvas.width * canvas.height * 4; // 4 bytes per pixel
-            }
         }
         
         return {
             totalHashes,
             totalThumbnails,
-            memoryUsageMB: memoryUsage / (1024 * 1024),
-            activeGenerations: this.generationQueues.size
+            memoryUsageMB: this.currentMemoryUsage / (1024 * 1024),
+            maxMemoryMB: this.maxMemoryBytes / (1024 * 1024),
+            memoryUtilization: (this.currentMemoryUsage / this.maxMemoryBytes * 100).toFixed(1) + '%',
+            activeGenerations: this.generationQueues.size,
+            maxHashEntries: this.maxHashEntries,
+            countPressure: (totalHashes / this.maxHashEntries * 100).toFixed(1) + '%',
+            thumbnailSizes: this.thumbnailSizes.length
         };
+    }
+    
+    // Force cleanup for memory pressure
+    forceCleanup() {
+        console.log('🧹 Forcing thumbnail cache cleanup due to memory pressure');
+        this._evictOldEntries();
+        
+        // More aggressive cleanup - keep only most recent 25 entries
+        if (this.cache.size > 25) {
+            const oldLimit = this.maxHashEntries;
+            this.maxHashEntries = 25;
+            this._evictOldEntries();
+            this.maxHashEntries = oldLimit;
+        }
+        
+        console.log(`🧹 Forced cleanup complete. Cache size: ${this.cache.size}`);
     }
     
     /**
@@ -586,5 +939,189 @@ class ThumbnailCache {
         });
     }
     
+    // ==========================================
+    // PREVIEW METHODS (for drag & drop integration)
+    // ==========================================
+    
+    /**
+     * Store preview-specific data (temporary or permanent)
+     * @param {string} hash - Image hash (could be temporary)
+     * @param {number} size - Preview size
+     * @param {string|Blob} previewData - Preview URL or blob
+     * @param {boolean} isTemporary - Whether this is temporary preview data
+     */
+    setPreview(hash, size, previewData, isTemporary = false) {
+        if (isTemporary) {
+            // For temporary previews, use a separate temporary cache
+            if (!this.tempPreviewCache) {
+                this.tempPreviewCache = new Map();
+            }
+            
+            if (!this.tempPreviewCache.has(hash)) {
+                this.tempPreviewCache.set(hash, new Map());
+            }
+            
+            this.tempPreviewCache.get(hash).set(size, previewData);
+            return;
+        }
+        
+        // For permanent previews, store in main cache
+        // Convert blob URL to canvas if needed
+        if (typeof previewData === 'string' && previewData.startsWith('blob:')) {
+            // Create an image element to load the blob URL
+            const img = new Image();
+            img.onload = () => {
+                const canvas = document.createElement('canvas');
+                canvas.width = img.width;
+                canvas.height = img.height;
+                const ctx = canvas.getContext('2d');
+                ctx.drawImage(img, 0, 0);
+                
+                // Store the canvas
+                this.setThumbnail(hash, size, canvas);
+                
+                // Clean up blob URL
+                URL.revokeObjectURL(previewData);
+            };
+            img.src = previewData;
+        } else if (previewData instanceof HTMLCanvasElement) {
+            this.setThumbnail(hash, size, previewData);
+        }
+    }
+    
+    /**
+     * Get preview for specific size
+     * @param {string} hash - Image hash
+     * @param {number} size - Preview size
+     * @returns {Promise<string|null>} Preview URL or null
+     */
+    async getPreview(hash, size) {
+        // Check temporary cache first
+        if (this.tempPreviewCache && this.tempPreviewCache.has(hash)) {
+            const tempPreviews = this.tempPreviewCache.get(hash);
+            if (tempPreviews.has(size)) {
+                return tempPreviews.get(size);
+            }
+        }
+        
+        // Check main cache
+        const thumbnail = this.getThumbnail(hash, size);
+        if (thumbnail) {
+            // Convert canvas to blob URL
+            return new Promise((resolve) => {
+                thumbnail.toBlob((blob) => {
+                    if (blob) {
+                        resolve(URL.createObjectURL(blob));
+                    } else {
+                        resolve(null);
+                    }
+                }, 'image/webp', 0.8);
+            });
+        }
+        
+        return null;
+    }
+    
+    /**
+     * Update hash mapping for temporary previews (when real hash becomes available)
+     * @param {string} tempHash - Temporary hash
+     * @param {string} realHash - Real image hash
+     */
+    updatePreviewHash(tempHash, realHash) {
+        if (!this.tempPreviewCache || !this.tempPreviewCache.has(tempHash)) {
+            return;
+        }
+        
+        const tempPreviews = this.tempPreviewCache.get(tempHash);
+        this.tempPreviewCache.set(realHash, tempPreviews);
+        this.tempPreviewCache.delete(tempHash);
+        
+        console.log(`🔄 Updated preview hash mapping: ${tempHash.substring(0, 8)}... → ${realHash.substring(0, 8)}...`);
+    }
+    
+    /**
+     * Clean up temporary preview cache
+     */
+    cleanupTempPreviews() {
+        if (this.tempPreviewCache) {
+            // Revoke object URLs to prevent memory leaks
+            for (const [hash, previews] of this.tempPreviewCache) {
+                for (const [size, url] of previews) {
+                    if (typeof url === 'string' && url.startsWith('blob:')) {
+                        URL.revokeObjectURL(url);
+                    }
+                }
+            }
+            this.tempPreviewCache.clear();
+        }
+    }
+    
     // Legacy bundle methods removed - now handled by unified progress system
 }
+
+// ===================================
+// GLOBAL MEMORY MONITORING
+// ===================================
+
+// Global function to monitor and manage memory usage
+window.monitorImageMemory = function() {
+    console.log('📊 Image Memory Usage Report:');
+    
+    // ImageCache stats
+    if (window.imageCache) {
+        const imageStats = window.imageCache.getStats();
+        console.log(`🖼️ ImageCache: ${imageStats.memorySize} items (max: ${imageStats.maxMemoryItems})`);
+    }
+    
+    // ThumbnailCache stats  
+    if (window.thumbnailCache) {
+        const thumbStats = window.thumbnailCache.getStats();
+        console.log(`🖼️ ThumbnailCache: ${thumbStats.totalHashes} images, ${thumbStats.totalThumbnails} thumbnails`);
+        console.log(`💾 Memory: ${thumbStats.memoryUsageMB.toFixed(1)}MB / ${thumbStats.maxMemoryMB.toFixed(0)}MB (${thumbStats.memoryUtilization})`);
+        console.log(`📊 Count: ${thumbStats.totalHashes} / ${thumbStats.maxHashEntries} (${thumbStats.countPressure})`);
+        
+        if (parseFloat(thumbStats.memoryUtilization) > 90 || parseFloat(thumbStats.countPressure) > 80) {
+            console.warn('⚠️ High cache pressure detected! Consider calling cleanupImageMemory()');
+        }
+    }
+    
+    // Browser memory (if available)
+    if (performance.memory) {
+        const memMB = performance.memory.usedJSHeapSize / (1024 * 1024);
+        const maxMB = performance.memory.jsHeapSizeLimit / (1024 * 1024);
+        console.log(`🧠 JS Heap: ${memMB.toFixed(1)}MB / ${maxMB.toFixed(1)}MB (${(memMB/maxMB*100).toFixed(1)}%)`);
+    }
+};
+
+// Global function to force cleanup
+window.cleanupImageMemory = function() {
+    console.log('🧹 Starting aggressive image memory cleanup...');
+    
+    let cleaned = 0;
+    
+    // Clean thumbnail cache
+    if (window.thumbnailCache) {
+        const beforeStats = window.thumbnailCache.getStats();
+        window.thumbnailCache.forceCleanup();
+        const afterStats = window.thumbnailCache.getStats();
+        cleaned += (beforeStats.totalHashes - afterStats.totalHashes);
+        console.log(`🗑️ Cleaned ${beforeStats.totalHashes - afterStats.totalHashes} thumbnail entries`);
+    }
+    
+    // Clean temporary preview cache
+    if (window.thumbnailCache && window.thumbnailCache.cleanupTempPreviews) {
+        window.thumbnailCache.cleanupTempPreviews();
+        console.log('🗑️ Cleaned temporary preview cache');
+    }
+    
+    // Force garbage collection if available (dev tools)
+    if (window.gc) {
+        window.gc();
+        console.log('🗑️ Forced garbage collection');
+    }
+    
+    console.log(`✅ Memory cleanup complete. Total entries cleaned: ${cleaned}`);
+    
+    // Show updated stats
+    setTimeout(() => window.monitorImageMemory(), 100);
+};

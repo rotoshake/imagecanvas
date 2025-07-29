@@ -13,7 +13,6 @@ class TransactionManager {
         // Active transaction tracking
         this.activeTransaction = null;
         
-        console.log('📋 TransactionManager initialized for manual transactions');
     }
     
     /**

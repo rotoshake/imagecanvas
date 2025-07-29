@@ -4,7 +4,6 @@
  */
 class CollaborativeArchitecture {
     constructor(app) {
-        console.log('[STARTUP_TRACE] CollaborativeArchitecture constructor');
         this.app = app;
         this.initialized = false;
         
@@ -21,12 +20,10 @@ class CollaborativeArchitecture {
      * Initialize the new architecture
      */
     initialize() {
-        console.log('[STARTUP_TRACE] CollaborativeArchitecture.initialize started');
         
         // 1. Network Layer (must be first)
         this.networkLayer = new NetworkLayer(this.app);
         this.app.networkLayer = this.networkLayer;
-        console.log('[STARTUP_TRACE] NetworkLayer created and assigned to app');
         
         // 2. Operation Pipeline
         this.operationPipeline = new OperationPipeline(this.app);
@@ -35,6 +32,7 @@ class CollaborativeArchitecture {
         // 3. State Sync Manager
         this.stateSyncManager = new StateSyncManager(this.app, this.networkLayer);
         this.app.stateSyncManager = this.stateSyncManager;
+        this.operationPipeline.stateSyncManager = this.stateSyncManager;
         
         // 4. Undo Manager
         this.undoManager = new ClientUndoManager(this.app);
@@ -53,7 +51,6 @@ class CollaborativeArchitecture {
         this.networkLayer.initialize();
         this.initialized = true;
 
-        console.log('[STARTUP_TRACE] CollaborativeArchitecture.initialize finished');
         return this.networkLayer; // Return the network layer instance
     }
     

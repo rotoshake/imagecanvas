@@ -22,7 +22,6 @@ class CleanupManager {
         // Setup global cleanup on page unload
         this.setupGlobalCleanup();
         
-        console.log('🧹 CleanupManager initialized');
     }
     
     /**

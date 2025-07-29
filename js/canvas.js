@@ -5,7 +5,11 @@
 class LGraphCanvas {
     constructor(canvas, graph) {
         this.canvas = canvas;
-        this.ctx = canvas.getContext('2d');
+        this.ctx = canvas.getContext('2d', {
+            alpha: false, // No alpha channel needed for main canvas
+            desynchronized: true, // Better performance
+            willReadFrequently: false // Force GPU acceleration
+        });
         this.graph = graph;
         this.graph.canvas = this;
         
@@ -302,11 +306,11 @@ class LGraphCanvas {
                     ctx.clearRect(0, 0, canvas.width, canvas.height);
                     
                     // Draw basic background
-                    ctx.fillStyle = '#222';
+                    ctx.fillStyle = ColorUtils.get('backgrounds', 'canvas_primary');
                     ctx.fillRect(0, 0, canvas.width, canvas.height);
                     
                     // Draw simple FPS indicator
-                    ctx.fillStyle = '#4af';
+                    ctx.fillStyle = ColorUtils.get('accents', 'primary');
                     ctx.font = `16px ${FONT_CONFIG.MONO_FONT_CANVAS}`;
                     ctx.fillText(`MINIMAL MODE - FPS: ${this.fps}`, 10, 30);
                     break;
@@ -1431,6 +1435,21 @@ Mode: ${this.fpsTestMode}`;
             scaleY = scaleX;
         }
         
+        // Ensure all selected nodes are tracked for server sync
+        for (const node of this.selection.selectedNodes.values()) {
+            // Add all selected nodes to the resizing nodes set so they get synced to server
+            this.interactionState.resizing.nodes.add(node);
+            
+            // Ensure initial state is captured for all nodes (needed for undo/sync)
+            if (!this.interactionState.resizing.initial.has(node.id)) {
+                this.interactionState.resizing.initial.set(node.id, {
+                    pos: [...node.pos],
+                    size: [...node.size],
+                    aspect: node.aspectRatio || (node.size[0] / node.size[1])
+                });
+            }
+        }
+        
         // Apply the same scale factors to all selected nodes, each from its own anchor
         for (const node of this.selection.selectedNodes.values()) {
             const initial = this.interactionState.resizing.initial.get(node.id);
@@ -1597,11 +1616,49 @@ Mode: ${this.fpsTestMode}`;
         }
 
         // Node drag
-        if (this.interactionState.dragging.node && this.interactionState.dragging.hasMoved && !this.interactionState.dragging.isDuplication) {
-            const nodes = this.selection.getSelectedNodes();
-            if (nodes.length > 0) {
-                const finalPositions = nodes.map(n => [...n.pos]);
-                window.app.undoManager.endInteraction('node_move', { positions: finalPositions });
+        if (this.interactionState.dragging.node && this.interactionState.dragging.hasMoved) {
+            if (this.interactionState.dragging.isDuplication) {
+                // Handle alt-drag duplication
+                const duplicatedNodes = this.selection.getSelectedNodes().filter(node => node._isTemporary);
+                if (duplicatedNodes.length > 0 && window.app?.operationPipeline) {
+                    // Prepare node data at final positions
+                    const nodeData = duplicatedNodes.map(node => {
+                        // Use serializeNode to ensure proper data format
+                        const serialized = this.serializeNode(node);
+                        // Update position to final drag position
+                        serialized.pos = [...node.pos];
+                        return serialized;
+                    });
+                    
+                    // Don't remove temporary nodes here - let StateSyncManager handle them
+                    // This allows proper tracking of selected nodes for restoration
+                    
+                    // Create nodes through server with node_duplicate command
+                    window.app.operationPipeline.execute('node_duplicate', {
+                        nodeData: nodeData,
+                        source: 'alt_drag'
+                    }).then(result => {
+                        if (result && result.result && result.result.nodes) {
+                            // For optimistic updates, nodes are already selected
+                            // For non-optimistic, we need to wait for server nodes
+                            if (!window.app?.operationPipeline?.stateSyncManager?.optimisticEnabled) {
+                                // Store node IDs to select when they arrive from server
+                                this._pendingSelectionNodeIds = result.result.nodes.map(n => n.id);
+                            }
+                            // With optimistic updates, the selection will be restored by StateSyncManager
+                            // when server nodes replace the temporary ones
+                        }
+                    }).catch(error => {
+                        console.error('Failed to sync alt-drag duplicates:', error);
+                    });
+                }
+            } else {
+                // Regular node move
+                const nodes = this.selection.getSelectedNodes();
+                if (nodes.length > 0) {
+                    const finalPositions = nodes.map(n => [...n.pos]);
+                    window.app.undoManager.endInteraction('node_move', { positions: finalPositions });
+                }
             }
         }
 
@@ -1609,9 +1666,14 @@ Mode: ${this.fpsTestMode}`;
         if (this.interactionState.resizing.active) {
             const nodes = Array.from(this.interactionState.resizing.nodes);
             if (nodes.length > 0) {
+                const nodeIds = nodes.map(n => n.id);
                 const finalSizes = nodes.map(n => [...n.size]);
                 const finalPositions = nodes.map(n => [...n.pos]);
-                window.app.undoManager.endInteraction('node_resize', { sizes: finalSizes, positions: finalPositions });
+                window.app.undoManager.endInteraction('node_resize', { 
+                    nodeIds, 
+                    sizes: finalSizes, 
+                    positions: finalPositions 
+                });
             }
         }
 
@@ -1750,6 +1812,38 @@ Mode: ${this.fpsTestMode}`;
         }
         if (key === 'h') {
             this.resetView();
+            return true;
+        }
+        
+        // Force sync with server
+        if (key === 'r' && !ctrl && !shift && !alt) {
+            // Only allow sync if we have a network connection
+            if (window.app?.stateSyncManager?.network) {
+                console.log('🔄 Manual sync triggered with R key');
+                
+                // Show notification that sync is starting
+                if (window.unifiedNotifications) {
+                    window.unifiedNotifications.info('Syncing with server...', {
+                        id: 'manual-sync',
+                        duration: 2000
+                    });
+                }
+                
+                // Request full sync from server
+                window.app.stateSyncManager.requestFullSync();
+                
+                // The sync completion will be handled by the existing handleFullStateSync method
+                // which will update the notification when done
+                
+                return true;
+            } else {
+                console.log('⚠️ Cannot sync - no network connection');
+                if (window.unifiedNotifications) {
+                    window.unifiedNotifications.warning('Cannot sync - not connected to server', {
+                        duration: 3000
+                    });
+                }
+            }
             return true;
         }
         
@@ -1942,19 +2036,14 @@ Mode: ${this.fpsTestMode}`;
                     // Clear selection first
                     this.selection.clear();
                     
-                    // For optimistic updates, select the nodes immediately
-                    if (window.app?.operationPipeline?.stateSyncManager?.optimisticEnabled) {
-                        result.result.nodes.forEach(nodeData => {
-                            // Find the actual node in the graph by ID
-                            const node = this.graph.getNodeById(nodeData.id);
-                            if (node) {
-                                this.selection.selectNode(node, true);
-                            }
-                        });
-                    } else {
+                    // Don't select nodes immediately with optimistic updates
+                    // Let StateSyncManager handle selection restoration through _pendingDuplicationSelection
+                    if (!window.app?.operationPipeline?.stateSyncManager?.optimisticEnabled) {
                         // For non-optimistic, store node IDs to select when they arrive from server
                         this._pendingSelectionNodeIds = result.result.nodes.map(n => n.id);
                     }
+                    // With optimistic updates, the selection will be restored by StateSyncManager
+                    // when server nodes replace the temporary ones
                     
                     this.dirty_canvas = true;
                     
@@ -2076,19 +2165,14 @@ Mode: ${this.fpsTestMode}`;
                     // Clear selection first
                     this.selection.clear();
                     
-                    // For optimistic updates, select the nodes immediately
-                    if (window.app?.operationPipeline?.stateSyncManager?.optimisticEnabled) {
-                        result.result.nodes.forEach(nodeData => {
-                            // Find the actual node in the graph by ID
-                            const node = this.graph.getNodeById(nodeData.id);
-                            if (node) {
-                                this.selection.selectNode(node, true);
-                            }
-                        });
-                    } else {
+                    // Don't select nodes immediately with optimistic updates
+                    // Let StateSyncManager handle selection restoration through _pendingDuplicationSelection
+                    if (!window.app?.operationPipeline?.stateSyncManager?.optimisticEnabled) {
                         // For non-optimistic, store node IDs to select when they arrive from server
                         this._pendingSelectionNodeIds = result.result.nodes.map(n => n.id);
                     }
+                    // With optimistic updates, the selection will be restored by StateSyncManager
+                    // when server nodes replace the temporary ones
                     
                     this.dirty_canvas = true;
                 }
@@ -2669,7 +2753,7 @@ Mode: ${this.fpsTestMode}`;
     
     duplicateNode(originalNode) {
         const nodeData = this.serializeNode(originalNode);
-        const duplicate = this.deserializeNode(nodeData);
+        const duplicate = this.deserializeNode(nodeData, true); // true = skip media loading
         
         // For media nodes, copy the actual media element reference if available
         if (duplicate && (originalNode.type === 'media/image' || originalNode.type === 'media/video')) {
@@ -2713,11 +2797,15 @@ Mode: ${this.fpsTestMode}`;
             serialized.properties = {
                 hash: node.properties.hash,
                 serverUrl: node.properties.serverUrl,
+                serverFilename: node.properties.serverFilename,
                 filename: node.properties.filename,
-                scale: node.properties.scale || 1.0
+                scale: node.properties.scale || 1.0,
+                originalSrc: node.properties.originalSrc // For single-user mode fallback
             };
-            // Remove any accidental src field
-            delete serialized.properties.src;
+            // Remove any accidental src field with data URL
+            if (serialized.properties.src && serialized.properties.src.startsWith('data:')) {
+                delete serialized.properties.src;
+            }
         }
         
         return serialized;
@@ -2781,13 +2869,20 @@ Mode: ${this.fpsTestMode}`;
                     });
                 }
             } else {
-                console.warn('No source available for duplicated media node:', filename);
-                node.loadingState = 'error';
+                // Check if the node already has media loaded (e.g., from alt-drag duplication)
+                if ((node.img && node.img.complete) || (node.video && node.video.readyState >= 2)) {
+                    // Media is already loaded, no need to warn
+                    node.loadingState = 'loaded';
+                    node.loadingProgress = 1.0;
+                } else {
+                    console.warn('No source available for duplicated media node:', filename);
+                    node.loadingState = 'error';
+                }
             }
         }
     }
     
-    deserializeNode(nodeData) {
+    deserializeNode(nodeData, skipMediaLoading = false) {
         if (typeof NodeFactory === 'undefined') {
             console.warn('NodeFactory not available');
             return null;
@@ -2800,12 +2895,15 @@ Mode: ${this.fpsTestMode}`;
         node.size = [...nodeData.size];
         node.title = nodeData.title;
         node.properties = { ...nodeData.properties };
-        node.flags = { ...nodeData.flags };
+        // Merge flags preserving constructor defaults (like hide_title: true)
+        if (nodeData.flags) {
+            node.flags = { ...node.flags, ...nodeData.flags };
+        }
         node.aspectRatio = nodeData.aspectRatio || 1;
         node.rotation = nodeData.rotation || 0;
         
-        // Load media content if available
-        if ((nodeData.type === 'media/image' || nodeData.type === 'media/video') && nodeData.properties.hash) {
+        // Load media content if available (skip for local duplicates)
+        if (!skipMediaLoading && (nodeData.type === 'media/image' || nodeData.type === 'media/video') && nodeData.properties.hash) {
             this.loadMediaForNode(node, nodeData);
         }
         
@@ -2902,10 +3000,10 @@ Mode: ${this.fpsTestMode}`;
         input.value = node.title || '';
         input.style.position = 'fixed';
         input.style.zIndex = '10000';
-        input.style.border = '2px solid #4af';
+        input.style.border = `2px solid ${ColorUtils.get('borders', 'focus')}`;
         input.style.outline = 'none';
-        input.style.background = 'rgba(0, 0, 0, 0.8)';
-        input.style.color = '#ffffff';
+        input.style.background = ColorUtils.get('backgrounds', 'overlay_dark');
+        input.style.color = ColorUtils.get('text', 'bright');
         input.style.fontFamily = FONT_CONFIG.APP_FONT;
         input.style.padding = '2px 4px';
         input.style.borderRadius = '4px';
@@ -2998,7 +3096,7 @@ Mode: ${this.fpsTestMode}`;
         textarea.style.position = 'fixed';
         textarea.style.zIndex = '10000';
         textarea.style.resize = 'none';
-        textarea.style.border = '2px solid #4af';
+        textarea.style.border = `2px solid ${ColorUtils.get('borders', 'focus')}`;
         textarea.style.outline = 'none';
         textarea.style.background = 'transparent';
         textarea.style.color = node.properties.textColor;
@@ -3323,20 +3421,6 @@ Mode: ${this.fpsTestMode}`;
     // DEBOUNCED OPERATIONS
     // ===================================
     
-    // DEPRECATED: Navigation state is now handled by NavigationStateManager
-    // StateManager is disabled in server-authoritative mode
-    /*
-    debouncedSave() {
-        if (this._saveTimeout) {
-            clearTimeout(this._saveTimeout);
-        }
-        this._saveTimeout = setTimeout(() => {
-            if (this.stateManager) {
-                this.stateManager.saveState(this.graph, this);
-            }
-        }, 500);
-    }
-    */
     
     // ===================================
     // RENDERING SYSTEM
@@ -3423,6 +3507,11 @@ Mode: ${this.fpsTestMode}`;
     draw() {
         if (!this.ctx) return;
         
+        // Start performance monitoring
+        if (window.app?.performanceMonitor) {
+            window.app.performanceMonitor.startFrame();
+        }
+        
         const startTime = performance.now();
         
         const ctx = this.ctx;
@@ -3433,9 +3522,9 @@ Mode: ${this.fpsTestMode}`;
         
         // Draw background (darker in gallery mode)
         if (this.galleryViewManager && this.galleryViewManager.active) {
-            ctx.fillStyle = '#111'; // Darker background for gallery mode
+            ctx.fillStyle = ColorUtils.get('backgrounds', 'canvas_gallery'); // Darker background for gallery mode
         } else {
-            ctx.fillStyle = '#222'; // Normal background
+            ctx.fillStyle = ColorUtils.get('backgrounds', 'canvas_primary'); // Normal background
         }
         ctx.fillRect(0, 0, canvas.width, canvas.height);
         
@@ -3490,6 +3579,11 @@ Mode: ${this.fpsTestMode}`;
         
         const cullTime = performance.now();
         
+        // Memory management cleanup
+        if (window.memoryManager && window.memoryManager.shouldCleanup()) {
+            window.memoryManager.performCleanup(visibleNodes, this.graph.nodes, this.viewport);
+        }
+        
         // Draw all visible nodes
         for (const node of visibleNodes) {
             // In gallery mode, only draw the current node
@@ -3513,6 +3607,20 @@ Mode: ${this.fpsTestMode}`;
         
         const totalTime = uiTime - startTime;
         
+        // Update performance monitor
+        if (window.app?.performanceMonitor) {
+            const monitor = window.app.performanceMonitor;
+            monitor.mark('render', totalTime);
+            monitor.mark('grid', gridTime - startTime);
+            monitor.mark('cull', cullTime - gridTime);
+            monitor.mark('draw', nodesTime - cullTime);
+            monitor.mark('ui', uiTime - nodesTime);
+            monitor.endFrame();
+            
+            // Draw performance HUD if enabled
+            monitor.drawHUD(ctx);
+        }
+        
         // Performance debugging - enable with window.DEBUG_FPS = true
         if (window.DEBUG_FPS && totalTime > 8.33) {
             console.log(`🐌 Slow frame: ${totalTime.toFixed(1)}ms total (grid: ${(gridTime-startTime).toFixed(1)}ms, cull: ${(cullTime-gridTime).toFixed(1)}ms, nodes: ${(nodesTime-cullTime).toFixed(1)}ms, ui: ${(uiTime-nodesTime).toFixed(1)}ms)`);
@@ -3523,7 +3631,7 @@ Mode: ${this.fpsTestMode}`;
         if (!this.viewport.shouldDrawGrid()) return;
         
         const gridInfo = this.viewport.getGridOffset();
-        ctx.fillStyle = '#333';
+        ctx.fillStyle = ColorUtils.get('canvas', 'grid_lines');
         
         for (let x = gridInfo.x; x < this.canvas.width; x += gridInfo.spacing) {
             for (let y = gridInfo.y; y < this.canvas.height; y += gridInfo.spacing) {
@@ -3658,7 +3766,7 @@ Mode: ${this.fpsTestMode}`;
     drawNodeSelection(ctx, node) {
         // Selection border
         ctx.lineWidth = 2 / this.viewport.scale;
-        ctx.strokeStyle = '#4af';
+        ctx.strokeStyle = ColorUtils.get('canvas', 'selection_stroke');
         ctx.strokeRect(0, 0, node.size[0], node.size[1]);
         
         // Draw handles if node is large enough and not during alignment animations
@@ -3676,7 +3784,7 @@ Mode: ${this.fpsTestMode}`;
         // Resize handle
         ctx.save();
         ctx.lineWidth = 3 / this.viewport.scale;
-        ctx.strokeStyle = '#fff';
+        ctx.strokeStyle = ColorUtils.get('canvas', 'handle_fill');
         ctx.shadowColor = 'rgba(0,0,0,0.3)';
         ctx.shadowBlur = 2 / this.viewport.scale;
         
@@ -3726,7 +3834,7 @@ Mode: ${this.fpsTestMode}`;
         ctx.setTransform(this.viewport.dpr, 0, 0, this.viewport.dpr, 0, 0);
         ctx.beginPath();
         ctx.arc(hx, hy, 4, 0, 2 * Math.PI);
-        ctx.fillStyle = '#4af';
+        ctx.fillStyle = ColorUtils.get('canvas', 'selection_fill');
         ctx.globalAlpha = 0.5;
         ctx.fill();
         ctx.restore();
@@ -3832,14 +3940,14 @@ Mode: ${this.fpsTestMode}`;
         
         const screenRect = [sx, sy, ex - sx, ey - sy];
         
-        ctx.strokeStyle = '#4af';
+        ctx.strokeStyle = ColorUtils.get('canvas', 'selection_stroke');
         ctx.lineWidth = 2;
         ctx.setLineDash([4, 4]);
         ctx.globalAlpha = 0.5;
         ctx.strokeRect(...screenRect);
         
         ctx.globalAlpha = 0.15;
-        ctx.fillStyle = '#4af';
+        ctx.fillStyle = ColorUtils.get('canvas', 'selection_fill');
         ctx.fillRect(...screenRect);
         ctx.restore();
     }
@@ -3860,12 +3968,12 @@ Mode: ${this.fpsTestMode}`;
         
         // Transparent background
         ctx.globalAlpha = 0.15;
-        ctx.fillStyle = '#4af';
+        ctx.fillStyle = ColorUtils.get('canvas', 'selection_fill');
         ctx.fillRect(sx - margin, sy - margin, sw + margin * 2, sh + margin * 2);
         
         // Border
         ctx.globalAlpha = 1.0;
-        ctx.strokeStyle = '#4af';
+        ctx.strokeStyle = ColorUtils.get('canvas', 'selection_stroke');
         ctx.lineWidth = 2;
         ctx.setLineDash([4, 4]);
         ctx.strokeRect(sx - margin, sy - margin, sw + margin * 2, sh + margin * 2);
@@ -3885,7 +3993,7 @@ Mode: ${this.fpsTestMode}`;
         const brY = sy + sh + margin;
         
         ctx.setLineDash([]);
-        ctx.strokeStyle = '#fff';
+        ctx.strokeStyle = ColorUtils.get('canvas', 'handle_fill');
         ctx.lineWidth = 3;
         ctx.shadowColor = 'rgba(0,0,0,0.3)';
         ctx.shadowBlur = 2;
@@ -3907,7 +4015,7 @@ Mode: ${this.fpsTestMode}`;
         
         ctx.beginPath();
         ctx.arc(hx, hy, 4, 0, 2 * Math.PI);
-        ctx.fillStyle = '#4af';
+        ctx.fillStyle = ColorUtils.get('canvas', 'selection_fill');
         ctx.globalAlpha = 0.5;
         ctx.fill();
     }
@@ -3933,19 +4041,24 @@ Mode: ${this.fpsTestMode}`;
         ctx.font = `12px ${FONT_CONFIG.MONO_FONT_CANVAS}`;
         ctx.fillStyle = '#fff';
         
-        // Count unique cached assets on the canvas
-        const uniqueCachedAssets = this.getUniqueCachedAssetsOnCanvas();
-        const cacheStats = window.app?.imageResourceCache ? window.app.imageResourceCache.getStats() : null;
-        const cacheDisplay = cacheStats ? 
-            `${uniqueCachedAssets}/${cacheStats.totalCached} (${cacheStats.hitRate})` : 
-            `${uniqueCachedAssets} unique`;
+        // Get memory usage - prefer real browser memory over estimates
+        let memoryDisplay = 'N/A';
+        if (performance.memory) {
+            const usedMB = Math.round(performance.memory.usedJSHeapSize / 1024 / 1024);
+            const limitMB = Math.round(performance.memory.jsHeapSizeLimit / 1024 / 1024);
+            const percent = Math.round((performance.memory.usedJSHeapSize / performance.memory.jsHeapSizeLimit) * 100);
+            memoryDisplay = `${usedMB}MB (${percent}%)`;
+        } else if (window.memoryManager) {
+            const memoryStats = window.memoryManager.getMemoryStats();
+            memoryDisplay = memoryStats ? memoryStats.formatted : 'N/A';
+        }
         
         const stats = [
             `FPS: ${this.fps}`,
             `Nodes: ${this.graph.nodes.length}`,
             `Selected: ${this.selection.size()}`,
             `Scale: ${(this.viewport.scale * 100).toFixed(0)}%`,
-            `References: ${uniqueCachedAssets}`
+            `Memory: ${memoryDisplay}`
         ];
         
         // Add test mode indicator if active
@@ -3960,6 +4073,18 @@ Mode: ${this.fpsTestMode}`;
         }
         
         stats.forEach((stat, i) => {
+            // Color memory stat based on usage level
+            if (stat.startsWith('Memory:') && performance.memory) {
+                const percent = Math.round((performance.memory.usedJSHeapSize / performance.memory.jsHeapSizeLimit) * 100);
+                if (percent >= 95) ctx.fillStyle = '#f44336'; // Red
+                else if (percent >= 75) ctx.fillStyle = '#ff9800'; // Orange
+                else ctx.fillStyle = '#4caf50'; // Green
+            } else if (stat.startsWith('Memory:') && window.memoryManager) {
+                const memoryStats = window.memoryManager.getMemoryStats();
+                ctx.fillStyle = memoryStats ? memoryStats.color : '#fff';
+            } else {
+                ctx.fillStyle = '#fff';
+            }
             ctx.fillText(stat, margin + 5, yPos + 15 + i * 14);
         });
         

@@ -9,7 +9,6 @@ const multer = require('multer');
 const sharp = require('sharp');
 const fs = require('fs').promises;
 const crypto = require('crypto');
-const { setupCleanupEndpoint } = require('./cleanupEndpoint');
 
 // Configure Sharp for better concurrent processing
 // Limit concurrency to prevent memory issues
@@ -1338,11 +1337,8 @@ class ImageCanvasServer {
         // Setup cleanup endpoint - note: db will be initialized later
         // This is a closure that will use this.db when the endpoint is called
         this.app.post('/database/cleanup', async (req, res) => {
-            // Import and use the cleanup logic
-            const FileReferenceTracker = require('./src/cleanup/FileReferenceTracker');
-            
             try {
-                console.log('🧹 Starting SAFE mark-and-sweep cleanup...');
+                console.log('🧹 Starting cleanup...');
                 
                 // Check if database is initialized
                 if (!this.db) {
@@ -1353,15 +1349,7 @@ class ImageCanvasServer {
                 const dryRun = req.query.dryRun === 'true';
                 const graceperiodMinutes = parseInt(req.query.gracePeriod) || 60;
                 
-                // Run the safe cleanup
-                const tracker = new FileReferenceTracker(this.db);
-                const fileResult = await tracker.performSafeCleanup({
-                    dryRun,
-                    graceperiodMinutes,
-                    verbose: true
-                });
-                
-                // Also clean up old operations (safe - doesn't affect files)
+                // For now, just clean up old operations
                 let operationsDeleted = 0;
                 try {
                     // Delete old operations with embedded image data
@@ -1379,15 +1367,10 @@ class ImageCanvasServer {
                 // Return results
                 res.json({
                     success: true,
-                    fileCleanup: {
-                        referencedFiles: fileResult.referencedFiles,
-                        deletedFiles: fileResult.deletedFiles.length,
-                        dryRun: fileResult.dryRun
-                    },
                     operationsDeleted,
                     message: dryRun ? 
-                        'Dry run completed - no files were deleted' : 
-                        `Cleaned up ${fileResult.deletedFiles.length} orphaned files`
+                        'Dry run completed' : 
+                        `Cleaned up ${operationsDeleted} old operations`
                 });
                 
             } catch (error) {

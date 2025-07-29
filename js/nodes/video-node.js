@@ -15,7 +15,7 @@ class VideoNode extends BaseNode {
             autoplay: true,
             paused: false  // Add paused property to properties
         };
-        this.flags = { hide_title: false };
+        this.flags = { hide_title: true };
         this.video = null;
         this.thumbnail = null; // Simple single thumbnail for small display
         this.userPaused = false;  // Keep for backward compatibility

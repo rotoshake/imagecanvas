@@ -24,7 +24,6 @@ class ImageResourceCache {
             bytesSaved: 0
         };
         
-        console.log('📦 ImageResourceCache initialized');
     }
     
     /**

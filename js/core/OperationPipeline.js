@@ -31,8 +31,6 @@ class OperationPipeline {
             this.registerCommand('node_align', window.CanvasCommands.NodeAlignCommand);
         }
         
-        console.log('🚀 OperationPipeline initialized');
-        console.log('📝 Registered commands:', Array.from(this.commandRegistry.keys()));
     }
     
     /**
@@ -65,9 +63,7 @@ class OperationPipeline {
      * Register extended node commands - can be called later if not available during init
      */
     registerExtendedCommands() {
-        console.log('🔍 Checking for NodeCommandsExtended...', typeof window.NodeCommandsExtended);
         if (typeof window.NodeCommandsExtended !== 'undefined') {
-            console.log('✅ Found NodeCommandsExtended with:', Object.keys(window.NodeCommandsExtended));
             const { ResizeNodeCommand, ResetNodeCommand, RotateNodeCommand, VideoToggleCommand } = window.NodeCommandsExtended;
             
             if (ResizeNodeCommand && !this.commandRegistry.has('node_resize')) {
@@ -95,7 +91,6 @@ class OperationPipeline {
                 this.registerCommand('node_paste', PasteNodesCommand);
             }
             
-            console.log('✅ Extended node commands registered');
             return true;
         }
         return false;
@@ -106,7 +101,6 @@ class OperationPipeline {
      */
     registerCommand(type, CommandClass) {
         this.commandRegistry.set(type, CommandClass);
-        console.log(`📝 Registered command: ${type}`);
     }
     
     /**
@@ -152,21 +146,10 @@ class OperationPipeline {
             // REMOVED: Pre-validation was causing more problems than it solved
             // Operations should succeed locally and handle server errors gracefully
             
-            // LOG ALL OPERATIONS FOR DEBUGGING
-            console.log(`🔍 OPERATION REQUESTED: ${commandOrType}`, {
-                params: params,
-                origin: options.origin || 'local',
-                caller: new Error().stack.split('\n')[2] // Get caller for debugging
-            });
             
             command = this.createCommand(commandOrType, params, options.origin || 'local');
         } else {
             command = commandOrType;
-            console.log(`🔍 OPERATION REQUESTED: ${command.type}`, {
-                params: command.params,
-                origin: command.origin,
-                caller: new Error().stack.split('\n')[2]
-            });
         }
         
         // Pass initial state to the command

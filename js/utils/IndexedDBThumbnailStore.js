@@ -56,7 +56,6 @@ class IndexedDBThumbnailStore {
             });
             
             this.isAvailable = true;
-            console.log('✅ IndexedDB thumbnail store initialized');
             
             // Clean up old entries periodically
             this._scheduleCleanup();
@@ -104,7 +103,6 @@ class IndexedDBThumbnailStore {
             
             if (result) {
                 this.stats.hits++;
-                console.log(`💾 IndexedDB cache hit for ${hash.substring(0, 8)}... (${loadTime.toFixed(1)}ms)`);
                 return result;
             } else {
                 this.stats.misses++;
@@ -161,7 +159,6 @@ class IndexedDBThumbnailStore {
             this.stats.writes++;
             this.stats.totalWriteTime += writeTime;
             
-            console.log(`💾 Stored thumbnails for ${hash.substring(0, 8)}... to IndexedDB (${writeTime.toFixed(1)}ms)`);
         } catch (error) {
             this.stats.errors++;
             console.error('IndexedDB set error:', error);
@@ -399,6 +396,135 @@ class IndexedDBThumbnailStore {
     }
     
     /**
+     * Store preview-specific data (temporary or permanent)
+     * @param {string} hash - Image hash (could be temporary)
+     * @param {number} size - Preview size
+     * @param {string|Blob} previewData - Preview URL or blob
+     * @param {boolean} isTemporary - Whether this is temporary preview data
+     */
+    async setPreview(hash, size, previewData, isTemporary = false) {
+        if (isTemporary) {
+            // For temporary previews, use in-memory cache
+            if (!this.tempPreviewCache) {
+                this.tempPreviewCache = new Map();
+            }
+            
+            if (!this.tempPreviewCache.has(hash)) {
+                this.tempPreviewCache.set(hash, {});
+            }
+            
+            this.tempPreviewCache.get(hash)[size] = previewData;
+            return;
+        }
+        
+        // For permanent previews, use IndexedDB
+        try {
+            await this._ensureReady();
+            
+            // Get existing data or create new
+            let data = await this.get(hash);
+            if (!data) {
+                data = {
+                    hash,
+                    thumbnails: {},
+                    timestamp: Date.now(),
+                    version: this.dbVersion
+                };
+            }
+            
+            // Add/update the preview
+            if (previewData instanceof Blob) {
+                data.thumbnails[size] = previewData;
+            } else if (typeof previewData === 'string' && previewData.startsWith('blob:')) {
+                // Convert blob URL to actual blob
+                try {
+                    const response = await fetch(previewData);
+                    data.thumbnails[size] = await response.blob();
+                } catch (error) {
+                    console.warn(`Failed to convert blob URL for preview ${size}:`, error);
+                    return;
+                }
+            }
+            
+            // Store updated data
+            const transaction = this.db.transaction([this.storeName], 'readwrite');
+            const store = transaction.objectStore(this.storeName);
+            const request = store.put(data);
+            
+            await new Promise((resolve, reject) => {
+                request.onsuccess = () => resolve();
+                request.onerror = () => reject(request.error);
+            });
+            
+        } catch (error) {
+            console.error('Failed to set preview:', error);
+        }
+    }
+    
+    /**
+     * Get preview for specific size
+     * @param {string} hash - Image hash
+     * @param {number} size - Preview size
+     * @returns {Promise<string|null>} Preview URL or null
+     */
+    async getPreview(hash, size) {
+        // Check temporary cache first
+        if (this.tempPreviewCache && this.tempPreviewCache.has(hash)) {
+            const tempPreviews = this.tempPreviewCache.get(hash);
+            if (tempPreviews[size]) {
+                return tempPreviews[size];
+            }
+        }
+        
+        // Check IndexedDB
+        try {
+            const data = await this.get(hash);
+            if (data && data.thumbnails && data.thumbnails[size]) {
+                // Convert blob to URL
+                return URL.createObjectURL(data.thumbnails[size]);
+            }
+        } catch (error) {
+            console.error('Failed to get preview:', error);
+        }
+        
+        return null;
+    }
+    
+    /**
+     * Update hash mapping for temporary previews (when real hash becomes available)
+     * @param {string} tempHash - Temporary hash
+     * @param {string} realHash - Real image hash
+     */
+    updatePreviewHash(tempHash, realHash) {
+        if (!this.tempPreviewCache || !this.tempPreviewCache.has(tempHash)) {
+            return;
+        }
+        
+        const tempPreviews = this.tempPreviewCache.get(tempHash);
+        this.tempPreviewCache.set(realHash, tempPreviews);
+        this.tempPreviewCache.delete(tempHash);
+        
+        console.log(`🔄 Updated preview hash mapping: ${tempHash} → ${realHash}`);
+    }
+    
+    /**
+     * Clean up temporary preview cache
+     */
+    cleanupTempPreviews() {
+        if (this.tempPreviewCache) {
+            // Revoke object URLs to prevent memory leaks
+            for (const [hash, previews] of this.tempPreviewCache) {
+                for (const [size, url] of Object.entries(previews)) {
+                    if (typeof url === 'string' && url.startsWith('blob:')) {
+                        URL.revokeObjectURL(url);
+                    }
+                }
+            }
+            this.tempPreviewCache.clear();
+        }
+    }
+
+    /**
      * Clear all data (use with caution!)
      */
     async clear() {
@@ -415,6 +541,9 @@ class IndexedDBThumbnailStore {
             });
             
             console.log('🗑️ Cleared all IndexedDB thumbnail data');
+            
+            // Also clean up temporary previews
+            this.cleanupTempPreviews();
         } catch (error) {
             console.error('Failed to clear IndexedDB:', error);
         }
