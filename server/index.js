@@ -9,6 +9,12 @@ const multer = require('multer');
 const sharp = require('sharp');
 const fs = require('fs').promises;
 const crypto = require('crypto');
+const { setupCleanupEndpoint } = require('./cleanupEndpoint');
+
+// Configure Sharp for better concurrent processing
+// Limit concurrency to prevent memory issues
+sharp.concurrency(4); // Process max 4 images at once
+sharp.cache({ memory: 50, files: 20 }); // Limit cache to 50MB memory, 20 files
 
 // Create placeholder modules if they don't exist yet
 let Database, CollaborationManager;
@@ -147,6 +153,17 @@ class ImageCanvasServer {
 
                 const hash = req.body.hash || crypto.createHash('sha256').update(await fs.readFile(req.file.path)).digest('hex');
                 
+                // Insert file record into database for tracking
+                const projectId = req.body.projectId || null;
+                const userId = req.body.userId || 1; // Default to user 1 if not provided
+                
+                await this.db.run(
+                    `INSERT INTO files (filename, original_name, mime_type, file_size, file_hash, uploaded_by, project_id) 
+                     VALUES (?, ?, ?, ?, ?, ?, ?)`,
+                    [req.file.filename, req.file.originalname, req.file.mimetype, 
+                     req.file.size, hash, userId, projectId]
+                );
+                
                 try {
                     // Generate thumbnails for images
                     if (req.file.mimetype.startsWith('image/')) {
@@ -215,6 +232,15 @@ class ImageCanvasServer {
                     file_hash: fileHash,
                     project_id: parseInt(projectId)
                 };
+
+                // Insert file record into database for tracking
+                const userId = parsedNodeData.uploaderUserId || 1; // Default to user 1 if not provided
+                await this.db.run(
+                    `INSERT INTO files (filename, original_name, mime_type, file_size, file_hash, uploaded_by, project_id) 
+                     VALUES (?, ?, ?, ?, ?, ?, ?)`,
+                    [fileInfo.filename, fileInfo.original_name, fileInfo.mime_type, 
+                     fileInfo.file_size, fileInfo.file_hash, userId, fileInfo.project_id]
+                );
 
                 try {
                     // Generate thumbnails for images
@@ -690,65 +716,318 @@ class ImageCanvasServer {
             }
         });
         
+        // OLD CLEANUP ENDPOINT - Replaced with mark-and-sweep approach
+        /*
         this.app.post('/database/cleanup', async (req, res) => {
             try {
-                console.log('🧹 Starting database cleanup...');
+                console.log('🧹 Starting SAFE database cleanup...');
                 
                 // Check if database is initialized
                 if (!this.db || !this.db.dbPath) {
+                    console.error('❌ Database not initialized');
                     return res.status(500).json({ error: 'Database not initialized' });
                 }
                 
+                // TEMPORARY: Skip all file deletion until we implement proper mark-and-sweep
+                console.log('⚠️ File cleanup is temporarily disabled for safety');
+                console.log('✅ Only cleaning up old operations and optimizing database');
+                
+                // Clean up old operations only (safe)
+                let operationsDeleted = 0;
+                try {
+                    const result = await this.db.run(`
+                        DELETE FROM operations 
+                        WHERE operation_data LIKE '%data:image%'
+                        AND timestamp < ?
+                    `, [Date.now() - 24 * 60 * 60 * 1000]); // Older than 1 day
+                    
+                    operationsDeleted = result.changes || 0;
+                    console.log(`🗑️ Deleted ${operationsDeleted} old operations`);
+                } catch (error) {
+                    console.warn('Failed to clean operations:', error);
+                }
+                
+                // Return simple success response
+                return res.json({
+                    success: true,
+                    message: 'Cleanup completed (file deletion temporarily disabled)',
+                    deleted: {
+                        files: 0,
+                        orphanedDiskFiles: 0,
+                        operations: operationsDeleted,
+                        users: 0
+                    }
+                });
+                
+                // Skip all the old complex cleanup code below
+                return;
+                
+                // SAFETY: Check for query parameter to force unsafe cleanup (for testing)
+                const forceUnsafe = req.query.force === 'true';
+                if (forceUnsafe) {
+                    console.warn('⚠️ FORCE UNSAFE CLEANUP MODE - USE WITH CAUTION');
+                }
+                
+                // CRITICAL: Check for active collaborative sessions
+                let activeSessionCount = 0;
+                if (this.collaborationManager && this.collaborationManager.io) {
+                    const rooms = this.collaborationManager.io.sockets.adapter.rooms;
+                    for (const [roomName, room] of rooms.entries()) {
+                        if (roomName.startsWith('project_') && room.size > 0) {
+                            activeSessionCount++;
+                        }
+                    }
+                }
+                
+                if (activeSessionCount > 0) {
+                    console.log(`⚠️ Found ${activeSessionCount} active collaborative sessions - proceeding with extra caution`);
+                } else {
+                    console.log('✅ No active collaborative sessions detected');
+                }
+                
                 // Get initial size
-                const initialStats = await fs.stat(this.db.dbPath);
-                let initialSize = initialStats.size;
+                let initialSize = 0;
                 try {
-                    const walStats = await fs.stat(this.db.dbPath + '-wal');
-                    initialSize += walStats.size;
-                } catch (e) {}
-                try {
-                    const shmStats = await fs.stat(this.db.dbPath + '-shm');
-                    initialSize += shmStats.size;
-                } catch (e) {}
-                console.log(`📊 Initial database size: ${this.formatBytes(initialSize)}`);
+                    const initialStats = await fs.stat(this.db.dbPath);
+                    initialSize = initialStats.size;
+                    try {
+                        const walStats = await fs.stat(this.db.dbPath + '-wal');
+                        initialSize += walStats.size;
+                    } catch (e) {}
+                    try {
+                        const shmStats = await fs.stat(this.db.dbPath + '-shm');
+                        initialSize += shmStats.size;
+                    } catch (e) {}
+                    console.log(`📊 Initial database size: ${this.formatBytes(initialSize)}`);
+                } catch (error) {
+                    console.error('❌ Failed to get initial database size:', error);
+                    // Continue anyway
+                }
                 
                 // 1. Find orphaned files (files not referenced by any node)
                 // First get all files
-                const allFiles = await this.db.all('SELECT * FROM files');
+                let allFiles = [];
+                try {
+                    allFiles = await this.db.all('SELECT * FROM files');
+                    console.log(`🗄️ Files table contains ${allFiles.length} records`);
+                } catch (error) {
+                    console.error('❌ Failed to get files from database:', error);
+                    return res.status(500).json({ 
+                        error: 'Failed to read files table',
+                        details: error.message 
+                    });
+                }
                 
                 // Get all projects with canvas data
-                const projects = await this.db.all(`
-                    SELECT canvas_data FROM projects 
-                    WHERE canvas_data IS NOT NULL
-                `);
+                let projects = [];
+                try {
+                    projects = await this.db.all(`
+                        SELECT id, canvas_data FROM projects 
+                        WHERE canvas_data IS NOT NULL
+                    `);
+                } catch (error) {
+                    console.error('❌ Failed to get projects from database:', error);
+                    return res.status(500).json({ 
+                        error: 'Failed to read projects table',
+                        details: error.message 
+                    });
+                }
+                
+                // CRITICAL: Also include files from currently active collaborative sessions
+                // Get all active project states from WebSocket manager
+                const activeProjects = new Set();
+                const activeFiles = new Set(); // Track files from active sessions separately
+                
+                // Method 1: Check CanvasStateManager
+                if (this.canvasStateManager && this.canvasStateManager.projectStates) {
+                    console.log('📡 Checking CanvasStateManager for active states...');
+                    console.log(`  Found ${this.canvasStateManager.projectStates.size} active project states`);
+                    for (const [projectId, state] of this.canvasStateManager.projectStates.entries()) {
+                        activeProjects.add(parseInt(projectId));
+                        // Add the active state as if it were a saved project
+                        if (state && state.nodes) {
+                            console.log(`  Project ${projectId} has ${state.nodes.length} nodes`);
+                            projects.push({
+                                id: projectId,
+                                canvas_data: JSON.stringify({ nodes: state.nodes }),
+                                isActive: true
+                            });
+                        }
+                    }
+                } else {
+                    console.log('⚠️ No CanvasStateManager available or no projectStates');
+                }
+                
+                // Method 2: Check collaboration rooms directly
+                if (this.collaborationManager && this.collaborationManager.io) {
+                    console.log('🔍 Checking collaboration rooms for active sessions...');
+                    const rooms = this.collaborationManager.io.sockets.adapter.rooms;
+                    for (const [roomName, room] of rooms.entries()) {
+                        if (roomName.startsWith('project_') && room.size > 0) {
+                            const projectId = parseInt(roomName.replace('project_', ''));
+                            activeProjects.add(projectId);
+                            console.log(`  - Active room: ${roomName} with ${room.size} users`);
+                        }
+                    }
+                }
+                
+                // Method 3: Check VERY recent operations (last 5 minutes only)
+                // This catches files that are actively being worked on RIGHT NOW
+                let recentOps = [];
+                try {
+                    const recentOpsTime = Date.now() - (5 * 60 * 1000); // 5 minutes
+                    recentOps = await this.db.all(`
+                        SELECT operation_data FROM operations 
+                        WHERE timestamp > ? 
+                        AND (operation_data LIKE '%serverUrl%' OR operation_data LIKE '%uploadImage%')
+                        ORDER BY timestamp DESC
+                        LIMIT 100
+                    `, [recentOpsTime]);
+                } catch (error) {
+                    console.error('❌ Failed to get recent operations:', error);
+                    // Continue without recent ops - not critical
+                }
+                
+                if (recentOps.length > 0) {
+                    console.log(`🕐 Found ${recentOps.length} very recent operations (last 5 min) to check`);
+                    
+                    // Extract files from recent operations
+                    for (const op of recentOps) {
+                        try {
+                            const data = JSON.parse(op.operation_data);
+                            if (data.params) {
+                                // Check for file references in operation params
+                                const checkParams = (params) => {
+                                    if (params.serverUrl && params.serverUrl.includes('/uploads/')) {
+                                        const match = params.serverUrl.match(/\/uploads\/([^?]+)/);
+                                        if (match) activeFiles.add(match[1]);
+                                    }
+                                    if (params.serverFilename) {
+                                        activeFiles.add(params.serverFilename);
+                                    }
+                                    if (params.nodes && Array.isArray(params.nodes)) {
+                                        for (const node of params.nodes) {
+                                            if (node.properties) checkParams(node.properties);
+                                        }
+                                    }
+                                };
+                                checkParams(data.params);
+                            }
+                        } catch (e) {
+                            // Ignore parse errors
+                        }
+                    }
+                }
+                
+                console.log(`📋 Scanning ${projects.length} projects (${activeProjects.size} active) for used files...`);
+                console.log(`🔰 Protected ${activeFiles.size} files from recent operations`);
                 
                 // Extract all media URLs from all projects
                 const usedFilenames = new Set();
+                const usedFilenamesLower = new Set(); // Case-insensitive matching
                 console.log(`📋 Scanning ${projects.length} projects for used files...`);
+                
+                // Helper function to add a filename in all variations
+                const addUsedFilename = (filename) => {
+                    if (!filename) return;
+                    
+                    // Add the exact filename
+                    usedFilenames.add(filename);
+                    usedFilenamesLower.add(filename.toLowerCase());
+                    
+                    // If it's a path, extract just the filename
+                    const pathMatch = filename.match(/([^\/\\]+)$/);
+                    if (pathMatch && pathMatch[1] !== filename) {
+                        usedFilenames.add(pathMatch[1]);
+                        usedFilenamesLower.add(pathMatch[1].toLowerCase());
+                    }
+                    
+                    // Also try without query parameters
+                    const withoutQuery = filename.split('?')[0];
+                    if (withoutQuery !== filename) {
+                        usedFilenames.add(withoutQuery);
+                        usedFilenamesLower.add(withoutQuery.toLowerCase());
+                        
+                        const pathMatch2 = withoutQuery.match(/([^\/\\]+)$/);
+                        if (pathMatch2) {
+                            usedFilenames.add(pathMatch2[1]);
+                            usedFilenamesLower.add(pathMatch2[1].toLowerCase());
+                        }
+                    }
+                    
+                    // Also add just the base filename without extension for safety
+                    const baseName = path.parse(filename).name;
+                    if (baseName && baseName !== filename) {
+                        usedFilenames.add(baseName);
+                        usedFilenamesLower.add(baseName.toLowerCase());
+                    }
+                };
+                
                 for (const project of projects) {
                     try {
                         const canvasData = JSON.parse(project.canvas_data);
+                        const isActiveProject = project.isActive || (project.id && activeProjects.has(parseInt(project.id)));
                         if (canvasData && canvasData.nodes) {
                             for (const node of canvasData.nodes) {
+                                // Debug: Log ALL image/video nodes to see what we're checking
+                                if (node.type === 'media/image' || node.type === 'media/video') {
+                                    const nodeInfo = {
+                                        id: node.id,
+                                        type: node.type,
+                                        serverUrl: node.properties?.serverUrl,
+                                        serverFilename: node.properties?.serverFilename,
+                                        filename: node.properties?.filename,
+                                        src: node.properties?.src,
+                                        hash: node.properties?.hash?.substring(0, 8)
+                                    };
+                                    console.log(`📸 ${isActiveProject ? '[ACTIVE]' : '[SAVED]'} Project ${project.id}:`, JSON.stringify(nodeInfo));
+                                }
+                                
                                 // Check multiple possible locations for file references
                                 // 1. Direct serverFilename property (most common)
                                 if (node.properties && node.properties.serverFilename) {
-                                    usedFilenames.add(node.properties.serverFilename);
+                                    addUsedFilename(node.properties.serverFilename);
                                 }
                                 
-                                // 2. Check src property for uploads
-                                if (node.properties && node.properties.src) {
-                                    const srcMatch = node.properties.src.match(/\/uploads\/(.+)$/);
-                                    if (srcMatch) {
-                                        usedFilenames.add(srcMatch[1]);
+                                // 2. Check serverUrl property (MOST COMMON IN ACTIVE STATE)
+                                if (node.properties && node.properties.serverUrl) {
+                                    // Extract filename from full URL like "/uploads/filename.jpg"
+                                    const urlMatch = node.properties.serverUrl.match(/\/uploads\/([^?]+)/);
+                                    if (urlMatch) {
+                                        addUsedFilename(urlMatch[1]);
                                     }
                                 }
                                 
-                                // 3. Legacy: Check data.mediaUrl (older format)
+                                // 3. Check src property for uploads
+                                if (node.properties && node.properties.src) {
+                                    const srcMatch = node.properties.src.match(/\/uploads\/([^?]+)/);
+                                    if (srcMatch) {
+                                        addUsedFilename(srcMatch[1]);
+                                    }
+                                }
+                                
+                                // 4. Legacy: Check data.mediaUrl (older format)
                                 if (node.data && node.data.mediaUrl) {
-                                    const match = node.data.mediaUrl.match(/\/uploads\/(.+)$/);
+                                    const match = node.data.mediaUrl.match(/\/uploads\/([^?]+)/);
                                     if (match) {
-                                        usedFilenames.add(match[1]);
+                                        addUsedFilename(match[1]);
+                                    }
+                                }
+                                
+                                // 5. Check filename property (might contain actual server filename)
+                                if (node.properties && node.properties.filename) {
+                                    addUsedFilename(node.properties.filename);
+                                }
+                                
+                                // 6. Check for any property that might contain a filename pattern
+                                if (node.properties) {
+                                    for (const [key, value] of Object.entries(node.properties)) {
+                                        if (typeof value === 'string' && value.includes('/uploads/')) {
+                                            const match = value.match(/\/uploads\/(.+?)(?:\?|$)/);
+                                            if (match) {
+                                                addUsedFilename(match[1]);
+                                            }
+                                        }
                                     }
                                 }
                             }
@@ -758,11 +1037,59 @@ class ImageCanvasServer {
                     }
                 }
                 
-                console.log(`✅ Found ${usedFilenames.size} files in use across all projects`);
+                // Add all active files from operations
+                for (const filename of activeFiles) {
+                    addUsedFilename(filename);
+                }
+                
+                console.log(`✅ Found ${usedFilenames.size} files in use:
+  - From canvas data: ${usedFilenames.size - activeFiles.size}
+  - From active operations (last 5 min): ${activeFiles.size}`);
                 console.log(`📁 Database contains ${allFiles.length} file records`);
                 
-                // Find orphaned files
-                const orphanedFiles = allFiles.filter(file => !usedFilenames.has(file.filename));
+                // Debug: Log all used filenames
+                console.log('📋 Used filenames found:', usedFilenames.size);
+                if (usedFilenames.size <= 20) {
+                    for (const filename of usedFilenames) {
+                        console.log(`  - ${filename}`);
+                    }
+                } else {
+                    console.log('  (too many to list)');
+                }
+                
+                // Debug: Log all database filenames
+                console.log('📋 Database filenames:', allFiles.length);
+                if (allFiles.length <= 20) {
+                    for (const file of allFiles) {
+                        console.log(`  - ${file.filename} (uploaded: ${new Date(file.upload_date).toISOString()})`);
+                    }
+                } else {
+                    console.log('  (too many to list)');
+                }
+                
+                // Find orphaned files - use case-insensitive comparison
+                const orphanedFiles = allFiles.filter(file => !usedFilenamesLower.has(file.filename.toLowerCase()));
+                
+                // Safety check: Prevent mass deletion
+                const deletionPercentage = allFiles.length > 0 ? (orphanedFiles.length / allFiles.length) * 100 : 0;
+                if (allFiles.length > 0 && deletionPercentage > 50 && !forceUnsafe) {
+                    console.warn(`⚠️ Cleanup would delete ${orphanedFiles.length} of ${allFiles.length} files (${deletionPercentage.toFixed(1)}%)`);
+                    return res.status(400).json({ 
+                        error: 'Safety check failed', 
+                        message: `Cleanup would delete ${deletionPercentage.toFixed(1)}% of files. This seems excessive. Use ?force=true to override.`,
+                        stats: {
+                            totalFiles: allFiles.length,
+                            orphanedFiles: orphanedFiles.length,
+                            percentage: deletionPercentage
+                        }
+                    });
+                }
+                
+                // Debug: Log orphaned files
+                console.log(`🗑️ Found ${orphanedFiles.length} orphaned files:`);
+                for (const file of orphanedFiles) {
+                    console.log(`  - ${file.filename}`);
+                }
                 
                 // 2. Delete orphaned file records and actual files
                 let deletedFiles = 0;
@@ -804,11 +1131,33 @@ class ImageCanvasServer {
                         const stat = await fs.stat(filePath);
                         if (!stat.isFile()) continue;
                         
-                        // IMPORTANT: File must NOT be in database AND NOT be used in any canvas
+                        // IMPORTANT: File must NOT be used in any canvas (regardless of database status)
                         const inDatabase = dbFilenames.has(diskFile);
-                        const isUsed = usedFilenames.has(diskFile);
+                        const isUsed = usedFilenames.has(diskFile) || usedFilenamesLower.has(diskFile.toLowerCase());
                         
-                        if (!inDatabase && !isUsed) {
+                        // Additional safety: Check if the filename appears anywhere in our used set
+                        // This catches cases where the stored name might have extra path info
+                        let isUsedAnywhere = isUsed;
+                        if (!isUsedAnywhere) {
+                            // Check if this file appears in any variation
+                            for (const usedFile of usedFilenames) {
+                                if (usedFile.includes(diskFile) || diskFile.includes(usedFile)) {
+                                    isUsedAnywhere = true;
+                                    console.log(`  🔍 Found partial match: ${diskFile} matches ${usedFile}`);
+                                    break;
+                                }
+                            }
+                        }
+                        
+                        // Only delete if the file is NOT being used
+                        if (!isUsedAnywhere) {
+                            console.log(`❓ Considering deletion of: ${diskFile} (in DB: ${inDatabase}, used: ${isUsedAnywhere})`);
+                        } else {
+                            console.log(`✅ Keeping: ${diskFile} (in use)`);
+                        }
+                        
+                        // Manual cleanup: Delete if NOT being used (regardless of age)
+                        if (!isUsedAnywhere) {
                             try {
                                 await fs.unlink(filePath);
                                 orphanedDiskFiles++;
@@ -984,6 +1333,71 @@ class ImageCanvasServer {
                 });
             }
         });
+        */
+        
+        // Setup cleanup endpoint - note: db will be initialized later
+        // This is a closure that will use this.db when the endpoint is called
+        this.app.post('/database/cleanup', async (req, res) => {
+            // Import and use the cleanup logic
+            const FileReferenceTracker = require('./src/cleanup/FileReferenceTracker');
+            
+            try {
+                console.log('🧹 Starting SAFE mark-and-sweep cleanup...');
+                
+                // Check if database is initialized
+                if (!this.db) {
+                    return res.status(500).json({ error: 'Database not initialized' });
+                }
+                
+                // Get parameters
+                const dryRun = req.query.dryRun === 'true';
+                const graceperiodMinutes = parseInt(req.query.gracePeriod) || 60;
+                
+                // Run the safe cleanup
+                const tracker = new FileReferenceTracker(this.db);
+                const fileResult = await tracker.performSafeCleanup({
+                    dryRun,
+                    graceperiodMinutes,
+                    verbose: true
+                });
+                
+                // Also clean up old operations (safe - doesn't affect files)
+                let operationsDeleted = 0;
+                try {
+                    // Delete old operations with embedded image data
+                    const imageOpsResult = await this.db.run(`
+                        DELETE FROM operations 
+                        WHERE operation_data LIKE '%data:image%'
+                        AND datetime(applied_at) < datetime('now', '-7 days')
+                    `);
+                    
+                    operationsDeleted = imageOpsResult.changes || 0;
+                } catch (error) {
+                    console.warn('Failed to clean operations:', error);
+                }
+                
+                // Return results
+                res.json({
+                    success: true,
+                    fileCleanup: {
+                        referencedFiles: fileResult.referencedFiles,
+                        deletedFiles: fileResult.deletedFiles.length,
+                        dryRun: fileResult.dryRun
+                    },
+                    operationsDeleted,
+                    message: dryRun ? 
+                        'Dry run completed - no files were deleted' : 
+                        `Cleaned up ${fileResult.deletedFiles.length} orphaned files`
+                });
+                
+            } catch (error) {
+                console.error('❌ Cleanup failed:', error);
+                res.status(500).json({ 
+                    error: 'Cleanup failed', 
+                    details: error.message 
+                });
+            }
+        })
         
         // API placeholder routes
         this.app.use('/api/projects', (req, res) => {
@@ -1045,24 +1459,62 @@ class ImageCanvasServer {
         const thumbnailSizes = [64, 128, 256, 512, 1024, 2048];
         const nameWithoutExt = path.parse(filename).name;
         
-        for (const size of thumbnailSizes) {
-            try {
-                const thumbnailDir = path.join(__dirname, 'thumbnails', size.toString());
-                await fs.mkdir(thumbnailDir, { recursive: true });
-                
-                const thumbnailPath = path.join(thumbnailDir, `${nameWithoutExt}.webp`);
-                
-                await sharp(filePath)
-                    .resize(size, size, { 
-                        fit: 'inside',
-                        withoutEnlargement: true 
-                    })
-                    .webp({ quality: 85 })
-                    .toFile(thumbnailPath);
-                    
-            } catch (error) {
-                console.warn(`Failed to generate ${size}px thumbnail:`, error);
+        try {
+            // Load the image once for metadata
+            const image = sharp(filePath);
+            const metadata = await image.metadata();
+            
+            // Skip if image is corrupted or invalid
+            if (!metadata.width || !metadata.height) {
+                console.warn(`⚠️ Invalid image metadata for ${filename}`);
+                return;
             }
+            
+            // Process thumbnails in smaller batches to avoid memory issues
+            const batchSize = 2; // Process 2 sizes at a time
+            for (let i = 0; i < thumbnailSizes.length; i += batchSize) {
+                const batch = thumbnailSizes.slice(i, i + batchSize);
+                
+                await Promise.all(batch.map(async (size) => {
+                    try {
+                        const thumbnailDir = path.join(__dirname, 'thumbnails', size.toString());
+                        await fs.mkdir(thumbnailDir, { recursive: true });
+                        
+                        const thumbnailPath = path.join(thumbnailDir, `${nameWithoutExt}.webp`);
+                        
+                        // Check if thumbnail already exists
+                        try {
+                            await fs.access(thumbnailPath);
+                            console.log(`⏭️ Thumbnail ${size}px already exists for ${filename}`);
+                            return;
+                        } catch (e) {
+                            // File doesn't exist, continue to generate
+                        }
+                        
+                        // Create a fresh sharp instance for each operation
+                        // This prevents memory buildup
+                        await sharp(filePath)
+                            .resize(size, size, { 
+                                fit: 'inside',
+                                withoutEnlargement: true 
+                            })
+                            .webp({ quality: 85 })
+                            .toFile(thumbnailPath);
+                            
+                        console.log(`✅ Generated ${size}px thumbnail for ${filename}`);
+                    } catch (error) {
+                        console.warn(`⚠️ Failed to generate ${size}px thumbnail for ${filename}:`, error.message);
+                    }
+                }));
+                
+                // Small delay between batches to prevent resource exhaustion
+                if (i + batchSize < thumbnailSizes.length) {
+                    await new Promise(resolve => setTimeout(resolve, 10));
+                }
+            }
+        } catch (error) {
+            console.error(`❌ Failed to process thumbnails for ${filename}:`, error.message);
+            // Don't throw - this is non-critical
         }
     }
     
@@ -1094,7 +1546,37 @@ class ImageCanvasServer {
             `);
             
             const usedFilenames = new Set();
+            const usedFilenamesLower = new Set(); // Case-insensitive matching
             console.log(`📋 Scanning ${projects.length} projects for used files...`);
+            
+            // Helper function to add a filename in all variations
+            const addUsedFilename = (filename) => {
+                if (!filename) return;
+                
+                // Add the exact filename
+                usedFilenames.add(filename);
+                usedFilenamesLower.add(filename.toLowerCase());
+                
+                // If it's a path, extract just the filename
+                const pathMatch = filename.match(/([^\/\\]+)$/);
+                if (pathMatch && pathMatch[1] !== filename) {
+                    usedFilenames.add(pathMatch[1]);
+                    usedFilenamesLower.add(pathMatch[1].toLowerCase());
+                }
+                
+                // Also try without query parameters
+                const withoutQuery = filename.split('?')[0];
+                if (withoutQuery !== filename) {
+                    usedFilenames.add(withoutQuery);
+                    usedFilenamesLower.add(withoutQuery.toLowerCase());
+                    
+                    const pathMatch2 = withoutQuery.match(/([^\/\\]+)$/);
+                    if (pathMatch2) {
+                        usedFilenames.add(pathMatch2[1]);
+                        usedFilenamesLower.add(pathMatch2[1].toLowerCase());
+                    }
+                }
+            };
             
             for (const project of projects) {
                 try {
@@ -1104,14 +1586,14 @@ class ImageCanvasServer {
                             // Check multiple possible locations for file references
                             // 1. Direct serverFilename property (most common)
                             if (node.properties && node.properties.serverFilename) {
-                                usedFilenames.add(node.properties.serverFilename);
+                                addUsedFilename(node.properties.serverFilename);
                             }
                             
                             // 2. Check src property for uploads
                             if (node.properties && node.properties.src) {
                                 const srcMatch = node.properties.src.match(/\/uploads\/(.+)$/);
                                 if (srcMatch) {
-                                    usedFilenames.add(srcMatch[1]);
+                                    addUsedFilename(srcMatch[1]);
                                 }
                             }
                             
@@ -1119,7 +1601,32 @@ class ImageCanvasServer {
                             if (node.data && node.data.mediaUrl) {
                                 const match = node.data.mediaUrl.match(/\/uploads\/(.+)$/);
                                 if (match) {
-                                    usedFilenames.add(match[1]);
+                                    addUsedFilename(match[1]);
+                                }
+                            }
+                            
+                            // 4. Check filename property (might contain actual server filename)
+                            if (node.properties && node.properties.filename) {
+                                addUsedFilename(node.properties.filename);
+                            }
+                            
+                            // 5. Check serverUrl property for uploads pattern
+                            if (node.properties && node.properties.serverUrl) {
+                                const urlMatch = node.properties.serverUrl.match(/\/uploads\/(.+)$/);
+                                if (urlMatch) {
+                                    addUsedFilename(urlMatch[1]);
+                                }
+                            }
+                            
+                            // 6. Check for any property that might contain a filename pattern
+                            if (node.properties) {
+                                for (const [key, value] of Object.entries(node.properties)) {
+                                    if (typeof value === 'string' && value.includes('/uploads/')) {
+                                        const match = value.match(/\/uploads\/(.+?)(?:\?|$)/);
+                                        if (match) {
+                                            addUsedFilename(match[1]);
+                                        }
+                                    }
                                 }
                             }
                         }
@@ -1145,10 +1652,15 @@ class ImageCanvasServer {
                     if (!stat.isFile()) continue;
                     
                     // Delete if not used in any canvas
-                    const isUsed = usedFilenames.has(diskFile);
+                    const isUsed = usedFilenames.has(diskFile) || usedFilenamesLower.has(diskFile.toLowerCase());
                     const inDatabase = dbFilenames.has(diskFile);
                     
-                    if (!isUsed) {
+                    // Check if file was recently created (within last hour)
+                    const fileAge = Date.now() - stat.mtimeMs;
+                    const ONE_HOUR = 60 * 60 * 1000;
+                    const isRecent = fileAge < ONE_HOUR;
+                    
+                    if (!isUsed && !isRecent) {
                         try {
                             cleanedSize += stat.size;
                             await fs.unlink(filePath);
@@ -1175,6 +1687,8 @@ class ImageCanvasServer {
                         } catch (error) {
                             console.error(`  ❌ Failed to clean up ${diskFile}:`, error.message);
                         }
+                    } else if (!isUsed && isRecent) {
+                        console.log(`  ⏰ Skipping recent file: ${diskFile} (created ${Math.round(fileAge / 1000)}s ago)`);
                     }
                 }
                 
@@ -1227,6 +1741,9 @@ class ImageCanvasServer {
         try {
             // Initialize systems
             await this.setupDatabase();
+            
+            // Database is now initialized, cleanup endpoint can use it
+            
             this.setupRealtime();
             
             // DISABLED: Startup cleanup is too aggressive and deleting in-use files
@@ -1270,7 +1787,7 @@ class ImageCanvasServer {
             typeof state.offset[0] === 'number' &&
             typeof state.offset[1] === 'number' &&
             state.scale > 0 &&
-            state.scale <= 10 && // Reasonable bounds
+            state.scale <= 20 && // Match client CONFIG.CANVAS.MAX_SCALE
             typeof state.timestamp === 'number' &&
             state.timestamp > 0
         );
