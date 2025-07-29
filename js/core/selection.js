@@ -384,3 +384,8 @@ class SelectionManager {
         };
     }
 }
+
+// Make SelectionManager available globally
+if (typeof window !== 'undefined') {
+    window.SelectionManager = SelectionManager;
+}

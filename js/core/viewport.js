@@ -400,3 +400,8 @@ class ViewportManager {
         return timeSinceMovement < 200; // Defer for 200ms after last movement
     }
 }
+
+// Make ViewportManager available globally
+if (typeof window !== 'undefined') {
+    window.ViewportManager = ViewportManager;
+}

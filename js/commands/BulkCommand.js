@@ -2,7 +2,7 @@
  * BulkCommand - Composite command that wraps multiple chunk operations
  * Ensures all chunks are undone/redone together
  */
-class BulkCommand extends Command {
+class BulkCommand extends Command { // Command is imported/defined elsewhere in the codebase
     constructor(operationType, chunks, params = {}) {
         super(`bulk_${operationType}`, params, 'local');
         this.operationType = operationType;

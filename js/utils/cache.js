@@ -1125,3 +1125,11 @@ window.cleanupImageMemory = function() {
     // Show updated stats
     setTimeout(() => window.monitorImageMemory(), 100);
 };
+
+// ===================================
+// GLOBAL EXPORTS
+// ===================================
+
+// Make classes available globally
+window.ImageCache = ImageCache;
+window.ThumbnailCache = ThumbnailCache;

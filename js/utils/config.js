@@ -103,6 +103,10 @@ const CONFIG = {
     IMPORT: {
         IMAGE_IMPORT_MODE: 'fit', // 'native' or 'fit'
         FIT_SIZE: 200 // Height in pixels when using 'fit' mode
+    },
+    // Rendering
+    RENDERER: {
+        DEFAULT: 'webgl' // 'canvas2d' or 'webgl'
     }
 };
 

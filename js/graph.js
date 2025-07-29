@@ -2,7 +2,7 @@
 // GRAPH CLASS
 // ===================================
 
-class LGraph {
+class ImageGraph {
     constructor() {
         this.nodes = [];
         this.connections = [];
@@ -337,4 +337,10 @@ class LGraph {
             lastNodeId: this.lastNodeId
         };
     }
+}
+
+// Expose globally and keep backward compatibility alias
+if (typeof window !== 'undefined') {
+    window.ImageGraph = ImageGraph;
+    window.LGraph = ImageGraph; // Temporary alias for legacy references
 }

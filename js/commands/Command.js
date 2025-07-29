@@ -107,3 +107,8 @@ class Command {
 if (typeof module !== 'undefined' && module.exports) {
     module.exports = Command;
 }
+
+// Make Command available globally
+if (typeof window !== 'undefined') {
+    window.Command = Command;
+}

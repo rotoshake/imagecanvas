@@ -696,3 +696,8 @@ class ClientUndoManager {
         console.warn('Clear history not implemented - requires server support');
     }
 }
+
+// Make ClientUndoManager available globally
+if (typeof window !== 'undefined') {
+    window.ClientUndoManager = ClientUndoManager;
+}

@@ -1229,3 +1229,8 @@ class DragDropManager {
         });
     }
 }
+
+// Make DragDropManager available globally
+if (typeof window !== 'undefined') {
+    window.DragDropManager = DragDropManager;
+}

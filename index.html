@@ -14,92 +14,12 @@
 </head>
 <body>
         <canvas id='mycanvas' width='1000' height='1000'></canvas>
-
-        <!-- Third-party libraries -->
-        <!-- <script type="text/javascript" src="js/libs/litegraph.js"></script> -->
         
-        <!-- Configuration -->
-        <script type="text/javascript" src="js/utils/config.js"></script>
-        <script type="text/javascript" src="js/utils/font-config.js"></script>
-        <script type="text/javascript" src="js/utils/colors.js"></script>
-        <script type="text/javascript" src="js/utils/image-dimensions.js"></script>
-        <script type="text/javascript" src="js/utils/image-webp-converter.js"></script>
-        <script type="text/javascript" src="js/utils/WorkerImageProcessor.js"></script>
-
-        <!-- Utilities -->
-        <script type="text/javascript" src="js/utils/utils.js"></script>
-        <script type="text/javascript" src="js/utils/state.js"></script>
-        <script type="text/javascript" src="js/utils/cache.js"></script>
-        <script type="text/javascript" src="js/utils/file-hash.js"></script>
-        <script type="text/javascript" src="js/utils/undo-optimization.js"></script>
-        <script type="text/javascript" src="js/utils/ImageLoadManager.js"></script>
-        <script type="text/javascript" src="js/utils/IndexedDBThumbnailStore.js"></script>
-
-        <!-- Main application base -->
-        <script type="text/javascript" src="js/graph.js"></script>
-        <script type="text/javascript" src="js/canvas.js"></script>
-        <script type="text/javascript" src="js/dragdrop.js"></script>
-
-        <!-- Core Systems -->
-        <script type="text/javascript" src="js/core/animation.js"></script>
-        <script type="text/javascript" src="js/core/viewport.js"></script>
-        <script type="text/javascript" src="js/core/selection.js"></script>
-        <script type="text/javascript" src="js/core/handles.js"></script>
-        <script type="text/javascript" src="js/core/alignment.js"></script>
-        <script type="text/javascript" src="js/core/BulkOperationManager.js"></script>
-        <script type="text/javascript" src="js/core/GraphCircularReferenceResolver.js"></script>
-        <script type="text/javascript" src="js/core/ImageResourceCache.js"></script>
-        <script type="text/javascript" src="js/core/MemoryManager.js"></script>
-        <script type="text/javascript" src="js/core/OffscreenRenderCache.js"></script>
-        <script type="text/javascript" src="js/core/PerformanceMonitor.js"></script>
-        <script type="text/javascript" src="js/core/LocalFirstOperations.js"></script>
-        <script type="text/javascript" src="js/core/NavigationStateManager.js"></script>
-        <script type="text/javascript" src="js/core/OperationPersistence.js"></script>
-        <script type="text/javascript" src="js/core/OperationTracker.js"></script>
-        <script type="text/javascript" src="js/core/TransactionManager.js"></script>
-        <script type="text/javascript" src="js/core/PersistenceHandler.js"></script>
-        <script type="text/javascript" src="js/core/CleanupManager.js"></script>
-        <script type="text/javascript" src="js/core/OperationDependencyTracker.js"></script>
-        <script type="text/javascript" src="js/core/ImageUploadManager.js"></script>
-        <script type="text/javascript" src="js/core/ImageProcessingProgressManager.js"></script>
-        <script type="text/javascript" src="js/core/ImageUploadCoordinator.js"></script>
-        <script type="text/javascript" src="js/core/GalleryViewManager.js"></script>
-        <script type="text/javascript" src="js/core/BackgroundSyncManager.js"></script>
-        <!-- Temporarily disabled for performance testing -->
-        <!-- <script type="text/javascript" src="js/core/ThumbnailPreloader.js"></script> -->
-
-        <!-- Node classes -->
-        <script type="text/javascript" src="js/nodes/base-node.js"></script>
-        <script type="text/javascript" src="js/nodes/image-node.js"></script>
-        <script type="text/javascript" src="js/nodes/video-node.js"></script>
-        <script type="text/javascript" src="js/nodes/text-node.js"></script>
-
-        <!-- Commands (must be loaded before OperationPipeline) -->
-        <script type="text/javascript" src="js/commands/Command.js"></script>
-        <script type="text/javascript" src="js/commands/BulkCommand.js"></script>
-        <script type="text/javascript" src="js/commands/NodeCommands.js"></script>
-        <script type="text/javascript" src="js/commands/NodeCommandsExtended.js"></script>
-        <script type="text/javascript" src="js/commands/CanvasCommands.js"></script>
-        <script type="text/javascript" src="js/commands/ImageUploadCompleteCommand.js"></script>
-        
-        <!-- Core Systems that depend on Commands -->
-        <script type="text/javascript" src="js/core/OperationPipeline.js"></script>
-        <script type="text/javascript" src="js/core/StateSyncManager.js"></script>
-
-        <!-- New Collaborative Architecture -->
+        <!-- Socket.IO CDN (required for real-time collaboration) -->
         <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.5/socket.io.js"></script>
-        <script type="text/javascript" src="js/core/NetworkLayer.js"></script>
-        <script type="text/javascript" src="js/core/ClientUndoManager.js"></script>
-        <script type="text/javascript" src="js/core/CollaborativeArchitecture.js"></script>
-        <script type="text/javascript" src="js/core/AutoInit.js"></script>
-
-        <!-- UI Components -->
-        <script type="text/javascript" src="js/ui/canvas-navigator.js"></script>
-        <script type="text/javascript" src="js/ui/connection-status.js"></script>
-        <script type="text/javascript" src="js/ui/floating-properties-inspector.js"></script>
-        <script type="text/javascript" src="js/ui/unified-notifications.js"></script>
         
-        <!-- App Startup -->
-        <script type="text/javascript" src="js/app.js"></script>
+        <!-- Vite dev / module entry -->
+        <script type="module" src="/src/main.js"></script>
+
     </body>
 </html>

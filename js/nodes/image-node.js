@@ -22,6 +22,26 @@ class ImageNode extends BaseNode {
         this.originalWidth = null;
         this.originalHeight = null;
         this.size = [200, 200];
+        // Ensure redraw helper
+        this._triggerRedraw = () => {
+            const canvas = this.graph?.canvas;
+            if (canvas) {
+                canvas.dirty_canvas = true;
+                if (typeof canvas.forceRedraw === 'function') {
+                    canvas.forceRedraw();
+                }
+            }
+        };
+        // Color adjustments (non-destructive, used by WebGL renderer)
+        this.adjustments = {
+            brightness: 0.0, // range -1..1
+            contrast: 0.0,   // range -1..1
+            saturation: 0.0, // range -1..1
+            hue: 0.0         // degrees -180..180
+        };
+
+        this.needsGLUpdate = false; // flag for renderer cache
+
         this.aspectRatioLocked = true; // Lock aspect ratio by default
         this.lockedAspectRatio = 1; // Will be updated when image loads
         
@@ -195,7 +215,7 @@ class ImageNode extends BaseNode {
                             console.log(`🎉 Thumbnails complete for ${hash.substring(0, 8)}, invalidating render cache`);
                             // Small delay to ensure thumbnails are actually stored in cache
                             setTimeout(() => {
-                                console.log(`🧹 Clearing cached render data for ${hash.substring(0, 8)} to use new thumbnails`);
+                                // console.log(`🧹 Clearing cached render data for ${hash.substring(0, 8)} to use new thumbnails`);
                                 this._cachedRenderData = null;
                                 this._lastScale = null;
                                 this._cachedThumbnailSize = null;
@@ -204,7 +224,7 @@ class ImageNode extends BaseNode {
                                 // Verify thumbnails are actually available now
                                 if (window.thumbnailCache.hasThumbnails(hash)) {
                                     const sizes = window.thumbnailCache.getAvailableSizes(hash);
-                                    console.log(`✅ Thumbnails now available for ${hash.substring(0, 8)}:`, sizes);
+                                    // console.log(`✅ Thumbnails now available for ${hash.substring(0, 8)}:`, sizes);
                                     
                                     // Force immediate redraw to show new thumbnails
                                     if (this.graph?.canvas) {
@@ -966,6 +986,21 @@ class ImageNode extends BaseNode {
         if (this.properties.hash && this._thumbnailUpdateCallback && window.thumbnailCache?.unsubscribe) {
             window.thumbnailCache.unsubscribe(this.properties.hash, this._thumbnailUpdateCallback);
             this._thumbnailUpdateCallback = null;
+        }
+    }
+
+    /**
+     * Merge new adjustment values and mark for re-render.
+     */
+    updateAdjustments(newValues = {}) {
+        Object.assign(this.adjustments, newValues);
+        this.needsGLUpdate = true;
+
+        // schedule an immediate frame on the global canvas
+        if (window.app?.graphCanvas) {
+            requestAnimationFrame(() => {
+                window.app.graphCanvas.draw();
+            });
         }
     }
 }

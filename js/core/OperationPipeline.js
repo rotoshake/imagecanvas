@@ -37,18 +37,18 @@ class OperationPipeline {
      * Register built-in commands
      */
     registerBuiltinCommands() {
-        // Basic node commands
-        if (typeof MoveNodeCommand !== 'undefined') {
-            this.registerCommand('node_move', MoveNodeCommand);
+        // Basic node commands from window.NodeCommands
+        if (window.NodeCommands?.MoveNodeCommand) {
+            this.registerCommand('node_move', window.NodeCommands.MoveNodeCommand);
         }
-        if (typeof CreateNodeCommand !== 'undefined') {
-            this.registerCommand('node_create', CreateNodeCommand);
+        if (window.NodeCommands?.CreateNodeCommand) {
+            this.registerCommand('node_create', window.NodeCommands.CreateNodeCommand);
         }
-        if (typeof DeleteNodeCommand !== 'undefined') {
-            this.registerCommand('node_delete', DeleteNodeCommand);
+        if (window.NodeCommands?.DeleteNodeCommand) {
+            this.registerCommand('node_delete', window.NodeCommands.DeleteNodeCommand);
         }
-        if (typeof UpdateNodePropertyCommand !== 'undefined') {
-            this.registerCommand('node_property_update', UpdateNodePropertyCommand);
+        if (window.NodeCommands?.UpdateNodePropertyCommand) {
+            this.registerCommand('node_property_update', window.NodeCommands.UpdateNodePropertyCommand);
         }
         
         // Try to register extended commands if available

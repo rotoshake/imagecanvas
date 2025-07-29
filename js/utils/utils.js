@@ -123,3 +123,9 @@ class HashUtils {
             .join('');
     }
 }
+
+// Make Utils and HashUtils available globally
+if (typeof window !== 'undefined') {
+    window.Utils = Utils;
+    window.HashUtils = HashUtils;
+}

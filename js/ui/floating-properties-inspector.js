@@ -969,6 +969,14 @@ class FloatingPropertiesInspector {
 
         const commonProperties = this.getCommonProperties();
         this.renderPropertyGroups(contentEl, commonProperties);
+
+        // Colour adjustments for a single ImageNode
+        if (this.currentNodes.size === 1) {
+            const node = Array.from(this.currentNodes.values())[0];
+            if (node.type === 'media/image') {
+                this.renderColorAdjustments(contentEl, node);
+            }
+        }
     }
     
     updateTitleToggleState(toggleDot, inputEl, isHidden) {
@@ -2430,8 +2438,59 @@ class FloatingPropertiesInspector {
             console.warn('Failed to load properties panel state:', e);
         }
     }
+
+    /**
+     * Render simple colour-correction sliders (brightness, contrast, saturation, hue)
+     */
+    renderColorAdjustments(container, node) {
+        const section = document.createElement('div');
+        section.className = 'property-group';
+        const title = document.createElement('div');
+        title.className = 'property-group-title';
+        title.textContent = 'Colour';
+        section.appendChild(title);
+
+        const sliderDefs = [
+            { key: 'brightness', min: -1, max: 1, step: 0.01 },
+            { key: 'contrast',   min: -1, max: 1, step: 0.01 },
+            { key: 'saturation', min: -1, max: 1, step: 0.01 },
+            { key: 'hue',        min: -180, max: 180, step: 1 }
+        ];
+
+        sliderDefs.forEach(def => {
+            const row = document.createElement('div');
+            row.className = 'property-row';
+
+            const label = document.createElement('label');
+            label.textContent = def.key.charAt(0).toUpperCase()+def.key.slice(1);
+            label.style.flex = '0 0 80px';
+            row.appendChild(label);
+
+            const input = document.createElement('input');
+            input.type = 'range';
+            input.min = def.min;
+            input.max = def.max;
+            input.step = def.step;
+            input.value = node.adjustments?.[def.key] ?? 0;
+            input.style.flex = '1';
+            input.addEventListener('input', () => {
+                const value = parseFloat(input.value);
+                node.updateAdjustments({ [def.key]: value });
+            });
+            row.appendChild(input);
+
+            section.appendChild(row);
+        });
+
+        container.appendChild(section);
+    }
 }
 
 if (typeof module !== 'undefined' && module.exports) {
     module.exports = FloatingPropertiesInspector;
+}
+
+// Make FloatingPropertiesInspector available globally
+if (typeof window !== 'undefined') {
+    window.FloatingPropertiesInspector = FloatingPropertiesInspector;
 }

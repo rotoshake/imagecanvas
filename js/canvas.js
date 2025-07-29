@@ -2,7 +2,7 @@
 // MAIN CANVAS CLASS
 // ===================================
 
-class LGraphCanvas {
+class ImageCanvas {
     constructor(canvas, graph) {
         this.canvas = canvas;
         this.ctx = canvas.getContext('2d', {
@@ -70,12 +70,44 @@ class LGraphCanvas {
             this.dirty_canvas = true;
         }, 100);
         
-        console.log('LGraphCanvas initialized');
+        console.log('ImageCanvas initialized');
         
         // Setup FPS testing helpers for console (with delay to ensure everything is ready)
         setTimeout(() => {
             this.setupFPSTestingHelpers();
         }, 100);
+        
+        // Initialize renderer abstraction
+        const rendererMode = (window.CONFIG?.RENDERER?.DEFAULT || 'canvas2d').toLowerCase();
+        if (rendererMode === 'webgl' && typeof WebGLRenderer !== 'undefined') {
+            this.renderer = new WebGLRenderer(this);
+        } else if (typeof Canvas2DRenderer !== 'undefined') {
+            this.renderer = new Canvas2DRenderer(this);
+        }
+        
+        // --- UI overlay canvas (for selection UI) ---
+        {
+            const parent = canvas.parentNode || document.body;
+            this.uiCanvas = document.createElement('canvas');
+            this.uiCanvas.style.position = 'absolute';
+            this.uiCanvas.style.top = '0';
+            this.uiCanvas.style.left = '0';
+            this.uiCanvas.style.pointerEvents = 'none';
+            this.uiCanvas.style.zIndex = '2';
+            parent.appendChild(this.uiCanvas);
+            this.uiCtx = this.uiCanvas.getContext('2d');
+        }
+
+        this._resizeUICanvas = () => {
+            if (!this.uiCanvas) return;
+            const dpr = window.devicePixelRatio || 1;
+            const rect = this.canvas.getBoundingClientRect();
+            this.uiCanvas.width = rect.width * dpr;
+            this.uiCanvas.height = rect.height * dpr;
+            this.uiCanvas.style.width = rect.width + 'px';
+            this.uiCanvas.style.height = rect.height + 'px';
+        };
+        this._resizeUICanvas();
     }
     
     createMouseState() {
@@ -852,6 +884,9 @@ Mode: ${this.fpsTestMode}`;
             this.viewport.dpr = dpr;
             // Apply DPI to reset canvas transformations
             this.viewport.applyDPI();
+            if (this.uiCanvas) {
+                this._resizeUICanvas();
+            }
         }
         
         // Force immediate redraw
@@ -3507,6 +3542,11 @@ Mode: ${this.fpsTestMode}`;
     draw() {
         if (!this.ctx) return;
         
+        // Prepare WebGL frame if renderer available
+        if (this.renderer && typeof this.renderer.beginFrame === 'function') {
+            this.renderer.beginFrame();
+        }
+        
         // Start performance monitoring
         if (window.app?.performanceMonitor) {
             window.app.performanceMonitor.startFrame();
@@ -3577,6 +3617,22 @@ Mode: ${this.fpsTestMode}`;
             visibleNodes = this.cachedVisibleNodes;
         }
         
+        // Always ensure selected nodes and nodes requesting GL update are rendered
+        if (this.graph && this.graph.nodes) {
+            const extra = [];
+            // selected nodes
+            for (const n of this.selection.getSelectedNodes()) extra.push(n);
+            // nodes with pending GL update
+            for (const n of this.graph.nodes) {
+                if (n.needsGLUpdate) extra.push(n);
+            }
+            for (const n of extra) {
+                if (!visibleNodes.includes(n)) {
+                    visibleNodes.push(n);
+                }
+            }
+        }
+        
         const cullTime = performance.now();
         
         // Memory management cleanup
@@ -3597,8 +3653,40 @@ Mode: ${this.fpsTestMode}`;
         
         ctx.restore();
         
-        // Draw UI overlays (selection, handles, etc.)
-        this.drawOverlays(ctx);
+        // Draw UI layer (selection outlines, handles, overlays)
+        const renderUI = () => {
+            if (!this.uiCtx) return;
+            const dpr = this.viewport.dpr;
+            this.uiCtx.setTransform(1,0,0,1,0,0);
+            this.uiCtx.clearRect(0,0,this.uiCanvas.width,this.uiCanvas.height);
+            this.uiCtx.scale(dpr,dpr);
+            this.uiCtx.translate(this.viewport.offset[0], this.viewport.offset[1]);
+            this.uiCtx.scale(this.viewport.scale, this.viewport.scale);
+
+            const selectedNodes = this.selection.getSelectedNodes();
+            for (const node of selectedNodes) {
+                // replicate transform logic from drawNode
+                let drawPos = node.pos;
+                if (node._gridAnimPos) {
+                    drawPos = node._gridAnimPos;
+                } else if (node._animPos) {
+                    drawPos = node._animPos;
+                }
+                this.uiCtx.save();
+                this.uiCtx.translate(drawPos[0], drawPos[1]);
+                if (node.rotation) {
+                    this.uiCtx.translate(node.size[0]/2, node.size[1]/2);
+                    this.uiCtx.rotate(node.rotation * Math.PI/180);
+                    this.uiCtx.translate(-node.size[0]/2, -node.size[1]/2);
+                }
+                this.drawNodeSelection(this.uiCtx, node);
+                this.uiCtx.restore();
+            }
+
+            // Overlays like selection rectangle or bounding box
+            this.drawOverlays(this.uiCtx);
+        };
+        renderUI();
         
         // Draw performance stats
         this.drawStats(ctx);
@@ -3713,6 +3801,14 @@ Mode: ${this.fpsTestMode}`;
     }
     
     drawNode(ctx, node) {
+        // Renderer abstraction hook – delegate if custom renderer handles this node
+        if (this.renderer && typeof this.renderer.drawNode === 'function') {
+            const handled = this.renderer.drawNode(ctx, node);
+            if (handled === true) {
+                return; // Skip default drawing path when renderer finished
+            }
+        }
+        
         ctx.save();
         
         // Apply gallery mode opacity during transitions
@@ -4151,7 +4247,7 @@ Mode: ${this.fpsTestMode}`;
         this.animationSystem = null;
         this.alignmentManager = null;
         
-        console.log('LGraphCanvas cleaned up');
+        console.log('ImageCanvas cleaned up');
     }
     
     // ===================================
@@ -4322,4 +4418,10 @@ Mode: ${this.fpsTestMode}`;
         this.selection.selectNode(node, true);
         this.centerOnSelection();
     }
+}
+
+// Make ImageCanvas available globally and keep backward compatibility alias
+if (typeof window !== 'undefined') {
+    window.ImageCanvas = ImageCanvas;
+    window.LGraphCanvas = ImageCanvas; // Temporary alias
 }

@@ -288,3 +288,8 @@ class HandleDetector {
         };
     }
 }
+
+// Make HandleDetector available globally
+if (typeof window !== 'undefined') {
+    window.HandleDetector = HandleDetector;
+}

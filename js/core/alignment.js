@@ -1014,3 +1014,8 @@ class AutoAlignmentManager {
         this.canvas.dirty_canvas = true;
     }
 }
+
+// Make AutoAlignmentManager available globally
+if (typeof window !== 'undefined') {
+    window.AutoAlignmentManager = AutoAlignmentManager;
+}

@@ -102,3 +102,8 @@ class TransactionManager {
         this.commitTransaction();
     }
 }
+
+// Make TransactionManager available globally
+if (typeof window !== 'undefined') {
+    window.TransactionManager = TransactionManager;
+}

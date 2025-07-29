@@ -502,3 +502,8 @@ class StateManager {
         });
     }
 }
+
+// Make StateManager available globally
+if (typeof window !== 'undefined') {
+    window.StateManager = StateManager;
+}

@@ -573,3 +573,8 @@ class BulkOperationManager {
 if (typeof module !== 'undefined' && module.exports) {
     module.exports = BulkOperationManager;
 }
+
+// Make BulkOperationManager available globally
+if (typeof window !== 'undefined') {
+    window.BulkOperationManager = BulkOperationManager;
+}

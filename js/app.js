@@ -5,8 +5,8 @@
 class ImageCanvasApp {
     constructor(canvasElement) {
         this.canvas = canvasElement;
-        this.graph = new LGraph();
-        this.graphCanvas = new LGraphCanvas(this.canvas, this.graph);
+        this.graph = new ImageGraph();
+        this.graphCanvas = new ImageCanvas(this.canvas, this.graph);
         this.dragDropManager = new DragDropManager(this.canvas, this.graph);
         this.stateManager = new StateManager();
         this.bulkOperationManager = new BulkOperationManager();

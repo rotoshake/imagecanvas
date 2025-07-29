@@ -262,3 +262,9 @@ class AlignmentAnimator {
         this.activeAlignments.clear();
     }
 }
+
+// Make AnimationSystem and AlignmentAnimator available globally
+if (typeof window !== 'undefined') {
+    window.AnimationSystem = AnimationSystem;
+    window.AlignmentAnimator = AlignmentAnimator;
+}
