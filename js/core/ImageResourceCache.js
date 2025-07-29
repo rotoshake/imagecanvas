@@ -69,7 +69,9 @@ class ImageResourceCache {
         const currentCount = this.hashRefCount.get(hash) || 0;
         this.hashRefCount.set(hash, currentCount + 1);
         
-        console.log(`💾 Cached image: ${hash.substring(0, 8)}... (refs: ${currentCount + 1})`);
+                    if (window.Logger.isEnabled('CACHE_OPERATIONS')) {
+                window.Logger.cache('debug', `💾 Cached image: ${hash.substring(0, 8)}... (refs: ${currentCount + 1})`);
+            }
     }
     
     /**

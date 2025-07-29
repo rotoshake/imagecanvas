@@ -127,7 +127,7 @@ class ImageUploadManager {
             const uploadTime = Date.now() - startTime;
             this._recordUploadCompletion(blob.size, uploadTime, true);
             
-            console.log(`✅ Upload complete for ${filename}: ${blob.size} bytes in ${uploadTime}ms`);
+            window.Logger.upload('info', `✅ Upload complete for ${filename}: ${blob.size} bytes in ${uploadTime}ms`);
             
             // Notify unified progress system of completion
             if (window.imageProcessingProgress) {
@@ -248,7 +248,7 @@ class ImageUploadManager {
         } finally {
             // Remove from active and process next
             this.activeUploads.delete(hash);
-            console.log(`✅ Upload slot freed. Active: ${this.activeUploads.size}`);
+            window.Logger.upload('debug', `✅ Upload slot freed. Active: ${this.activeUploads.size}`);
             
             // Clean up any references to help GC
             uploadInfo.imageData = null;

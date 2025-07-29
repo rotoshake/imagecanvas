@@ -103,6 +103,89 @@ const Utils = {
     }
 };
 
+/**
+ * Logging utility with verbosity control
+ */
+const Logger = {
+    // Log levels in order of verbosity
+    LEVELS: {
+        error: 0,
+        warn: 1,
+        info: 2,
+        debug: 3,
+        verbose: 4
+    },
+    
+    /**
+     * Check if a log level should be displayed
+     */
+    shouldLog(system, level) {
+        const globalLevel = CONFIG.LOGGING?.LEVEL || 'warn';
+        const systemLevel = CONFIG.LOGGING?.SYSTEMS?.[system] || globalLevel;
+        
+        const globalThreshold = this.LEVELS[globalLevel] || 1;
+        const systemThreshold = this.LEVELS[systemLevel] || 1;
+        
+        // Use the more restrictive threshold
+        const threshold = Math.min(globalThreshold, systemThreshold);
+        const messageLevel = this.LEVELS[level] || 1;
+        
+        return messageLevel <= threshold;
+    },
+    
+    /**
+     * Check if a specific log type is enabled
+     */
+    isEnabled(logType) {
+        return CONFIG.LOGGING?.ENABLED?.[logType] !== false;
+    },
+    
+    /**
+     * Log with system and level control
+     */
+    log(system, level, message, ...args) {
+        if (this.shouldLog(system, level)) {
+            const logMethod = console[level] || console.log;
+            logMethod(message, ...args);
+        }
+    },
+    
+    /**
+     * Convenience methods for different systems
+     */
+    upload(level, message, ...args) {
+        this.log('UPLOAD', level, message, ...args);
+    },
+    
+    thumbnail(level, message, ...args) {
+        this.log('THUMBNAIL', level, message, ...args);
+    },
+    
+    imageNode(level, message, ...args) {
+        this.log('IMAGE_NODE', level, message, ...args);
+    },
+    
+    stateSync(level, message, ...args) {
+        this.log('STATE_SYNC', level, message, ...args);
+    },
+    
+    operationPipeline(level, message, ...args) {
+        this.log('OPERATION_PIPELINE', level, message, ...args);
+    },
+    
+    dragdrop(level, message, ...args) {
+        this.log('DRAGDROP', level, message, ...args);
+    },
+    
+    cache(level, message, ...args) {
+        this.log('CACHE', level, message, ...args);
+    },
+    
+    performance(level, message, ...args) {
+        this.log('PERFORMANCE', level, message, ...args);
+    }
+};
+
 // ===================================
 // HASH UTILITIES
 // ===================================
@@ -128,4 +211,5 @@ class HashUtils {
 if (typeof window !== 'undefined') {
     window.Utils = Utils;
     window.HashUtils = HashUtils;
+    window.Logger = Logger;
 }

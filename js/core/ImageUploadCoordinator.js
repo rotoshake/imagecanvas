@@ -249,7 +249,9 @@ class ImageUploadCoordinator {
                 thumbnail: nodes[0]?.thumbnail || existingCache?.thumbnail,
                 isLocal: false
             });
-            console.log(`💾 Updated cache for hash ${hash.substring(0, 8)}... with server URL`);
+            if (window.Logger.isEnabled('CACHE_OPERATIONS')) {
+                window.Logger.cache('debug', `💾 Updated cache for hash ${hash.substring(0, 8)}... with server URL`);
+            }
         }
     }
     

@@ -4319,14 +4319,25 @@ Mode: ${this.fpsTestMode}`;
     // ===================================
     
     findNodeClosestToViewportCenter() {
+        if (!this.viewport || !this.viewport.convertCanvasToGraph) {
+            console.warn('Viewport not properly initialized for findNodeClosestToViewportCenter');
+            return null;
+        }
+        
         const centerX = this.canvas.width / 2;
         const centerY = this.canvas.height / 2;
         const graphCenter = this.viewport.convertCanvasToGraph(centerX, centerY);
+        
+        if (!graphCenter || !this.graph || !this.graph.nodes) {
+            return null;
+        }
         
         let closestNode = null;
         let minDistance = Infinity;
         
         for (const node of this.graph.nodes) {
+            if (!node.pos || !node.size) continue;
+            
             const nodeCenterX = node.pos[0] + node.size[0] / 2;
             const nodeCenterY = node.pos[1] + node.size[1] / 2;
             const distance = Math.sqrt(

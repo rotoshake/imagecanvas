@@ -240,7 +240,9 @@ class OperationPipeline {
         const { command, resolve, reject, options } = this.executionQueue.shift();
         
         try {
-            console.log(`⚡ Executing ${command.origin} command: ${command.type}`, command.params);
+            if (window.Logger.isEnabled('STATE_SYNC_DETAILS')) {
+            window.Logger.operationPipeline('debug', `⚡ Executing ${command.origin} command: ${command.type}`, command.params);
+        }
             
             // Check if we should use state sync
             if (this.shouldUseStateSync(command) && !options.skipBroadcast) {

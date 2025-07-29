@@ -110,6 +110,41 @@ const CONFIG = {
     }
 };
 
+// Logging configuration
+CONFIG.LOGGING = {
+    // Global logging level: 'error', 'warn', 'info', 'debug', 'verbose'
+    LEVEL: 'warn',
+    
+    // System-specific logging levels (overrides global)
+    SYSTEMS: {
+        // Image upload and processing
+        UPLOAD: 'warn',           // 'error', 'warn', 'info', 'debug', 'verbose'
+        THUMBNAIL: 'warn',        // 'error', 'warn', 'info', 'debug', 'verbose'
+        IMAGE_NODE: 'warn',       // 'error', 'warn', 'info', 'debug', 'verbose'
+        
+        // State synchronization
+        STATE_SYNC: 'warn',       // 'error', 'warn', 'info', 'debug', 'verbose'
+        OPERATION_PIPELINE: 'warn', // 'error', 'warn', 'info', 'debug', 'verbose'
+        
+        // Drag and drop
+        DRAGDROP: 'warn',         // 'error', 'warn', 'info', 'debug', 'verbose'
+        
+        // Cache and performance
+        CACHE: 'warn',            // 'error', 'warn', 'info', 'debug', 'verbose'
+        PERFORMANCE: 'warn',      // 'error', 'warn', 'info', 'debug', 'verbose'
+    },
+    
+    // Enable/disable specific log types
+    ENABLED: {
+        THUMBNAIL_GENERATION: false,    // Disable thumbnail generation logs
+        UPLOAD_PROGRESS: false,         // Disable upload progress logs
+        STATE_SYNC_DETAILS: false,      // Disable detailed state sync logs
+        OPERATION_ACK: false,           // Disable operation acknowledgment logs
+        CACHE_OPERATIONS: false,        // Disable cache operation logs
+        DRAGDROP_DETAILS: false,        // Disable dragdrop detailed logs
+    }
+};
+
 // API endpoint helpers
 CONFIG.ENDPOINTS = {
     // Projects
@@ -138,3 +173,54 @@ CONFIG.getUserColor = function(index) {
 
 // Make CONFIG globally available
 window.CONFIG = CONFIG;
+
+// Global logging control function
+window.setLogLevel = function(level = 'warn', system = null) {
+    if (system) {
+        CONFIG.LOGGING.SYSTEMS[system] = level;
+        console.log(`🔧 Set ${system} logging to: ${level}`);
+    } else {
+        CONFIG.LOGGING.LEVEL = level;
+        console.log(`🔧 Set global logging to: ${level}`);
+    }
+};
+
+window.enableLogType = function(logType, enabled = true) {
+    CONFIG.LOGGING.ENABLED[logType] = enabled;
+    console.log(`🔧 ${enabled ? 'Enabled' : 'Disabled'} logging for: ${logType}`);
+};
+
+// Quick presets for common scenarios
+window.setLoggingPreset = function(preset) {
+    switch (preset) {
+        case 'quiet':
+            CONFIG.LOGGING.LEVEL = 'error';
+            Object.keys(CONFIG.LOGGING.ENABLED).forEach(key => {
+                CONFIG.LOGGING.ENABLED[key] = false;
+            });
+            console.log('🔇 Set logging to quiet mode (errors only)');
+            break;
+        case 'normal':
+            CONFIG.LOGGING.LEVEL = 'warn';
+            Object.keys(CONFIG.LOGGING.ENABLED).forEach(key => {
+                CONFIG.LOGGING.ENABLED[key] = false;
+            });
+            console.log('🔊 Set logging to normal mode (warnings and errors)');
+            break;
+        case 'debug':
+            CONFIG.LOGGING.LEVEL = 'info';
+            CONFIG.LOGGING.ENABLED.THUMBNAIL_GENERATION = true;
+            CONFIG.LOGGING.ENABLED.UPLOAD_PROGRESS = true;
+            console.log('🐛 Set logging to debug mode (info level with key systems enabled)');
+            break;
+        case 'verbose':
+            CONFIG.LOGGING.LEVEL = 'debug';
+            Object.keys(CONFIG.LOGGING.ENABLED).forEach(key => {
+                CONFIG.LOGGING.ENABLED[key] = true;
+            });
+            console.log('🔊 Set logging to verbose mode (all systems enabled)');
+            break;
+        default:
+            console.log('Available presets: quiet, normal, debug, verbose');
+    }
+};

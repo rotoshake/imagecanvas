@@ -118,7 +118,9 @@ class DragDropManager {
      * 5. Background uploads and optimization
      */
     async processFiles(files, dropPos) {
-        console.log(`🚀 Processing ${files.length} files with memory-efficient progressive loading`);
+        if (window.Logger.isEnabled('DRAGDROP_DETAILS')) {
+            window.Logger.dragdrop('info', `🚀 Processing ${files.length} files with memory-efficient progressive loading`);
+        }
         const startTime = Date.now();
         
         // Set bulk operation flag to prevent aggressive memory cleanup

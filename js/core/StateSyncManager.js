@@ -226,14 +226,16 @@ class StateSyncManager {
             
             // Log payload size for debugging
             const payloadSize = JSON.stringify(serverRequest).length;
-            console.log('📤 Sending operation to server:', {
-                type: serverRequest.type,
-                operationId: serverRequest.operationId,
-                hasUndoData: !!serverRequest.undoData,
-                undoDataPreview: serverRequest.undoData ? Object.keys(serverRequest.undoData) : null,
-                payloadSize: payloadSize,
-                payloadSizeMB: (payloadSize / 1024 / 1024).toFixed(2) + 'MB'
-            });
+            if (window.Logger.isEnabled('STATE_SYNC_DETAILS')) {
+                window.Logger.stateSync('debug', '📤 Sending operation to server:', {
+                    type: serverRequest.type,
+                    operationId: serverRequest.operationId,
+                    hasUndoData: !!serverRequest.undoData,
+                    undoDataPreview: serverRequest.undoData ? Object.keys(serverRequest.undoData) : null,
+                    payloadSize: payloadSize,
+                    payloadSizeMB: (payloadSize / 1024 / 1024).toFixed(2) + 'MB'
+                });
+            }
             
             // Check and warn about large payloads
             const MAX_SAFE_SIZE = 50 * 1024; // 50KB warning threshold
@@ -271,7 +273,9 @@ class StateSyncManager {
             const hasMediaData = command.params.imageData || command.params.videoData || 
                                (command.params.properties && command.params.properties.serverUrl);
             const timeout = hasMediaData ? 30000 : 5000; // 30s for media, 5s for others
-            console.log(`⏱️ Waiting for server response with ${timeout}ms timeout for ${command.type} operation`);
+            if (window.Logger.isEnabled('STATE_SYNC_DETAILS')) {
+                window.Logger.stateSync('debug', `⏱️ Waiting for server response with ${timeout}ms timeout for ${command.type} operation`);
+            }
             const response = await this.waitForServerResponse(operationId, timeout);
             
             if (response.success) {
@@ -1189,7 +1193,9 @@ class StateSyncManager {
         if (window.app?.undoManager) {
             // Track operation time to prevent premature undo requests
             window.app.undoManager.lastOperationTime = Date.now();
-            console.log('📋 Requesting undo state after operation acknowledgment');
+            if (window.Logger.isEnabled('OPERATION_ACK')) {
+                window.Logger.stateSync('debug', '📋 Requesting undo state after operation acknowledgment');
+            }
             window.app.undoManager.requestUndoState();
         }
     }
@@ -1228,7 +1234,9 @@ class StateSyncManager {
         const pending = this.pendingOperations.get(operationId);
         if (!pending || !pending.rollbackData) return;
         
-        console.log('🧹 Cleaning up optimistic operation:', command.type, operationId);
+        if (window.Logger.isEnabled('OPERATION_ACK')) {
+            window.Logger.stateSync('debug', '🧹 Cleaning up optimistic operation:', command.type, operationId);
+        }
         
         // For node creation/duplication: handle optimistic nodes before server nodes arrive
         if (command.type === 'node_create' || command.type === 'node_duplicate' || command.type === 'node_paste') {

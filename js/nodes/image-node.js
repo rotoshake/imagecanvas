@@ -198,24 +198,29 @@ class ImageNode extends BaseNode {
                     this.img.setAttribute('data-filename', this.properties.filename);
                 }
                 
-                // Generate thumbnails for better performance
+                                // Generate thumbnails for better performance
                 const isVisible = this._isNodeVisible();
                 const priority = isVisible ? 'high' : 'normal';
                 
-                console.log(`🎬 Triggering thumbnail generation for ${hash.substring(0, 8)} (visible: ${isVisible}, priority: ${priority})`);
+                if (window.Logger.isEnabled('THUMBNAIL_GENERATION')) {
+                    window.Logger.imageNode('info', `🎬 Triggering thumbnail generation for ${hash.substring(0, 8)} (visible: ${isVisible}, priority: ${priority})`);
+                }
+                
                 window.thumbnailCache.generateThumbnailsProgressive(
                     hash, 
-                    this.img, 
+                    this.img,
                     (progress) => {
                         this.thumbnailProgress = progress;
-                        console.log(`📊 Thumbnail progress for ${hash.substring(0, 8)}: ${(progress * 100).toFixed(0)}%`);
+                        
+                        if (window.Logger.isEnabled('THUMBNAIL_GENERATION')) {
+                            window.Logger.imageNode('debug', `📊 Thumbnail progress for ${hash.substring(0, 8)}: ${(progress * 100).toFixed(0)}%`);
+                        }
                         
                         // When thumbnails are complete, invalidate cached render data
                         if (progress >= 1.0) {
-                            console.log(`🎉 Thumbnails complete for ${hash.substring(0, 8)}, invalidating render cache`);
+                            window.Logger.imageNode('info', `🎉 Thumbnails complete for ${hash.substring(0, 8)}, invalidating render cache`);
                             // Small delay to ensure thumbnails are actually stored in cache
                             setTimeout(() => {
-                                // console.log(`🧹 Clearing cached render data for ${hash.substring(0, 8)} to use new thumbnails`);
                                 this._cachedRenderData = null;
                                 this._lastScale = null;
                                 this._cachedThumbnailSize = null;
@@ -223,18 +228,15 @@ class ImageNode extends BaseNode {
                                 
                                 // Verify thumbnails are actually available now
                                 if (window.thumbnailCache.hasThumbnails(hash)) {
-                                    const sizes = window.thumbnailCache.getAvailableSizes(hash);
-                                    // console.log(`✅ Thumbnails now available for ${hash.substring(0, 8)}:`, sizes);
-                                    
                                     // Force immediate redraw to show new thumbnails
                                     if (this.graph?.canvas) {
                                         this.graph.canvas.dirty_canvas = true;
-                                        console.log(`🎨 Forcing canvas redraw for ${hash.substring(0, 8)}`);
+                                        window.Logger.imageNode('debug', `🎨 Forcing canvas redraw for ${hash.substring(0, 8)}`);
                                         // Also immediately trigger a render to see new thumbnails
                                         this.graph.canvas.draw(true, true);
                                     }
                                 } else {
-                                    console.log(`⚠️ Thumbnails still not available for ${hash.substring(0, 8)} after completion`);
+                                    window.Logger.imageNode('warn', `⚠️ Thumbnails still not available for ${hash.substring(0, 8)} after completion`);
                                 }
                             }, 100); // Increased delay to 100ms to ensure thumbnails are fully stored
                         }

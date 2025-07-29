@@ -442,7 +442,9 @@ class ThumbnailCache {
         
         // Generating thumbnails client-side with throttling
         this.activeGenerations++;
-        console.log(`🎬 Starting thumbnail generation for ${hash.substring(0, 8)}... (active: ${this.activeGenerations})`);
+        if (window.Logger.isEnabled('THUMBNAIL_GENERATION')) {
+            window.Logger.thumbnail('info', `🎬 Starting thumbnail generation for ${hash.substring(0, 8)}... (active: ${this.activeGenerations})`);
+        }
         
         const generationPromise = this._generateThumbnailsInternal(hash, sourceImage, progressCallback, priority);
         this.generationQueues.set(hash, generationPromise);

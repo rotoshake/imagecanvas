@@ -80,6 +80,11 @@ class ViewportManager {
         return [clientX - rect.left, clientY - rect.top];
     }
     
+    convertCanvasToGraph(clientX, clientY) {
+        const offset = this.convertCanvasToOffset(clientX, clientY);
+        return this.convertOffsetToGraph(offset[0], offset[1]);
+    }
+    
     convertOffsetToGraph(x, y) {
         return [
             (x - this.offset[0]) / this.scale,
