@@ -8,6 +8,9 @@ class PerformanceMonitor {
         this.enabled = true;
         this.showHUD = false; // Can be toggled for debugging
         
+        // Listen for user preference changes
+        this.setupPreferenceListener();
+        
         // Frame timing
         this.lastFrameTime = performance.now();
         this.frameCount = 0;
@@ -39,6 +42,25 @@ class PerformanceMonitor {
         this.lastUpdate = performance.now();
         
         console.log('📊 PerformanceMonitor initialized');
+    }
+    
+    /**
+     * Setup listener for user preference changes
+     */
+    setupPreferenceListener() {
+        // Check for user profile system and listen for preference changes
+        if (window.app?.userProfileSystem) {
+            window.app.userProfileSystem.addListener('preferenceChanged', (data) => {
+                if (data.key === 'showPerformance') {
+                    this.showHUD = data.value;
+                    console.log(`📊 Performance HUD ${data.value ? 'enabled' : 'disabled'}`);
+                }
+            });
+            
+            // Set initial state from user preferences
+            const showPerformance = window.app.userProfileSystem.getPreference('showPerformance', false);
+            this.showHUD = showPerformance;
+        }
     }
     
     /**

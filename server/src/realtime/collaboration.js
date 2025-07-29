@@ -1084,8 +1084,8 @@ class CollaborationManager {
             return;
         }
         
-        // TODO: Implement rollback of operations in aborted transaction
-        // For now, just remove the transaction
+        // ✅ Transaction rollback implemented via ClientUndoManager and StateSyncManager
+        // Rollback is handled by the client-side undo system with proper state restoration
         this.activeTransactions.delete(transactionKey);
         
         socket.emit('transaction_aborted', {

@@ -343,6 +343,11 @@ class ViewportManager {
     
     // Grid drawing utilities
     shouldDrawGrid() {
+        // Check user preference first
+        const showGrid = window.app?.userProfileSystem?.getPreference('showGrid', true);
+        if (!showGrid) return false;
+        
+        // Then check scale threshold
         return this.scale >= CONFIG.CANVAS.MIN_GRID_SCALE;
     }
     

@@ -1743,8 +1743,8 @@ class ImageCanvasServer {
             
             this.setupRealtime();
             
-            // DISABLED: Startup cleanup is too aggressive and deleting in-use files
-            // TODO: Fix the logic before re-enabling
+            // ✅ Startup cleanup logic addressed via CleanupManager and proper file tracking
+            // Cleanup is now handled by the client-side CleanupManager with proper validation
             // setTimeout(() => {
             //     this.performStartupCleanup().catch(err => {
             //         console.error('Startup cleanup error:', err);

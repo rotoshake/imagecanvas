@@ -7,6 +7,10 @@ class AnimationSystem {
         this.animations = new Map();
         this.running = false;
         this.lastTime = 0;
+        this.enabled = true; // Global animation control
+        
+        // Listen for user preference changes
+        this.setupPreferenceListener();
     }
     
     start() {
@@ -17,9 +21,28 @@ class AnimationSystem {
         this.running = false;
     }
     
+    /**
+     * Setup listener for user preference changes
+     */
+    setupPreferenceListener() {
+        // Check for user profile system and listen for preference changes
+        if (window.app?.userProfileSystem) {
+            window.app.userProfileSystem.addListener('preferenceChanged', (data) => {
+                if (data.key === 'enableAnimations') {
+                    this.enabled = data.value;
+                    console.log(`🎬 Animations ${data.value ? 'enabled' : 'disabled'}`);
+                }
+            });
+            
+            // Set initial state from user preferences
+            const enableAnimations = window.app.userProfileSystem.getPreference('enableAnimations', true);
+            this.enabled = enableAnimations;
+        }
+    }
+    
     // Called by main render loop with deltaTime
     updateAnimations(deltaTime) {
-        if (!this.running) return false;
+        if (!this.running || !this.enabled) return false;
         
         // Convert deltaTime to seconds and cap for stability (33ms = 30 FPS minimum)
         const deltaTimeSeconds = Math.min(deltaTime / 1000, 0.033);

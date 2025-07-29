@@ -43,10 +43,23 @@ class ImageCanvasApp {
             // Initialize alignment system
             this.graphCanvas.alignmentManager = new AutoAlignmentManager(this.graphCanvas);
             
-            // Register node types
-            NodeFactory.registerNodeType('media/image', ImageNode);
-            NodeFactory.registerNodeType('media/video', VideoNode);
-            NodeFactory.registerNodeType('media/text', TextNode);
+            // Initialize node plugin system
+            this.nodePluginSystem = new NodePluginSystem();
+            
+            // Initialize node creation menu
+            this.nodeCreationMenu = new NodeCreationMenu(this.canvas);
+            
+            // Initialize user profile system
+            this.userProfileSystem = new UserProfileSystem();
+            await this.userProfileSystem.init();
+            
+            // Initialize user profile panel
+            this.userProfilePanel = new UserProfilePanel();
+            
+            // Register node types (now handled by NodePluginSystem)
+            // NodeFactory.registerNodeType('media/image', ImageNode);
+            // NodeFactory.registerNodeType('media/video', VideoNode);
+            // NodeFactory.registerNodeType('media/text', TextNode);
             
             // State will be loaded from server when joining a project
             // Collaborative features are now handled by CollaborativeArchitecture
@@ -672,6 +685,35 @@ class NodeFactory {
     static nodeTypes = new Map();
     
     static createNode(type, options = {}) {
+        // Use NodePluginSystem if available
+        if (window.app?.nodePluginSystem) {
+            try {
+                const node = window.app.nodePluginSystem.createNode(type, options.properties || {});
+                
+                // Apply additional options
+                if (node && options) {
+                    if (options.id) node.id = options.id;
+                    if (options.pos) node.pos = [...options.pos];
+                    if (options.size) node.size = [...options.size];
+                    if (options.flags) {
+                        for (const [key, value] of Object.entries(options.flags)) {
+                            if (value !== undefined) {
+                                node.flags[key] = value;
+                            }
+                        }
+                    }
+                    if (options.title) node.title = options.title;
+                    if (options.rotation !== undefined) node.rotation = options.rotation;
+                    if (options.aspectRatio !== undefined) node.aspectRatio = options.aspectRatio;
+                }
+                
+                return node;
+            } catch (error) {
+                console.warn('NodePluginSystem failed, falling back to legacy system:', error);
+            }
+        }
+        
+        // Legacy fallback
         let node = null;
         
         // Get node class

@@ -1756,6 +1756,11 @@ Mode: ${this.fpsTestMode}`;
     // ===================================
     
     handleKeyboardShortcut(e) {
+        // Don't handle shortcuts when typing in input fields
+        if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') {
+            return false;
+        }
+        
         // Check gallery mode first - it handles its own keyboard events
         if (this.galleryViewManager && this.galleryViewManager.active) {
             // Gallery mode handles its own events through its event listener
@@ -1908,10 +1913,26 @@ Mode: ${this.fpsTestMode}`;
             return true;
         }
         
+        // Create new shape node (plugin test)
+        if (key === 's' && !ctrl && !shift && !alt) {
+            if (window.app?.nodeCreationMenu) {
+                window.app.nodeCreationMenu.createNodeAtCenter('shape');
+            }
+            return true;
+        }
+        
         // Toggle properties panel
         if (key === 'p' && !ctrl && !shift && !alt) {
             if (window.propertiesInspector) {
                 window.propertiesInspector.toggle();
+            }
+            return true;
+        }
+        
+        // Toggle user profile panel
+        if (key === 'u' && !ctrl && !shift && !alt) {
+            if (window.app?.userProfilePanel) {
+                window.app.userProfilePanel.toggle();
             }
             return true;
         }
@@ -3683,6 +3704,26 @@ Mode: ${this.fpsTestMode}`;
                 this.uiCtx.restore();
             }
 
+            // Draw node titles on UI layer
+            for (const node of visibleNodes) {
+                // replicate transform logic from drawNode
+                let drawPos = node.pos;
+                if (node._gridAnimPos) {
+                    drawPos = node._gridAnimPos;
+                } else if (node._animPos) {
+                    drawPos = node._animPos;
+                }
+                this.uiCtx.save();
+                this.uiCtx.translate(drawPos[0], drawPos[1]);
+                if (node.rotation) {
+                    this.uiCtx.translate(node.size[0]/2, node.size[1]/2);
+                    this.uiCtx.rotate(node.rotation * Math.PI/180);
+                    this.uiCtx.translate(-node.size[0]/2, -node.size[1]/2);
+                }
+                this.drawNodeTitle(this.uiCtx, node);
+                this.uiCtx.restore();
+            }
+
             // Overlays like selection rectangle or bounding box
             this.drawOverlays(this.uiCtx);
         };
@@ -3937,8 +3978,14 @@ Mode: ${this.fpsTestMode}`;
     }
     
     drawNodeTitle(ctx, node) {
-        // Skip if hidden
+        // Skip if hidden by node flag
         if (node.flags?.hide_title) {
+            return;
+        }
+        
+        // Skip if hidden by user preference
+        const showTitles = window.app?.userProfileSystem?.getPreference('showTitles', false);
+        if (!showTitles) {
             return;
         }
         

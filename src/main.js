@@ -48,13 +48,22 @@ import '../js/core/ImageUploadCoordinator.js';
 import '../js/core/GalleryViewManager.js';
 import '../js/core/BackgroundSyncManager.js';
 
-// 4) Node classes
-import '../js/nodes/base-node.js';
-import '../js/nodes/image-node.js';
-import '../js/nodes/video-node.js';
-import '../js/nodes/text-node.js';
-
-// 5) Base Command class first
+        // 4) Node classes
+        import '../js/nodes/base-node.js';
+        import '../js/nodes/image-node.js';
+        import '../js/nodes/video-node.js';
+        import '../js/nodes/text-node.js';
+        
+                // 5) Node plugin system
+        import '../js/core/NodePluginSystem.js';
+        
+        // 6) User profile system
+        import '../js/core/UserProfileSystem.js';
+        
+        // 7) Example plugins (optional)
+        import '../js/plugins/ShapeNode.js';
+        
+        // 6) Base Command class first
 import '../js/commands/Command.js';
 
 // 6) Commands that extend Command
@@ -74,11 +83,13 @@ import '../js/core/ClientUndoManager.js';
 import '../js/core/CollaborativeArchitecture.js';
 import '../js/core/AutoInit.js';
 
-// 9) UI Components
-import '../js/ui/canvas-navigator.js';
-import '../js/ui/connection-status.js';
-import '../js/ui/floating-properties-inspector.js';
-import '../js/ui/unified-notifications.js';
+        // 9) UI Components
+        import '../js/ui/canvas-navigator.js';
+        import '../js/ui/connection-status.js';
+        import '../js/ui/floating-properties-inspector.js';
+        import '../js/ui/unified-notifications.js';
+        import '../js/ui/node-creation-menu.js';
+        import '../js/ui/user-profile-panel.js';
 
 // 10) Finally boot the application after all globals are defined
 import '../js/app.js';

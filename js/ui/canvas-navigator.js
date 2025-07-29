@@ -50,7 +50,12 @@ class CanvasNavigator {
         this.panel.innerHTML = `
             <div class="navigator-header">
                 <h3>Image Canvas</h3>
-                <button class="close-btn" title="Close">×</button>
+                <div class="header-controls">
+                    <button class="user-btn" title="User Profile">
+                        <span class="user-avatar">👤</span>
+                    </button>
+                    <button class="close-btn" title="Close">×</button>
+                </div>
             </div>
             <div class="navigator-toolbar">
                 <button class="new-canvas-btn">
@@ -130,6 +135,40 @@ class CanvasNavigator {
                 font-size: 14px;
                 font-weight: 700;
                 font-style: bold;
+            }
+            
+            .header-controls {
+                display: flex;
+                align-items: center;
+                gap: 4px;
+            }
+            
+            .user-btn {
+                background: none;
+                border: none;
+                color: #999;
+                font-size: 16px;
+                cursor: pointer;
+                padding: 0;
+                width: 28px;
+                height: 28px;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                border-radius: 50%;
+                transition: all 0.2s;
+                border: 1px solid transparent;
+            }
+            
+            .user-btn:hover {
+                background: #333;
+                color: #fff;
+                border-color: #555;
+            }
+            
+            .user-avatar {
+                font-size: 14px;
+                line-height: 1;
             }
             
             .close-btn {
@@ -456,6 +495,23 @@ class CanvasNavigator {
         // Close button
         this.panel.querySelector('.close-btn').addEventListener('click', () => this.close());
         
+        // User button
+        const userBtn = this.panel.querySelector('.user-btn');
+        if (userBtn) {
+            userBtn.addEventListener('click', () => {
+                if (window.app?.userProfilePanel) {
+                    window.app.userProfilePanel.toggle();
+                }
+            });
+            
+            // Listen for user profile changes
+            if (window.app?.userProfileSystem) {
+                window.app.userProfileSystem.addListener('userChanged', (user) => {
+                    this.updateUserAvatar(user);
+                });
+            }
+        }
+        
         // New canvas button
         this.panel.querySelector('.new-canvas-btn').addEventListener('click', () => this.createNewCanvas());
         
@@ -507,6 +563,21 @@ class CanvasNavigator {
         this.isOpen = false;
         this.panel.classList.remove('open');
         this.toggleBtn.classList.remove('active');
+    }
+    
+    updateUserAvatar(user) {
+        const userAvatar = this.panel.querySelector('.user-avatar');
+        if (!userAvatar) return;
+        
+        if (user) {
+            // Show user's first initial
+            userAvatar.textContent = user.username.charAt(0).toUpperCase();
+            userAvatar.style.color = window.app?.userProfileSystem?.getUserColor() || '#999';
+        } else {
+            // Show default avatar
+            userAvatar.textContent = '👤';
+            userAvatar.style.color = '#999';
+        }
     }
     
     async loadCanvases() {
