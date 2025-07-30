@@ -619,6 +619,9 @@ class DeleteNodeCommand extends Command {
                     nodeData.properties.src && 
                     nodeData.properties.src.startsWith('data:')) {
                     
+                    const originalSize = JSON.stringify(nodeData.properties).length;
+                    
+                    // Case 1: We have a serverUrl - use it
                     if (nodeData.properties.serverUrl) {
                         nodeData.properties = {
                             serverUrl: nodeData.properties.serverUrl,
@@ -626,7 +629,11 @@ class DeleteNodeCommand extends Command {
                             filename: nodeData.properties.filename,
                             _hadDataUrl: true
                         };
-                    } else if (nodeData.properties.hash && window.app?.imageResourceCache?.has(nodeData.properties.hash)) {
+                        const optimizedSize = JSON.stringify(nodeData.properties).length;
+                        console.log(`🗜️ Optimized deletion undo data for ${node.id}: ${(originalSize/1024/1024).toFixed(2)}MB → ${(optimizedSize/1024).toFixed(2)}KB (using serverUrl)`);
+                    } 
+                    // Case 2: No serverUrl but we have a hash - check cache
+                    else if (nodeData.properties.hash && window.app?.imageResourceCache?.has(nodeData.properties.hash)) {
                         const cached = window.app.imageResourceCache.get(nodeData.properties.hash);
                         nodeData.properties = {
                             hash: nodeData.properties.hash,
@@ -634,9 +641,23 @@ class DeleteNodeCommand extends Command {
                             _hadDataUrl: true,
                             _fromCache: true
                         };
+                        // If cache has serverUrl, include it
                         if (cached.serverUrl) {
                             nodeData.properties.serverUrl = cached.serverUrl;
                         }
+                        const optimizedSize = JSON.stringify(nodeData.properties).length;
+                        console.log(`🗜️ Optimized deletion undo data for ${node.id}: ${(originalSize/1024/1024).toFixed(2)}MB → ${(optimizedSize/1024).toFixed(2)}KB (using cache)`);
+                    }
+                    // Case 3: Large data URL with no optimization available - strip it anyway
+                    else if (originalSize > 100 * 1024) { // > 100KB
+                        console.warn(`⚠️ Large unoptimized image in deletion: ${(originalSize/1024/1024).toFixed(2)}MB. Stripping data URL to prevent disconnection.`);
+                        nodeData.properties = {
+                            hash: nodeData.properties.hash,
+                            filename: nodeData.properties.filename,
+                            _hadDataUrl: true,
+                            _stripped: true,
+                            _originalSize: originalSize
+                        };
                     }
                 }
                 
@@ -668,15 +689,15 @@ class DeleteNodeCommand extends Command {
                 };
                 
                 // Debug logging
-                if (node.type === 'media/image' || node.type === 'media/video') {
-                    console.log(`🖼️ Deleting ${node.type} node ${node.id}:`, {
-                        hasServerUrl: !!nodeData.properties.serverUrl,
-                        hasSrc: !!nodeData.properties.src,
-                        srcIsDataUrl: nodeData.properties.src?.startsWith('data:'),
-                        srcLength: nodeData.properties.src?.length || 0,
-                        hash: nodeData.properties.hash?.substring(0, 8)
-                    });
-                }
+                // if (node.type === 'media/image' || node.type === 'media/video') {
+                //     console.log(`🖼️ Deleting ${node.type} node ${node.id}:`, {
+                //         hasServerUrl: !!nodeData.properties.serverUrl,
+                //         hasSrc: !!nodeData.properties.src,
+                //         srcIsDataUrl: nodeData.properties.src?.startsWith('data:'),
+                //         srcLength: nodeData.properties.src?.length || 0,
+                //         hash: nodeData.properties.hash?.substring(0, 8)
+                //     });
+                // }
                 
                 // Optimize media node data for network transmission
                 if ((node.type === 'media/image' || node.type === 'media/video') && 

@@ -547,7 +547,8 @@ class CollaborationManager {
                     type,
                     params,
                     undoData,
-                    sequenceNumber: result.stateVersion
+                    sequenceNumber: result.stateVersion,
+                    changes: result.changes // Include server-captured changes
                 };
                 
                 // 

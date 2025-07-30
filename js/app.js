@@ -808,6 +808,10 @@ async function initApp() {
         app.propertiesInspector = new FloatingPropertiesInspector(app.graphCanvas);
         window.propertiesInspector = app.propertiesInspector;
         
+        // Initialize Floating Color Correction Panel
+        app.colorCorrectionPanel = new FloatingColorCorrection(app.graphCanvas);
+        window.colorCorrectionPanel = app.colorCorrectionPanel;
+        
         // Create Properties Inspector Toggle Button
         app.createPropertiesButton();
         
@@ -910,7 +914,20 @@ if (document.readyState === 'loading') {
 
 // Handle errors gracefully
 window.addEventListener('error', (event) => {
+    // Ignore benign ResizeObserver errors
+    if (event.message && event.message.includes('ResizeObserver loop')) {
+        event.preventDefault();
+        return;
+    }
+    
     console.error('Application error:', event.error);
+    if (event.error === null) {
+        console.error('Null error details:', event);
+        console.error('Error message:', event.message);
+        console.error('Error filename:', event.filename);
+        console.error('Error line:', event.lineno);
+        console.error('Error column:', event.colno);
+    }
 });
 
 window.addEventListener('unhandledrejection', (event) => {

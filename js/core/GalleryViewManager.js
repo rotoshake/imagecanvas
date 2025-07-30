@@ -16,7 +16,6 @@ class GalleryViewManager {
         this.currentIndex = 0;
         this.mediaNodes = [];
         this.previousViewportState = null;
-        this.overlayElement = null;
         this.closeButton = null;
         
         // Transition state for smooth crossfade
@@ -27,6 +26,14 @@ class GalleryViewManager {
             progress: 0,
             startTime: null,
             duration: 600 // milliseconds for crossfade
+        };
+        
+        // Darkening transition state
+        this.darkeningState = {
+            progress: 0,
+            startTime: null,
+            duration: 300, // milliseconds for fade
+            direction: 'in' // 'in' or 'out'
         };
         
         // Bind methods
@@ -61,8 +68,11 @@ class GalleryViewManager {
             return;
         }
         
-        // Create UI overlay
-        this.createOverlay();
+        // Create UI elements (close button and counter only)
+        this.createUIElements();
+        
+        // Start darkening animation
+        this.startDarkeningAnimation('in');
         
         // Add keyboard listener
         document.addEventListener('keydown', this.handleKeyDown, true);
@@ -89,14 +99,19 @@ class GalleryViewManager {
             this.zoomSpringbackTimeout = null;
         }
         
+        // Start darkening fade out animation
+        this.startDarkeningAnimation('out');
+        
         // Remove keyboard listener
         document.removeEventListener('keydown', this.handleKeyDown, true);
         
         // Disable gallery interactions and restore original behavior
         this.disableGalleryInteractions();
         
-        // Remove UI overlay
-        this.removeOverlay();
+        // Remove UI elements after fade out
+        setTimeout(() => {
+            this.removeUIElements();
+        }, this.darkeningState.duration);
         
         // Restore viewport state with animation
         if (this.previousViewportState) {
@@ -486,6 +501,56 @@ class GalleryViewManager {
     }
     
     /**
+     * Simple ease-out function for more natural fades
+     */
+    easeOut(t) {
+        return 1 - Math.pow(1 - t, 2);
+    }
+    
+    /**
+     * Start darkening animation
+     */
+    startDarkeningAnimation(direction) {
+        this.darkeningState.direction = direction;
+        this.darkeningState.startTime = performance.now();
+        this.updateDarkeningAnimation();
+    }
+    
+    /**
+     * Update darkening animation
+     */
+    updateDarkeningAnimation() {
+        const now = performance.now();
+        const elapsed = now - this.darkeningState.startTime;
+        const rawProgress = Math.min(elapsed / this.darkeningState.duration, 1);
+        
+        // Apply easing - use simple ease-out for more natural fade
+        const easedProgress = this.easeOut(rawProgress);
+        
+        // Set progress based on direction
+        if (this.darkeningState.direction === 'in') {
+            this.darkeningState.progress = easedProgress;
+        } else {
+            this.darkeningState.progress = 1 - easedProgress;
+        }
+        
+        // Trigger canvas redraw
+        this.canvas.dirty_canvas = true;
+        
+        // Continue animation if not complete
+        if (rawProgress < 1) {
+            requestAnimationFrame(() => this.updateDarkeningAnimation());
+        }
+    }
+    
+    /**
+     * Get current darkening opacity (0 to 0.4)
+     */
+    getDarkeningOpacity() {
+        return this.darkeningState.progress * 0.4;
+    }
+    
+    /**
      * Get opacity for a node during transition
      */
     getNodeOpacity(node) {
@@ -602,13 +667,9 @@ class GalleryViewManager {
     }
     
     /**
-     * Create the UI overlay
+     * Create the UI elements (close button and counter)
      */
-    createOverlay() {
-        // Create overlay container
-        this.overlayElement = document.createElement('div');
-        this.overlayElement.className = 'gallery-overlay';
-        
+    createUIElements() {
         // Create close button
         this.closeButton = document.createElement('div');
         this.closeButton.className = 'gallery-close';
@@ -627,16 +688,6 @@ class GalleryViewManager {
         // Add styles
         const style = document.createElement('style');
         style.textContent = `
-            .gallery-overlay {
-                position: fixed;
-                top: 0;
-                left: 0;
-                width: 100%;
-                height: 100%;
-                pointer-events: none;
-                z-index: 999;
-            }
-            
             .gallery-close {
                 position: fixed;
                 top: 20px;
@@ -679,7 +730,6 @@ class GalleryViewManager {
         
         // Add to DOM
         document.body.appendChild(style);
-        document.body.appendChild(this.overlayElement);
         document.body.appendChild(this.closeButton);
         document.body.appendChild(counter);
         
@@ -687,14 +737,9 @@ class GalleryViewManager {
     }
     
     /**
-     * Remove the UI overlay
+     * Remove the UI elements
      */
-    removeOverlay() {
-        if (this.overlayElement) {
-            this.overlayElement.remove();
-            this.overlayElement = null;
-        }
-        
+    removeUIElements() {
         if (this.closeButton) {
             this.closeButton.removeEventListener('click', this.handleCloseClick);
             this.closeButton.remove();

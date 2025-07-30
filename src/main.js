@@ -17,6 +17,8 @@ import '../js/utils/IndexedDBThumbnailStore.js';
 
 // 2) Core systems and renderers
 import '../js/renderers/Canvas2DRenderer.js';
+import '../js/renderers/TextureLODManager.js';
+import '../js/renderers/TextureAtlasManager.js';
 import '../js/renderers/WebGLRenderer.js';
 import '../js/graph.js';
 import '../js/canvas.js';
@@ -87,6 +89,8 @@ import '../js/core/AutoInit.js';
 import '../js/ui/canvas-navigator.js';
 import '../js/ui/connection-status.js';
 import '../js/ui/floating-properties-inspector.js';
+import '../js/ui/components/spline-curve-editor.js';
+import '../js/ui/floating-color-correction.js';
 import '../js/ui/unified-notifications.js';
 import '../js/ui/node-creation-menu.js';
 import '../js/ui/user-profile-panel.js';

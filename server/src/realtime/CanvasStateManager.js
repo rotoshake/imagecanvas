@@ -291,13 +291,31 @@ class CanvasStateManager {
         const toDelete = new Set(params.nodeIds);
         const remaining = [];
         
+        // Capture full node data before deletion for undo
+        const deletedNodes = [];
+        
         for (const node of state.nodes) {
             if (toDelete.has(node.id)) {
+                // Store complete node data for undo
+                deletedNodes.push({
+                    id: node.id,
+                    type: node.type,
+                    pos: [...node.pos],
+                    size: [...node.size],
+                    properties: { ...node.properties },
+                    rotation: node.rotation || 0,
+                    flags: node.flags ? { ...node.flags } : {},
+                    title: node.title,
+                    aspectRatio: node.aspectRatio
+                });
                 changes.removed.push(node.id);
             } else {
                 remaining.push(node);
             }
         }
+        
+        // Store deleted nodes in changes for undo
+        changes.deletedNodes = deletedNodes;
         
         state.nodes = remaining;
         // Always return changes, even if empty - operation still succeeded

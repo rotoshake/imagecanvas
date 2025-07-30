@@ -130,7 +130,7 @@ class ThumbnailCache {
         this.cache = new Map();
         this.generationQueues = new Map(); // Track ongoing generation to avoid duplication
         this.subscribers = new Map(); // For notifying nodes of updates
-        this.thumbnailSizes = CONFIG.THUMBNAILS.SIZES || [64, 256, 512]; // Use config sizes
+        this.thumbnailSizes = CONFIG.THUMBNAILS?.SIZES || [64, 128, 256, 512, 1024, 2048]; // Match server sizes
         // Dynamically set priority and quality sizes from config
         this.prioritySizes = this.thumbnailSizes.slice(0, 1); // Smallest size is priority
         this.qualitySizes = this.thumbnailSizes.slice(1); // The rest are for quality
@@ -150,7 +150,69 @@ class ThumbnailCache {
         this.lowPriorityQueue = []; // Separate queue for low priority (preload) requests
         this.frameRateThrottle = 16; // Minimum 16ms between operations to maintain 60fps
         
+        // Initialize persistent storage
+        this._initializePersistentStorage();
+        
         console.log(`🧹 ThumbnailCache initialized with ${this.maxHashEntries} entries / ${(this.maxMemoryBytes / (1024 * 1024)).toFixed(0)}MB limit`);
+    }
+    
+    /**
+     * Initialize persistent storage and load existing thumbnails
+     * @private
+     */
+    async _initializePersistentStorage() {
+        // Wait for IndexedDB store to be ready
+        if (window.indexedDBThumbnailStore) {
+            try {
+                await window.indexedDBThumbnailStore.initPromise;
+                
+                // Load existing thumbnails from persistent storage
+                const storedHashes = await window.indexedDBThumbnailStore.getAllHashes();
+                
+                if (storedHashes.length > 0) {
+                    console.log(`📦 Found ${storedHashes.length} thumbnail sets in persistent storage`);
+                    
+                    // Load thumbnails in batches to avoid overwhelming memory
+                    let loadedCount = 0;
+                    const batchSize = 10;
+                    
+                    for (let i = 0; i < storedHashes.length; i += batchSize) {
+                        const batch = storedHashes.slice(i, i + batchSize);
+                        
+                        await Promise.all(batch.map(async (hash) => {
+                            try {
+                                const thumbnails = await window.indexedDBThumbnailStore.getThumbnails(hash);
+                                if (thumbnails && Object.keys(thumbnails).length > 0) {
+                                    // Convert object back to Map and store in cache
+                                    const thumbnailMap = new Map();
+                                    let memoryUsed = 0;
+                                    
+                                    for (const [size, canvas] of Object.entries(thumbnails)) {
+                                        thumbnailMap.set(parseInt(size), canvas);
+                                        memoryUsed += this._calculateCanvasMemory(canvas);
+                                    }
+                                    
+                                    this.cache.set(hash, thumbnailMap);
+                                    this.currentMemoryUsage += memoryUsed;
+                                    this._trackAccess(hash);
+                                    loadedCount++;
+                                }
+                            } catch (error) {
+                                console.warn(`Failed to load thumbnails for ${hash.substring(0, 8)}:`, error);
+                            }
+                        }));
+                        
+                        // Yield control between batches
+                        await new Promise(resolve => setTimeout(resolve, 10));
+                    }
+                    
+                    console.log(`✅ Loaded ${loadedCount} thumbnail sets from persistent storage (${(this.currentMemoryUsage/1024/1024).toFixed(1)}MB)`);
+                }
+                
+            } catch (error) {
+                console.warn('Failed to initialize persistent storage:', error);
+            }
+        }
     }
     
     // Get thumbnails for a specific hash (returns Map of size -> canvas)
@@ -383,59 +445,76 @@ class ThumbnailCache {
             });
         }
         
-        // NEW: Check IndexedDB first
+        // 1. FIRST: Check IndexedDB for persistent thumbnails (instant on refresh)
         if (window.indexedDBThumbnailStore && window.indexedDBThumbnailStore.isAvailable) {
             try {
                 const storedThumbnails = await window.indexedDBThumbnailStore.getThumbnails(hash);
-                if (storedThumbnails) {
-                    // Convert object to Map format
+                if (storedThumbnails && Object.keys(storedThumbnails).length > 0) {
+                    console.log(`💾 Loading ${Object.keys(storedThumbnails).length} thumbnails from IndexedDB for ${hash.substring(0, 8)}`);
+                    
+                    // Convert object to Map format with memory tracking
                     const thumbnailMap = new Map();
                     let loadedMemory = 0;
+                    
                     Object.entries(storedThumbnails).forEach(([size, canvas]) => {
                         thumbnailMap.set(parseInt(size), canvas);
                         loadedMemory += this._calculateCanvasMemory(canvas);
                     });
                     
-                    // Cache in memory and update memory tracking
+                    // Check memory limits before adding
+                    if (this.currentMemoryUsage + loadedMemory > this.maxMemoryUsage) {
+                        this._enforceMemoryLimit(loadedMemory);
+                    }
+                    
+                    // Cache in memory and update tracking
                     this.cache.set(hash, thumbnailMap);
                     this.currentMemoryUsage += loadedMemory;
                     this.accessOrder.set(hash, Date.now());
 
-                    // Report completion
+                    // Report instant completion
                     if (progressCallback) progressCallback(1);
                     if (window.imageProcessingProgress) {
                         window.imageProcessingProgress.updateThumbnailProgress(hash, 1);
                     }
                     
+                    console.log(`✅ Instant display: ${thumbnailMap.size} sizes loaded from persistent cache`);
                     return thumbnailMap;
                 }
             } catch (error) {
-                
+                console.warn('IndexedDB thumbnail load failed:', error);
             }
         }
         
-        // Try to load from server thumbnails
+        // 2. SECOND: Try to load from server thumbnails (no rebuilding needed)
         const serverThumbnails = await this._loadServerThumbnails(hash, sourceImage);
         if (serverThumbnails && serverThumbnails.size > 0) {
+            console.log(`🌐 Loading ${serverThumbnails.size} thumbnails from server for ${hash.substring(0, 8)}`);
+            
             // Calculate memory for loaded thumbnails
             let loadedMemory = 0;
             for (const [size, canvas] of serverThumbnails) {
                 loadedMemory += this._calculateCanvasMemory(canvas);
             }
             
-            // Loaded thumbnails from server
+            // Check memory limits before adding
+            if (this.currentMemoryUsage + loadedMemory > this.maxMemoryUsage) {
+                this._enforceMemoryLimit(loadedMemory);
+            }
+            
+            // Cache in memory
             this.cache.set(hash, serverThumbnails);
             this.currentMemoryUsage += loadedMemory;
             this.accessOrder.set(hash, Date.now());
             
-            // Store in IndexedDB for next time
+            // Store in IndexedDB for instant access next time
             this._storeToIndexedDB(hash, serverThumbnails);
             
-            // Report completion to unified progress system
+            // Report completion
             if (window.imageProcessingProgress) {
                 window.imageProcessingProgress.updateThumbnailProgress(hash, 1);
             }
             
+            console.log(`✅ Server thumbnails loaded and cached: ${serverThumbnails.size} sizes`);
             return serverThumbnails;
         }
         
@@ -553,7 +632,34 @@ class ThumbnailCache {
         });
         
         console.log(`✅ All thumbnails generated for ${hash.substring(0, 8)}. Returning map.`);
+        
+        // Persist thumbnails to IndexedDB for fast loading on refresh
+        this._persistThumbnails(hash, thumbnails);
+        
         return thumbnails;
+    }
+    
+    /**
+     * Persist thumbnails to IndexedDB for fast loading on refresh
+     * @private
+     */
+    async _persistThumbnails(hash, thumbnails) {
+        if (!window.indexedDBThumbnailStore || !thumbnails || thumbnails.size === 0) {
+            return;
+        }
+        
+        try {
+            // Convert Map to object for storage
+            const thumbnailsObject = {};
+            for (const [size, canvas] of thumbnails) {
+                thumbnailsObject[size] = canvas;
+            }
+            
+            await window.indexedDBThumbnailStore.set(hash, thumbnailsObject);
+            console.log(`💾 Persisted ${thumbnails.size} thumbnails for ${hash.substring(0, 8)} to IndexedDB`);
+        } catch (error) {
+            console.warn(`Failed to persist thumbnails for ${hash.substring(0, 8)}:`, error);
+        }
     }
     
     /**
@@ -608,6 +714,9 @@ class ThumbnailCache {
             window.imageProcessingProgress.updateThumbnailProgress(hash, 1);
         }
         console.log(`✅ All quality thumbnails complete for ${hash.substring(0, 8)}`);
+        
+        // Persist updated thumbnails to IndexedDB after quality generation
+        this._persistThumbnails(hash, thumbnails);
         
         return thumbnails;
     }
@@ -781,6 +890,74 @@ class ThumbnailCache {
     }
     
     /**
+     * Load specific thumbnail sizes from server (public method)
+     * @param {string} hash - Image hash
+     * @param {string} serverFilename - Server filename 
+     * @param {number[]} sizes - Array of sizes to load
+     * @returns {Promise<boolean>} True if any thumbnails were loaded
+     */
+    async loadServerThumbnails(hash, serverFilename, sizes = null) {
+        if (!hash || !serverFilename) return false;
+        
+        // Use provided sizes or default to all sizes
+        const sizesToLoad = sizes || this.thumbnailSizes;
+        
+        // Remove extension from server filename
+        const nameWithoutExt = serverFilename.includes('.') 
+            ? serverFilename.substring(0, serverFilename.lastIndexOf('.'))
+            : serverFilename;
+        
+        console.log(`🌐 Loading server thumbnails for ${hash.substring(0, 8)} (${nameWithoutExt}), sizes: [${sizesToLoad.join(', ')}]`);
+        
+        // Get or create thumbnail map for this hash
+        let thumbnails = this.cache.get(hash);
+        if (!thumbnails) {
+            thumbnails = new Map();
+            this.cache.set(hash, thumbnails);
+        }
+        
+        const loadPromises = [];
+        let loadedCount = 0;
+        
+        // Try to load each requested thumbnail size from server
+        for (const size of sizesToLoad) {
+            // Skip if we already have this size
+            if (thumbnails.has(size)) {
+                console.log(`⏭️ Skipping ${size}px - already cached`);
+                continue;
+            }
+            
+            const promise = this._loadSingleServerThumbnail(size, nameWithoutExt)
+                .then(canvas => {
+                    if (canvas) {
+                        thumbnails.set(size, canvas);
+                        this.currentMemoryUsage += this._calculateCanvasMemory(canvas);
+                        loadedCount++;
+                        console.log(`✅ Loaded ${size}px server thumbnail for ${hash.substring(0, 8)}`);
+                    }
+                })
+                .catch(error => {
+                    console.warn(`❌ Failed to load ${size}px server thumbnail:`, error);
+                });
+            
+            loadPromises.push(promise);
+        }
+        
+        // Wait for all loads to complete
+        await Promise.all(loadPromises);
+        
+        if (loadedCount > 0) {
+            this._trackAccess(hash);
+            // Persist loaded thumbnails
+            this._persistThumbnails(hash, thumbnails);
+            console.log(`🎉 Loaded ${loadedCount} server thumbnails for ${hash.substring(0, 8)}`);
+            return true;
+        }
+        
+        return false;
+    }
+    
+    /**
      * Try to load thumbnails from server first
      */
     async _loadServerThumbnails(hash, sourceImage) {
@@ -854,9 +1031,13 @@ class ThumbnailCache {
         const thumbnailUrl = `${CONFIG.SERVER.API_BASE}/thumbnails/${size}/${nameWithoutExt}.webp`;
         
         try {
+            console.log(`📥 Loading ${size}px thumbnail from: ${thumbnailUrl}`);
             const result = await this._loadImageWithTimeout(thumbnailUrl, 10000); // 10 second timeout
             if (result) {
+                console.log(`✅ Loaded ${size}px thumbnail (${result.width}x${result.height})`);
                 return result;
+            } else {
+                console.log(`❌ Failed to load ${size}px thumbnail`);
             }
             
             // Retry logic with exponential backoff
@@ -936,6 +1117,106 @@ class ThumbnailCache {
         });
     }
     
+    // ==========================================
+    // MEMORY MANAGEMENT METHODS
+    // ==========================================
+    
+    /**
+     * Enforce memory limits by evicting oldest entries (LRU)
+     * @param {number} requiredMemory - Memory needed for new entry
+     */
+    _enforceMemoryLimit(requiredMemory) {
+        console.log(`🧹 Memory check: current=${(this.currentMemoryUsage/1024/1024).toFixed(1)}MB, need=${(requiredMemory/1024/1024).toFixed(1)}MB, limit=${(this.maxMemoryUsage/1024/1024).toFixed(1)}MB`);
+        
+        // Convert accessOrder Map to sorted array
+        const sortedEntries = Array.from(this.accessOrder.entries())
+            .sort((a, b) => a[1] - b[1]); // Sort by timestamp (oldest first)
+        
+        while (this.currentMemoryUsage + requiredMemory > this.maxMemoryUsage && 
+               sortedEntries.length > 0) {
+            
+            const [hashToEvict] = sortedEntries.shift();
+            this._evictThumbnails(hashToEvict);
+        }
+    }
+    
+    /**
+     * Evict all thumbnails for a specific hash
+     * @param {string} hash - Hash to evict
+     */
+    _evictThumbnails(hash) {
+        const thumbnails = this.cache.get(hash);
+        if (!thumbnails) return;
+        
+        let freedMemory = 0;
+        
+        // Clean up WebGL textures first
+        this._cleanupWebGLTextures(hash);
+        
+        // Clean up canvas elements
+        for (const [size, canvas] of thumbnails) {
+            freedMemory += this._calculateCanvasMemory(canvas);
+            
+            // Clear canvas data to free GPU/memory resources
+            if (canvas && canvas.getContext) {
+                const ctx = canvas.getContext('2d');
+                if (ctx) {
+                    ctx.clearRect(0, 0, canvas.width, canvas.height);
+                }
+            }
+        }
+        
+        // Remove from caches
+        this.cache.delete(hash);
+        this.accessOrder.delete(hash);
+        this.currentMemoryUsage -= freedMemory;
+        
+        console.log(`🗑️ Evicted ${thumbnails.size} thumbnails for ${hash.substring(0, 8)}, freed ${(freedMemory/1024/1024).toFixed(1)}MB`);
+    }
+    
+    /**
+     * Clean up WebGL textures for a hash
+     * @private
+     */
+    _cleanupWebGLTextures(hash) {
+        // Clean up WebGL textures if renderer is available
+        if (window.canvas && window.canvas.renderer && window.canvas.renderer.lodManager) {
+            window.canvas.renderer.lodManager.clearTexturesForHash(hash);
+        }
+    }
+    
+    /**
+     * Clean up temporary preview data and unused resources
+     */
+    cleanupTempData() {
+        if (this.tempPreviewCache) {
+            for (const [hash, previews] of this.tempPreviewCache) {
+                for (const [size, preview] of previews) {
+                    // Revoke blob URLs to prevent memory leaks
+                    if (typeof preview === 'string' && preview.startsWith('blob:')) {
+                        URL.revokeObjectURL(preview);
+                    }
+                }
+            }
+            this.tempPreviewCache.clear();
+            console.log('🧹 Cleaned up temporary preview cache');
+        }
+    }
+    
+    /**
+     * Get current memory usage stats
+     */
+    getMemoryStats() {
+        return {
+            currentUsage: this.currentMemoryUsage,
+            maxUsage: this.maxMemoryUsage,
+            utilizationPercent: (this.currentMemoryUsage / this.maxMemoryUsage) * 100,
+            entriesCount: this.cache.size,
+            oldestEntry: this.accessOrder.size > 0 ? Math.min(...this.accessOrder.values()) : null,
+            newestEntry: this.accessOrder.size > 0 ? Math.max(...this.accessOrder.values()) : null
+        };
+    }
+
     // ==========================================
     // PREVIEW METHODS (for drag & drop integration)
     // ==========================================
@@ -1054,6 +1335,35 @@ class ThumbnailCache {
     }
     
     // Legacy bundle methods removed - now handled by unified progress system
+    
+    // Notification system for thumbnail updates
+    subscribe(hash, callback) {
+        if (!this.subscribers.has(hash)) {
+            this.subscribers.set(hash, new Set());
+        }
+        this.subscribers.get(hash).add(callback);
+    }
+    
+    unsubscribe(hash, callback) {
+        if (this.subscribers.has(hash)) {
+            this.subscribers.get(hash).delete(callback);
+            if (this.subscribers.get(hash).size === 0) {
+                this.subscribers.delete(hash);
+            }
+        }
+    }
+    
+    _notify(hash) {
+        if (this.subscribers.has(hash)) {
+            for (const callback of this.subscribers.get(hash)) {
+                try {
+                    callback(hash);
+                } catch (error) {
+                    console.error('Error in thumbnail notification callback:', error);
+                }
+            }
+        }
+    }
 }
 
 // ===================================

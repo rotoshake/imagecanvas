@@ -96,7 +96,7 @@ const CONFIG = {
     },
     
     THUMBNAILS: {
-        SIZES: [64, 256, 512],  // Reduced from 4 to 3 sizes
+        SIZES: [64, 128, 256, 512, 1024, 2048],  // Match server-generated sizes
         QUALITY: 'high'
     },
     

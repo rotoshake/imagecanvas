@@ -79,10 +79,18 @@ class ImageCanvas {
         
         // Initialize renderer abstraction
         const rendererMode = (window.CONFIG?.RENDERER?.DEFAULT || 'canvas2d').toLowerCase();
-        if (rendererMode === 'webgl' && typeof WebGLRenderer !== 'undefined') {
-            this.renderer = new WebGLRenderer(this);
-        } else if (typeof Canvas2DRenderer !== 'undefined') {
-            this.renderer = new Canvas2DRenderer(this);
+        try {
+            if (rendererMode === 'webgl' && typeof WebGLRenderer !== 'undefined') {
+                this.renderer = new WebGLRenderer(this);
+            } else if (typeof Canvas2DRenderer !== 'undefined') {
+                this.renderer = new Canvas2DRenderer(this);
+            }
+        } catch (error) {
+            console.error('Error creating renderer:', error);
+            // Fall back to Canvas2D if WebGL fails
+            if (rendererMode === 'webgl' && typeof Canvas2DRenderer !== 'undefined') {
+                this.renderer = new Canvas2DRenderer(this);
+            }
         }
         
         // --- UI overlay canvas (for selection UI) ---
@@ -1929,6 +1937,14 @@ Mode: ${this.fpsTestMode}`;
             return true;
         }
         
+        // Toggle color correction panel
+        if (key === 'c' && !ctrl && !shift && !alt) {
+            if (window.colorCorrectionPanel) {
+                window.colorCorrectionPanel.toggle();
+            }
+            return true;
+        }
+        
         // Toggle user profile panel
         if (key === 'u' && !ctrl && !shift && !alt) {
             if (window.app?.userProfilePanel) {
@@ -3591,18 +3607,17 @@ Mode: ${this.fpsTestMode}`;
         // Clear canvas
         ctx.clearRect(0, 0, canvas.width, canvas.height);
         
-        // Draw background (darker in gallery mode)
-        if (this.galleryViewManager && this.galleryViewManager.active) {
-            ctx.fillStyle = ColorUtils.get('backgrounds', 'canvas_gallery'); // Darker background for gallery mode
-        } else {
-            ctx.fillStyle = ColorUtils.get('backgrounds', 'canvas_primary'); // Normal background
-        }
+        // Draw background
+        ctx.fillStyle = ColorUtils.get('backgrounds', 'canvas_primary');
         ctx.fillRect(0, 0, canvas.width, canvas.height);
         
         // Apply gallery mode darkening if active
         if (this.galleryViewManager && this.galleryViewManager.active) {
-            // Don't apply darkening here - it's handled by the overlay div
-            // This ensures the darkening appears over everything
+            const opacity = this.galleryViewManager.getDarkeningOpacity();
+            if (opacity > 0) {
+                ctx.fillStyle = `rgba(0, 0, 0, ${opacity})`;
+                ctx.fillRect(0, 0, canvas.width, canvas.height);
+            }
         }
         
         // Draw grid (skip in gallery mode for cleaner look)
@@ -3694,24 +3709,27 @@ Mode: ${this.fpsTestMode}`;
             this.uiCtx.translate(this.viewport.offset[0], this.viewport.offset[1]);
             this.uiCtx.scale(this.viewport.scale, this.viewport.scale);
 
-            const selectedNodes = this.selection.getSelectedNodes();
-            for (const node of selectedNodes) {
-                // replicate transform logic from drawNode
-                let drawPos = node.pos;
-                if (node._gridAnimPos) {
-                    drawPos = node._gridAnimPos;
-                } else if (node._animPos) {
-                    drawPos = node._animPos;
+            // Only draw selection if not in gallery view mode
+            if (!this.galleryViewManager || !this.galleryViewManager.active) {
+                const selectedNodes = this.selection.getSelectedNodes();
+                for (const node of selectedNodes) {
+                    // replicate transform logic from drawNode
+                    let drawPos = node.pos;
+                    if (node._gridAnimPos) {
+                        drawPos = node._gridAnimPos;
+                    } else if (node._animPos) {
+                        drawPos = node._animPos;
+                    }
+                    this.uiCtx.save();
+                    this.uiCtx.translate(drawPos[0], drawPos[1]);
+                    if (node.rotation) {
+                        this.uiCtx.translate(node.size[0]/2, node.size[1]/2);
+                        this.uiCtx.rotate(node.rotation * Math.PI/180);
+                        this.uiCtx.translate(-node.size[0]/2, -node.size[1]/2);
+                    }
+                    this.drawNodeSelection(this.uiCtx, node);
+                    this.uiCtx.restore();
                 }
-                this.uiCtx.save();
-                this.uiCtx.translate(drawPos[0], drawPos[1]);
-                if (node.rotation) {
-                    this.uiCtx.translate(node.size[0]/2, node.size[1]/2);
-                    this.uiCtx.rotate(node.rotation * Math.PI/180);
-                    this.uiCtx.translate(-node.size[0]/2, -node.size[1]/2);
-                }
-                this.drawNodeSelection(this.uiCtx, node);
-                this.uiCtx.restore();
             }
 
             // Draw node titles on UI layer
@@ -3763,6 +3781,11 @@ Mode: ${this.fpsTestMode}`;
         // Performance debugging - enable with window.DEBUG_FPS = true
         if (window.DEBUG_FPS && totalTime > 8.33) {
             console.log(`🐌 Slow frame: ${totalTime.toFixed(1)}ms total (grid: ${(gridTime-startTime).toFixed(1)}ms, cull: ${(cullTime-gridTime).toFixed(1)}ms, nodes: ${(nodesTime-cullTime).toFixed(1)}ms, ui: ${(uiTime-nodesTime).toFixed(1)}ms)`);
+        }
+        
+        // Finalize WebGL frame if renderer available
+        if (this.renderer && typeof this.renderer.endFrame === 'function') {
+            this.renderer.endFrame();
         }
     }
     

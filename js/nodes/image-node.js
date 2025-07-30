@@ -843,6 +843,11 @@ class ImageNode extends BaseNode {
                     if (imageData) {
                         offscreenCtx.imageSmoothingEnabled = imageData.useSmoothing;
                         offscreenCtx.drawImage(imageData.image, 0, 0, node.size[0], node.size[1]);
+                        
+                        // DEBUG: Apply tint based on thumbnail quality
+                        if (window.DEBUG_THUMBNAIL_TINT) {
+                            this._applyDebugTint(offscreenCtx, imageData.quality, node.size[0], node.size[1]);
+                        }
                     }
                 }
             );
@@ -886,6 +891,16 @@ class ImageNode extends BaseNode {
             // Draw the image
             //console.log(`🎨 ACTUALLY DRAWING: quality=${imageData.quality} size=${imageData.image.width}x${imageData.image.height} for ${this.properties.hash?.substring(0, 8)}`);
             ctx.drawImage(imageData.image, 0, 0, this.size[0], this.size[1]);
+            
+            // DEBUG: Apply tint based on thumbnail quality
+            if (window.DEBUG_THUMBNAIL_TINT) {
+                this._applyDebugTint(ctx, imageData.quality, this.size[0], this.size[1]);
+            }
+            
+            // DEBUG: Show WebGL LOD status
+            if (window.DEBUG_LOD_STATUS && this._webglLOD) {
+                this._drawLODStatus(ctx, this._webglLOD);
+            }
             
             // If we're only showing a low-quality image, schedule lazy load of better quality
             if ((imageData.quality === 'preview' || (imageData.quality === 'thumbnail' && !this.img)) && !this._lazyLoadScheduled && !this.img) {
@@ -1002,6 +1017,111 @@ class ImageNode extends BaseNode {
                 window.app.graphCanvas.draw();
             });
         }
+    }
+    
+    /**
+     * Update tone curve data and mark for re-render.
+     */
+    updateToneCurve(curveData) {
+        console.log('updateToneCurve called', curveData ? 'with data' : 'null');
+        this.toneCurve = curveData;
+        this.needsGLUpdate = true;
+
+        // Force immediate redraw and invalidate any cached state
+        if (window.app?.graphCanvas) {
+            window.app.graphCanvas.dirty_canvas = true;
+            requestAnimationFrame(() => {
+                window.app.graphCanvas.draw();
+            });
+        }
+    }
+    
+    /**
+     * Debug method to apply color tint based on thumbnail quality
+     * @param {CanvasRenderingContext2D} ctx - Canvas context
+     * @param {string} quality - Image quality type (e.g., 'thumbnail-64', 'thumbnail-256', 'full')
+     * @param {number} width - Node width
+     * @param {number} height - Node height
+     */
+    _applyDebugTint(ctx, quality, width, height) {
+        let tintColor = null;
+        let label = quality;
+        
+        // Determine tint color based on quality
+        if (quality === 'thumbnail-64') {
+            tintColor = 'rgba(255, 0, 0, 0.3)'; // Red tint for 64px thumbnails
+            label = '64px';
+        } else if (quality === 'thumbnail-256') {
+            tintColor = 'rgba(0, 255, 0, 0.3)'; // Green tint for 256px thumbnails
+            label = '256px';
+        } else if (quality === 'thumbnail-512') {
+            tintColor = 'rgba(0, 0, 255, 0.3)'; // Blue tint for 512px thumbnails
+            label = '512px';
+        } else if (quality === 'full' || quality === 'full-fallback') {
+            tintColor = 'rgba(255, 255, 0, 0.2)'; // Yellow tint for full resolution
+            label = 'Full';
+        } else if (quality === 'preview') {
+            tintColor = 'rgba(255, 0, 255, 0.3)'; // Magenta tint for preview
+            label = 'Preview';
+        }
+        
+        if (tintColor) {
+            // Apply color overlay
+            ctx.fillStyle = tintColor;
+            ctx.fillRect(0, 0, width, height);
+            
+            // Add text label
+            ctx.save();
+            ctx.font = '12px monospace';
+            ctx.fillStyle = 'rgba(255, 255, 255, 0.9)';
+            ctx.strokeStyle = 'rgba(0, 0, 0, 0.9)';
+            ctx.lineWidth = 3;
+            ctx.textAlign = 'center';
+            ctx.strokeText(label, width / 2, height / 2);
+            ctx.fillText(label, width / 2, height / 2);
+            ctx.restore();
+        }
+    }
+    
+    /**
+     * Draw WebGL LOD status overlay for debugging
+     * @param {CanvasRenderingContext2D} ctx - Canvas context
+     * @param {Object} lodInfo - LOD information from WebGL renderer
+     */
+    _drawLODStatus(ctx, lodInfo) {
+        ctx.save();
+        
+        // Background
+        ctx.fillStyle = 'rgba(0, 0, 0, 0.8)';
+        ctx.fillRect(5, this.size[1] - 50, 120, 45);
+        
+        // Text
+        ctx.fillStyle = 'white';
+        ctx.font = '10px monospace';
+        ctx.textAlign = 'left';
+        ctx.textBaseline = 'top';
+        
+        const current = lodInfo.current || 'none';
+        const optimal = lodInfo.optimal || 'none';
+        const screen = Math.round(lodInfo.screenSize);
+        
+        ctx.fillText(`Current: ${current}px`, 8, this.size[1] - 47);
+        ctx.fillText(`Optimal: ${optimal}px`, 8, this.size[1] - 35);
+        ctx.fillText(`Screen: ${screen}px`, 8, this.size[1] - 23);
+        
+        // Loading indicator
+        if (lodInfo.loading) {
+            ctx.fillStyle = 'yellow';
+            ctx.fillText('Loading...', 8, this.size[1] - 11);
+        } else if (current < optimal) {
+            ctx.fillStyle = 'orange';
+            ctx.fillText('Upscaling', 8, this.size[1] - 11);
+        } else {
+            ctx.fillStyle = 'green';
+            ctx.fillText('Optimal', 8, this.size[1] - 11);
+        }
+        
+        ctx.restore();
     }
 }
 

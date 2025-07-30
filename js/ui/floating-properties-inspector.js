@@ -19,6 +19,9 @@ class FloatingPropertiesInspector {
         // Callback for when visibility changes
         this.visibilityCallback = null;
         
+        // Track thumbnail subscriptions
+        this.thumbnailSubscriptions = new Set();
+        
         this.createUI();
         this.setupEventListeners();
         this.updatePosition();
@@ -937,7 +940,14 @@ class FloatingPropertiesInspector {
         // Clear property value cache when selection changes
         this.lastPropertyValues.clear();
         
+        // Clear existing thumbnail subscriptions
+        this._clearThumbnailSubscriptions();
+        
         this.currentNodes = new Map(selectedNodes);
+        
+        // Subscribe to thumbnail updates for image nodes
+        this._setupThumbnailSubscriptions();
+        
         this.updateProperties(); // Only rebuild UI when selection changes
     }
 
@@ -966,13 +976,6 @@ class FloatingPropertiesInspector {
         const commonProperties = this.getCommonProperties();
         this.renderPropertyGroups(contentEl, commonProperties);
 
-        // Colour adjustments for a single ImageNode
-        if (this.currentNodes.size === 1) {
-            const node = Array.from(this.currentNodes.values())[0];
-            if (node.type === 'media/image') {
-                this.renderColorAdjustments(contentEl, node);
-            }
-        }
     }
     
     updateTitleToggleState(toggleDot, inputEl, isHidden) {
@@ -1123,6 +1126,7 @@ class FloatingPropertiesInspector {
             Object.assign(allProperties, {
                 filename: 'readonly',
                 sourceResolution: 'readonly',
+                thumbnailResolution: 'readonly',
                 scale: 'range'
             });
         }
@@ -1160,6 +1164,43 @@ class FloatingPropertiesInspector {
                     return `${node.originalWidth} × ${node.originalHeight}`;
                 }
                 return 'Unknown';
+            case 'thumbnailResolution':
+                // For video nodes that have direct thumbnails
+                if (node.thumbnail) {
+                    return `${node.thumbnail.width} × ${node.thumbnail.height}`;
+                }
+                
+                // For image nodes, check what's actually being displayed
+                if (node.properties?.hash && window.thumbnailCache) {
+                    // Get the best thumbnail that would be used at current zoom
+                    const screenWidth = Math.abs(node.size[0] * (this.canvas?.ds?.scale || 1));
+                    const bestThumbnail = node.getBestThumbnail ? node.getBestThumbnail(screenWidth, screenWidth) : null;
+                    
+                    if (bestThumbnail) {
+                        // Try to determine which thumbnail size this is
+                        const thumbnails = window.thumbnailCache.getThumbnails(node.properties.hash);
+                        for (const [size, thumb] of thumbnails) {
+                            if (thumb === bestThumbnail) {
+                                return `${bestThumbnail.width} × ${bestThumbnail.height} (${size}px)`;
+                            }
+                        }
+                        return `${bestThumbnail.width} × ${bestThumbnail.height}`;
+                    }
+                    
+                    // If using full resolution
+                    if (node.img && node.img.naturalWidth) {
+                        return `${node.img.naturalWidth} × ${node.img.naturalHeight} (full)`;
+                    }
+                    
+                    // Show available thumbnails
+                    const thumbnails = window.thumbnailCache.getThumbnails(node.properties.hash);
+                    if (thumbnails && thumbnails.size > 0) {
+                        const sizes = Array.from(thumbnails.keys()).sort((a, b) => a - b);
+                        return `Available: ${sizes.join(', ')}px`;
+                    }
+                }
+                
+                return 'No thumbnail';
             default: return node[prop];
         }
     }
@@ -1167,7 +1208,7 @@ class FloatingPropertiesInspector {
     renderPropertyGroups(container, properties) {
         const groups = {
             'Transform': ['x', 'y', 'width', 'height', 'rotation'],
-            'Content': ['filename', 'sourceResolution', 'title', 'text', 'fontSize', 'fontFamily', 'textAlign', 'padding', 'leadingFactor'],
+            'Content': ['filename', 'sourceResolution', 'thumbnailResolution', 'title', 'text', 'fontSize', 'fontFamily', 'textAlign', 'padding', 'leadingFactor'],
             'Appearance': ['textColor', 'bgColor', 'bgAlpha', 'scale'],
             'Playback': ['loop', 'muted', 'autoplay', 'paused']
         };
@@ -1879,6 +1920,7 @@ class FloatingPropertiesInspector {
             title: 'Title',
             filename: 'Source File',
             sourceResolution: 'Source Resolution',
+            thumbnailResolution: 'Thumbnail Resolution',
             text: 'Text',
             fontSize: 'Font Size',
             fontFamily: 'Font Family',
@@ -2390,8 +2432,50 @@ class FloatingPropertiesInspector {
             this.updateInterval = null;
         }
         
+        // Clear thumbnail subscriptions
+        this._clearThumbnailSubscriptions();
+        
         if (this.panel) {
             this.panel.remove();
+        }
+    }
+    
+    _setupThumbnailSubscriptions() {
+        if (!window.thumbnailCache) return;
+        
+        for (const [nodeId, node] of this.currentNodes) {
+            if ((node.type === 'image' || node.type === 'media/image') && node.properties?.hash) {
+                const hash = node.properties.hash;
+                const callback = (updatedHash) => {
+                    // Only update if this node is still selected and the hash matches
+                    if (this.currentNodes.has(nodeId) && updatedHash === hash) {
+                        // Throttle updates to avoid excessive refreshes
+                        if (!this._thumbnailUpdateTimeout) {
+                            this._thumbnailUpdateTimeout = setTimeout(() => {
+                                this.updatePropertyValues();
+                                this._thumbnailUpdateTimeout = null;
+                            }, 100);
+                        }
+                    }
+                };
+                
+                window.thumbnailCache.subscribe(hash, callback);
+                this.thumbnailSubscriptions.add({ hash, callback });
+            }
+        }
+    }
+    
+    _clearThumbnailSubscriptions() {
+        if (!window.thumbnailCache) return;
+        
+        for (const subscription of this.thumbnailSubscriptions) {
+            window.thumbnailCache.unsubscribe(subscription.hash, subscription.callback);
+        }
+        this.thumbnailSubscriptions.clear();
+        
+        if (this._thumbnailUpdateTimeout) {
+            clearTimeout(this._thumbnailUpdateTimeout);
+            this._thumbnailUpdateTimeout = null;
         }
     }
     
@@ -2434,51 +2518,6 @@ class FloatingPropertiesInspector {
         }
     }
 
-    /**
-     * Render simple colour-correction sliders (brightness, contrast, saturation, hue)
-     */
-    renderColorAdjustments(container, node) {
-        const section = document.createElement('div');
-        section.className = 'property-group';
-        const title = document.createElement('div');
-        title.className = 'property-group-title';
-        title.textContent = 'Colour';
-        section.appendChild(title);
-
-        const sliderDefs = [
-            { key: 'brightness', min: -1, max: 1, step: 0.01 },
-            { key: 'contrast',   min: -1, max: 1, step: 0.01 },
-            { key: 'saturation', min: -1, max: 1, step: 0.01 },
-            { key: 'hue',        min: -180, max: 180, step: 1 }
-        ];
-
-        sliderDefs.forEach(def => {
-            const row = document.createElement('div');
-            row.className = 'property-row';
-
-            const label = document.createElement('label');
-            label.textContent = def.key.charAt(0).toUpperCase()+def.key.slice(1);
-            label.style.flex = '0 0 80px';
-            row.appendChild(label);
-
-            const input = document.createElement('input');
-            input.type = 'range';
-            input.min = def.min;
-            input.max = def.max;
-            input.step = def.step;
-            input.value = node.adjustments?.[def.key] ?? 0;
-            input.style.flex = '1';
-            input.addEventListener('input', () => {
-                const value = parseFloat(input.value);
-                node.updateAdjustments({ [def.key]: value });
-            });
-            row.appendChild(input);
-
-            section.appendChild(row);
-        });
-
-        container.appendChild(section);
-    }
 }
 
 if (typeof module !== 'undefined' && module.exports) {

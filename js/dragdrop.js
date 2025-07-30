@@ -964,7 +964,7 @@ class DragDropManager {
                         nodes.forEach(node => {
                             if (node.properties) {
                                 node.properties.serverUrl = uploadResult.url;
-                                node.properties.serverFilename = uploadResult.filename;
+                                node.properties.serverFilename = uploadResult.serverFilename || uploadResult.filename;
                             }
                         });
                     }

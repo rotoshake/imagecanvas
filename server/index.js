@@ -51,7 +51,9 @@ class ImageCanvasServer {
                     "http://localhost:8080",
                     "http://127.0.0.1:8080",
                     "http://localhost:5173",
-                    "http://127.0.0.1:5173"
+                    "http://127.0.0.1:5173",
+                    "http://localhost:5174",
+                    "http://127.0.0.1:5174"
                 ],
                 methods: ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
                 credentials: true
@@ -1460,13 +1462,21 @@ class ImageCanvasServer {
                         
                         // Create a fresh sharp instance for each operation
                         // This prevents memory buildup
-                        await sharp(filePath)
-                            .resize(size, size, { 
-                                fit: 'inside',
-                                withoutEnlargement: true 
-                            })
-                            .webp({ quality: 85 })
-                            .toFile(thumbnailPath);
+                        const resizeOptions = { 
+                            fit: 'inside',
+                            withoutEnlargement: true 
+                        };
+                        
+                        // Only create thumbnail if source is large enough or if it's a small size
+                        if (size <= 512 || (metadata.width >= size || metadata.height >= size)) {
+                            await sharp(filePath)
+                                .resize(size, size, resizeOptions)
+                                .webp({ quality: 85 })
+                                .toFile(thumbnailPath);
+                        } else {
+                            // For large thumbnails of small images, skip creation
+                            console.log(`Skipping ${size}px thumbnail for ${filename} (source: ${metadata.width}x${metadata.height})`);
+                        }
 
                     } catch (error) {
                         

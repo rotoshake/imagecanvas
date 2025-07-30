@@ -110,6 +110,7 @@ class OperationHistory {
             transactionId: transactionId,
             timestamp: Date.now(),
             undoData: operation.undoData || null,
+            changes: operation.changes || null, // Store server-captured changes
             state: 'applied',
             sequenceNumber: operation.sequenceNumber || null
         };

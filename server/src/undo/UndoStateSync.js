@@ -449,12 +449,23 @@ class UndoStateSync {
      * Undo node deletion
      */
     undoNodeDelete(operation, state, changes) {
-        // This requires the undo data to have stored the deleted nodes
-        if (operation.undoData && operation.undoData.deletedNodes) {
+        // First try to use server-captured data from the operation's changes
+        if (operation.changes && operation.changes.deletedNodes) {
+            for (const node of operation.changes.deletedNodes) {
+                state.nodes.push(node);
+                changes.added.push(node);
+            }
+        }
+        // Fallback to client-provided undo data (for backward compatibility)
+        else if (operation.undoData && operation.undoData.deletedNodes) {
             for (const node of operation.undoData.deletedNodes) {
                 state.nodes.push(node);
                 changes.added.push(node);
             }
+        }
+        // If neither is available, we can't undo
+        else {
+            console.error('Cannot undo node deletion - no node data available');
         }
         return changes;
     }
