@@ -32,8 +32,7 @@ class IncrementalStateSynchronizer {
             'pos', 'size', 'rotation', 'aspectRatio', 
             'title', 'properties', 'flags', 'color', 'bgcolor'
         ];
-        
-        console.log('📊 IncrementalStateSynchronizer initialized');
+
     }
     
     /**
@@ -43,7 +42,7 @@ class IncrementalStateSynchronizer {
         this.captureCurrentState(graph);
         this.stateVersion = 1;
         this.lastSyncTime = Date.now();
-        console.log('📊 State synchronizer initialized with', this.lastKnownState.size, 'nodes');
+        
     }
     
     /**
@@ -251,7 +250,6 @@ class IncrementalStateSynchronizer {
      * Apply a delta to the current graph
      */
     applyDelta(delta, graph) {
-        console.log('📊 Applying delta with', delta.changes.length, 'changes');
         
         for (const change of delta.changes) {
             try {
@@ -297,7 +295,7 @@ class IncrementalStateSynchronizer {
         
         // Check if node already exists
         if (graph.getNodeById(nodeData.id)) {
-            console.warn('Node already exists:', nodeData.id);
+            
             return;
         }
         
@@ -339,7 +337,7 @@ class IncrementalStateSynchronizer {
     applyNodeModify(change, graph) {
         const node = graph.getNodeById(change.nodeId);
         if (!node) {
-            console.warn('Cannot modify non-existent node:', change.nodeId);
+            
             return;
         }
         
@@ -416,12 +414,10 @@ class IncrementalStateSynchronizer {
         const delta = this.generateDelta(graph);
         
         if (delta.changes.length === 0) {
-            console.log('📊 No changes to sync');
+            
             return;
         }
-        
-        console.log('📊 Sending incremental sync with', delta.changes.length, 'changes');
-        
+
         // Send delta via collaborative manager
         if (this.collaborativeManager.socket && this.collaborativeManager.isConnected) {
             this.collaborativeManager.socket.emit('incremental_sync', {
@@ -448,7 +444,6 @@ class IncrementalStateSynchronizer {
      * Perform full state sync as fallback
      */
     performFullSync(graph) {
-        console.log('📊 Performing full state sync');
         
         this.captureCurrentState(graph);
         
@@ -503,7 +498,7 @@ class IncrementalStateSynchronizer {
         this.stateVersion = 0;
         this.lastSyncTime = 0;
         this.operationCounter = 0;
-        console.log('📊 State synchronizer reset');
+        
     }
     
     /**

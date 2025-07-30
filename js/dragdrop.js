@@ -131,15 +131,15 @@ class DragDropManager {
         
         try {
             // PHASE 1: Generate ultra-low-res previews (64px) for immediate display
-            console.log('⚡ Phase 1: Generating quick previews...');
+            
             const previewDataMap = await this.generateQuickPreviews(files);
             
             // PHASE 2: Create layout with preview images visible
-            console.log('📐 Phase 2: Creating layout with previews...');
+            
             const nodes = await this.createNodesWithPreviews(files, previewDataMap, dropPos);
             
             // Clear preview data URLs after nodes are created to free memory
-            console.log('🧹 Clearing preview memory...');
+            
             previewDataMap.forEach(data => {
                 if (data.url && data.url.startsWith('blob:')) {
                     URL.revokeObjectURL(data.url);
@@ -154,7 +154,7 @@ class DragDropManager {
             );
             
             // PHASE 3: Start background processing pipeline
-            console.log('🔧 Phase 3: Starting background processing...');
+            
             this.startBackgroundPipeline(files, nodes);
             
             return nodes;
@@ -265,7 +265,7 @@ class DragDropManager {
                         });
                     }
                 } catch (error) {
-                    console.warn(`Failed to generate preview for ${file.name}:`, error);
+                    
                     // Store fallback data
                     previewMap.set(file, {
                         url: null,
@@ -284,8 +284,7 @@ class DragDropManager {
         if (progressId) {
             window.unifiedNotifications.remove(progressId);
         }
-        
-        console.log(`✅ Generated ${previewMap.size} previews`);
+
         return previewMap;
     }
     
@@ -348,7 +347,6 @@ class DragDropManager {
                 node._pendingServerSync = true;
                 
                 // Don't sync to server yet - wait until we have a hash
-                console.log(`⏸️ Delaying server sync for node ${node.id} until hash is calculated`);
                 
                 // Set preview image if available
                 if (fileInfo.previewUrl && !fileInfo.isVideo) {
@@ -363,7 +361,6 @@ class DragDropManager {
                 }
                 
                 nodes.push(node);
-                console.log(`✅ Created preview node for ${fileInfo.file.name}`);
                 
             } catch (error) {
                 console.error(`❌ Failed to create node for ${fileInfo.file.name}:`, error);
@@ -377,7 +374,7 @@ class DragDropManager {
                     window.app.graphCanvas.selection.selectAll(nodes);
                 }
             } catch (error) {
-                console.warn('Failed to select nodes:', error);
+                
             }
         }
         
@@ -430,9 +427,7 @@ class DragDropManager {
      */
     async startHashCalculation(pipeline) {
         const { files, fileNodeMap, progressId } = pipeline;
-        
-        console.log('🔐 Starting background hash calculation...');
-        
+
         // Calculate hashes in background with progress
         const hashResults = new Map();
         const batchSize = 2; // Small batches to maintain responsiveness
@@ -477,7 +472,7 @@ class DragDropManager {
                                     console.log(`✅ Node ${node.id} synced to server with hash ${hash.substring(0, 8)}...`);
                                 })
                                 .catch(error => {
-                                    console.warn(`⚠️ Failed to sync node ${node.id} to server:`, error);
+                                    
                                 });
                         }
                     }
@@ -494,9 +489,7 @@ class DragDropManager {
             // Yield to maintain responsiveness
             await new Promise(resolve => setTimeout(resolve, 50));
         }
-        
-        console.log(`✅ Calculated ${hashResults.size} hashes`);
-        
+
         // Move to next stage
         this.startFullImageLoading(pipeline, hashResults);
     }
@@ -506,9 +499,7 @@ class DragDropManager {
      */
     async startFullImageLoading(pipeline, hashResults) {
         const { files, fileNodeMap } = pipeline;
-        
-        console.log('🖼️ Starting viewport-aware image loading...');
-        
+
         // For bulk operations, only load visible images initially
         const loadFullImages = files.length <= 10; // Only load all if small batch
         
@@ -606,9 +597,7 @@ class DragDropManager {
                 await new Promise(resolve => setTimeout(resolve, 10));
             }
         }
-        
-        console.log('✅ Image data caching complete');
-        
+
         // For large batches, set up viewport-based loading
         if (!loadFullImages) {
             this.setupViewportBasedLoading(fileNodeMap);
@@ -623,9 +612,7 @@ class DragDropManager {
      */
     async startBackgroundUploads(pipeline, hashResults) {
         const { files, fileNodeMap } = pipeline;
-        
-        console.log('☁️ Starting background uploads...');
-        
+
         // Upload files in background
         files.forEach(file => {
             const hash = hashResults.get(file);
@@ -649,7 +636,7 @@ class DragDropManager {
                     hash,
                     file.type
                 ).then(result => {
-                    console.log(`✅ Uploaded ${file.name}`);
+                    
                     pipeline.completed++;
                     pipeline.uploadsCompleted = (pipeline.uploadsCompleted || 0) + 1;
                     this.updatePipelineProgress(pipeline);
@@ -684,7 +671,6 @@ class DragDropManager {
             if (pipeline.progressId) {
                 window.unifiedNotifications.remove(pipeline.progressId);
             }
-            console.log('✅ Background pipeline complete');
             
             // Clear bulk operation flag
             if (window.app) window.app.bulkOperationInProgress = false;
@@ -762,7 +748,7 @@ class DragDropManager {
         });
         
         await Promise.all(cachePromises);
-        console.log(`✅ Cached data for ${files.length} files`);
+        
     }
     
     /**
@@ -779,7 +765,7 @@ class DragDropManager {
             const batchPromises = batch.map(async (file) => {
                 const hash = hashResults.get(file);
                 if (!hash) {
-                    console.warn(`⚠️ No hash available for ${file.name}, skipping`);
+                    
                     return null;
                 }
                 
@@ -836,8 +822,7 @@ class DragDropManager {
                 await new Promise(resolve => setTimeout(resolve, 5));
             }
         }
-        
-        console.log(`✅ Analyzed ${fileInfos.length} files with real hashes`);
+
         return fileInfos;
     }
     
@@ -884,7 +869,7 @@ class DragDropManager {
                     properties: node.properties,
                     id: node.id
                 }).catch(error => {
-                    console.warn(`⚠️ Operation pipeline failed for ${fileInfo.file.name}:`, error);
+                    
                 });
                 
                 // Show loading state immediately (grey box) 
@@ -943,17 +928,16 @@ class DragDropManager {
             try {
                 if (window.app?.graphCanvas?.selection) {
                     window.app.graphCanvas.selection.selectAll(nodes);
-                    console.log(`✅ Selected ${nodes.length} newly created nodes`);
+                    
                 } else {
-                    console.warn('⚠️ Cannot select nodes - selection manager not available');
+                    
                 }
             } catch (error) {
-                console.warn('⚠️ Failed to select nodes after creation:', error);
+                
                 // Don't throw - node creation was successful, selection is just a UX enhancement
             }
         }
-        
-        console.log(`✅ Created ${nodes.length} nodes with permanent hashes`);
+
         return nodes;
     }
     
@@ -970,7 +954,6 @@ class DragDropManager {
                     fileInfo.hash, // Real hash
                     fileInfo.file.type
                 ).then(uploadResult => {
-                    console.log(`✅ Upload complete for ${fileInfo.file.name}: ${uploadResult.url}`);
                     
                     // Update any nodes using this hash
                     if (window.app && window.app.graph) {
@@ -1000,8 +983,7 @@ class DragDropManager {
         nodes.forEach(node => {
             node._needsServerSync = true; // Safe now with real hashes
         });
-        
-        console.log(`✅ Enabled server sync for ${nodes.length} nodes with stable hashes`);
+
         // Server sync happens automatically via the operation pipeline
     }
     
@@ -1009,7 +991,6 @@ class DragDropManager {
      * Set up viewport-based loading for large image sets
      */
     setupViewportBasedLoading(fileNodeMap) {
-        console.log('👁️ Setting up viewport-based image loading...');
         
         // Create a viewport observer
         const checkVisibleNodes = () => {
@@ -1053,7 +1034,7 @@ class DragDropManager {
             }
             
             if (loadedCount > 0 || deferredCount > 0) {
-                console.log(`📸 Viewport update: loaded ${loadedCount}, deferred ${deferredCount} images`);
+                
             }
         };
         
@@ -1123,8 +1104,7 @@ class DragDropManager {
         
         // Also check when window resizes
         window.addEventListener('resize', Utils.debounce(checkVisibleNodes, 300));
-        
-        console.log('✅ Viewport-based loading configured');
+
     }
     
     /**

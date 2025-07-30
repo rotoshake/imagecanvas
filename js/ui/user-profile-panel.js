@@ -356,7 +356,7 @@ class UserProfilePanel {
                 alert(result.error || 'Login failed');
             }
         } catch (error) {
-            console.error('Login error:', error);
+            
             alert('Login failed');
         }
     }
@@ -387,7 +387,7 @@ class UserProfilePanel {
                 });
             }
         } catch (error) {
-            console.error('Failed to create anonymous user:', error);
+            
             alert('Failed to create account');
         }
     }

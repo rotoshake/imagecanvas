@@ -17,8 +17,7 @@ class ImageUploadCoordinator {
         
         // Check for pending uploads periodically
         this.checkInterval = setInterval(() => this.checkPendingUploads(), 2000);
-        
-        console.log('📤 ImageUploadCoordinator initialized with post-upload sync checks');
+
     }
     
     /**
@@ -37,7 +36,7 @@ class ImageUploadCoordinator {
         
         // Skip if no hash
         if (!hash) {
-            console.warn(`⚠️ Node ${node.id} has no hash`);
+            
             return;
         }
         
@@ -63,7 +62,7 @@ class ImageUploadCoordinator {
             // For deferred nodes, the data might not be cached yet
             // This is OK - the dragdrop.js upload process will handle it
             if (node.loadingState === 'deferred' || node._imageDataReady) {
-                console.log(`⏳ Deferred node ${node.id} - upload will start when data is ready`);
+                
                 return;
             }
             console.log(`⚠️ No cached data URL found for hash ${hash.substring(0, 8)}... - upload cannot start`);
@@ -173,7 +172,7 @@ class ImageUploadCoordinator {
         // Debug: Log all nodes to understand what's available
         if (nodes.length === 0) {
             const allImageNodes = this.app.graph.nodes.filter(n => n.type === 'media/image');
-            console.log(`🔍 Debug: Found ${allImageNodes.length} total image nodes:`);
+            
             allImageNodes.forEach(node => {
                 console.log(`  - Node ${node.id}: hash=${node.properties?.hash?.substring(0, 8)}..., serverUrl=${!!node.properties?.serverUrl}`);
             });
@@ -181,7 +180,7 @@ class ImageUploadCoordinator {
             // Also check if there are any nodes in transition/optimistic state
             if (this.app.stateSyncManager && this.app.stateSyncManager.optimisticNodes) {
                 const optimisticNodes = Array.from(this.app.stateSyncManager.optimisticNodes.values());
-                console.log(`🔍 Debug: Found ${optimisticNodes.length} optimistic nodes in StateSyncManager`);
+                
             }
         }
         
@@ -200,7 +199,7 @@ class ImageUploadCoordinator {
                     node.img.src = fullUrl;
                 }
             });
-            console.log(`✅ Successfully updated ${nodes.length} nodes with serverUrl`);
+            
         } else {
             console.warn(`⚠️ No nodes found to update for hash ${hash.substring(0, 8)}...`);
         }
@@ -219,7 +218,7 @@ class ImageUploadCoordinator {
                 
                 // If it's an authentication error, try to retry after a delay
                 if (error.message && error.message.includes('Not authenticated')) {
-                    console.log('🔄 Retrying upload notification after authentication error');
+                    
                     setTimeout(async () => {
                         try {
                             await this.app.operationPipeline.execute('image_upload_complete', {
@@ -227,7 +226,7 @@ class ImageUploadCoordinator {
                                 serverUrl: uploadResult.url,
                                 serverFilename: uploadResult.serverFilename || uploadResult.filename
                             });
-                            console.log('✅ Upload notification retry succeeded');
+                            
                         } catch (retryError) {
                             console.error('❌ Upload notification retry failed:', retryError);
                         }
@@ -342,7 +341,6 @@ class ImageUploadCoordinator {
         }
         
         this.lastSyncTime = now;
-        console.log(`🔄 Requesting post-upload sync: ${reason}`);
         
         if (this.app.stateSyncManager?.requestFullSync) {
             this.app.stateSyncManager.requestFullSync();
@@ -355,7 +353,7 @@ class ImageUploadCoordinator {
                 });
             }
         } else {
-            console.warn('⚠️ Cannot request sync - StateSyncManager not available');
+            
         }
     }
     
@@ -372,7 +370,7 @@ class ImageUploadCoordinator {
         );
         
         if (needsUpload.length > 0) {
-            console.log(`🔍 Found ${needsUpload.length} nodes needing upload`);
+            
             needsUpload.forEach(node => this.onImageNodeCreated(node));
         }
         

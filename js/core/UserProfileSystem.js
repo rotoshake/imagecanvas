@@ -18,8 +18,7 @@ class UserProfileSystem {
         
         // Initialize with stored data
         this.loadStoredProfile();
-        
-        console.log('👤 UserProfileSystem initialized');
+
     }
     
     /**
@@ -34,8 +33,7 @@ class UserProfileSystem {
         
         // Set up auto-save for preferences
         this.setupAutoSave();
-        
-        console.log('✅ UserProfileSystem ready');
+
     }
     
     /**
@@ -47,9 +45,9 @@ class UserProfileSystem {
             try {
                 const userData = JSON.parse(storedUser);
                 await this.setCurrentUser(userData);
-                console.log('🔐 Restored user session:', userData.username);
+                
             } catch (error) {
-                console.warn('Failed to restore user session:', error);
+                
                 localStorage.removeItem('imagecanvas_user');
             }
         }
@@ -75,8 +73,7 @@ class UserProfileSystem {
         
         // Notify listeners
         this.notifyListeners('userChanged', this.currentUser);
-        
-        console.log('👤 User set:', this.currentUser.username);
+
     }
     
     /**
@@ -145,8 +142,7 @@ class UserProfileSystem {
         
         // Notify listeners
         this.notifyListeners('userChanged', null);
-        
-        console.log('👋 User logged out');
+
     }
     
     /**
@@ -165,8 +161,7 @@ class UserProfileSystem {
         
         // Notify listeners
         this.notifyListeners('profileUpdated', this.currentUser);
-        
-        console.log('📝 Profile updated');
+
     }
     
     /**
@@ -197,7 +192,7 @@ class UserProfileSystem {
                 this.preferences = JSON.parse(stored);
             }
         } catch (error) {
-            console.warn('Failed to load preferences:', error);
+            
             this.preferences = {};
         }
     }
@@ -209,7 +204,7 @@ class UserProfileSystem {
         try {
             localStorage.setItem('imagecanvas_preferences', JSON.stringify(this.preferences));
         } catch (error) {
-            console.warn('Failed to save preferences:', error);
+            
         }
     }
     
@@ -236,7 +231,7 @@ class UserProfileSystem {
                 this.profile = JSON.parse(stored);
             }
         } catch (error) {
-            console.warn('Failed to load profile:', error);
+            
             this.profile = {};
         }
     }
@@ -248,7 +243,7 @@ class UserProfileSystem {
         try {
             localStorage.setItem('imagecanvas_profile', JSON.stringify(this.profile));
         } catch (error) {
-            console.warn('Failed to save profile:', error);
+            
         }
     }
     
@@ -287,7 +282,7 @@ class UserProfileSystem {
                 try {
                     listener.callback(data);
                 } catch (error) {
-                    console.warn('Listener error:', error);
+                    
                 }
             }
         }

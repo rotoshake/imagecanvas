@@ -159,7 +159,7 @@ class LocalFirstOperations {
                 this.handleSyncSuccess(result, localIdMap);
             }
         } catch (error) {
-            console.warn('Immediate sync failed, will retry in background:', error);
+            
             // Fall back to background sync
             if (this.app.backgroundSyncManager) {
                 this.queueBackgroundSync(type, sourceData, localNodes, options);
@@ -234,8 +234,7 @@ class LocalFirstOperations {
                 // Update any references
                 this.app.graph._nodes_by_id[serverNode.id] = localNode;
                 delete this.app.graph._nodes_by_id[oldId];
-                
-                console.log(`✅ Synced local node ${oldId} → server node ${serverNode.id}`);
+
             }
         });
     }

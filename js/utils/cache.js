@@ -14,9 +14,9 @@ class ImageCache {
     async init() {
         try {
             this.db = await this.openDB();
-            console.log('Image cache initialized with IndexedDB support');
+            
         } catch (error) {
-            console.warn('IndexedDB not available, using memory cache only:', error);
+            
         }
     }
     
@@ -47,7 +47,7 @@ class ImageCache {
         
         if (this.db) {
             this.putToDB(key, value).catch(error => {
-                console.warn('Failed to store in IndexedDB:', error);
+                
             });
         }
     }
@@ -80,7 +80,7 @@ class ImageCache {
                 request.onerror = () => reject(request.error);
             });
         } catch (error) {
-            console.warn('Failed to retrieve from IndexedDB:', error);
+            
             return null;
         }
     }
@@ -93,7 +93,7 @@ class ImageCache {
             const store = transaction.objectStore(this.storeName);
             await store.put(value, key);
         } catch (error) {
-            console.warn('Failed to store in IndexedDB:', error);
+            
         }
     }
     
@@ -106,7 +106,7 @@ class ImageCache {
                 const store = transaction.objectStore(this.storeName);
                 store.clear();
             } catch (error) {
-                console.warn('Failed to clear IndexedDB:', error);
+                
             }
         }
     }
@@ -324,7 +324,7 @@ class ThumbnailCache {
                 }
             }
         } catch (error) {
-            console.warn('Failed to get visible node hashes:', error);
+            
         }
         
         return visibleHashes;
@@ -400,8 +400,7 @@ class ThumbnailCache {
                     this.cache.set(hash, thumbnailMap);
                     this.currentMemoryUsage += loadedMemory;
                     this.accessOrder.set(hash, Date.now());
-                    
-                    
+
                     // Report completion
                     if (progressCallback) progressCallback(1);
                     if (window.imageProcessingProgress) {
@@ -411,7 +410,7 @@ class ThumbnailCache {
                     return thumbnailMap;
                 }
             } catch (error) {
-                console.warn('Failed to load from IndexedDB:', error);
+                
             }
         }
         
@@ -513,7 +512,7 @@ class ThumbnailCache {
             
             // Skip if this size already exists (e.g., 64px from preview)
             if (thumbnails.has(size)) {
-                console.log(`⏭️ Skipping ${size}px thumbnail - already exists from preview`);
+                
                 continue;
             }
             
@@ -574,12 +573,11 @@ class ThumbnailCache {
             
             // Skip if this size already exists
             if (thumbnails.has(size)) {
-                console.log(`⏭️ Skipping ${size}px thumbnail - already exists`);
+                
                 continue;
             }
             
             const canvas = this._generateSingleThumbnail(sourceImage, size);
-            console.log(`🔧 Generated ${size}px thumbnail:`, canvas ? `${canvas.width}x${canvas.height}` : 'FAILED');
             
             // Only store if we actually generated a thumbnail
             if (canvas) {
@@ -662,8 +660,7 @@ class ThumbnailCache {
         ctx.imageSmoothingEnabled = true;
         ctx.imageSmoothingQuality = CONFIG.THUMBNAILS.QUALITY;
         ctx.drawImage(sourceImage, 0, 0, width, height);
-        
-        
+
         return canvas;
     }
     
@@ -742,7 +739,7 @@ class ThumbnailCache {
             
             await window.indexedDBThumbnailStore.set(hash, thumbnailObj, serverFilename);
         } catch (error) {
-            console.warn('Failed to store thumbnails to IndexedDB:', error);
+            
         }
     }
     
@@ -770,7 +767,7 @@ class ThumbnailCache {
     
     // Force cleanup for memory pressure
     forceCleanup() {
-        console.log('🧹 Forcing thumbnail cache cleanup due to memory pressure');
+        
         this._evictOldEntries();
         
         // More aggressive cleanup - keep only most recent 25 entries
@@ -780,8 +777,7 @@ class ThumbnailCache {
             this._evictOldEntries();
             this.maxHashEntries = oldLimit;
         }
-        
-        console.log(`🧹 Forced cleanup complete. Cache size: ${this.cache.size}`);
+
     }
     
     /**
@@ -873,7 +869,7 @@ class ThumbnailCache {
             
             return null;
         } catch (error) {
-            console.warn(`Failed to load ${size}px thumbnail from server:`, error);
+            
             return null;
         }
     }
@@ -911,11 +907,10 @@ class ThumbnailCache {
                     
                     // Draw image preserving alpha channel
                     ctx.drawImage(img, 0, 0);
-                    
-                    
+
                     resolve(canvas);
                 } catch (error) {
-                    console.warn(`Failed to create canvas:`, error);
+                    
                     resolve(null);
                 }
             };
@@ -932,7 +927,7 @@ class ThumbnailCache {
                 if (!loaded) {
                     loaded = true;
                     img.src = ''; // Cancel load
-                    console.warn(`Timeout loading thumbnail from ${url}`);
+                    
                     resolve(null);
                 }
             }, timeout);
@@ -1067,7 +1062,6 @@ class ThumbnailCache {
 
 // Global function to monitor and manage memory usage
 window.monitorImageMemory = function() {
-    console.log('📊 Image Memory Usage Report:');
     
     // ImageCache stats
     if (window.imageCache) {
@@ -1078,7 +1072,7 @@ window.monitorImageMemory = function() {
     // ThumbnailCache stats  
     if (window.thumbnailCache) {
         const thumbStats = window.thumbnailCache.getStats();
-        console.log(`🖼️ ThumbnailCache: ${thumbStats.totalHashes} images, ${thumbStats.totalThumbnails} thumbnails`);
+        
         console.log(`💾 Memory: ${thumbStats.memoryUsageMB.toFixed(1)}MB / ${thumbStats.maxMemoryMB.toFixed(0)}MB (${thumbStats.memoryUtilization})`);
         console.log(`📊 Count: ${thumbStats.totalHashes} / ${thumbStats.maxHashEntries} (${thumbStats.countPressure})`);
         
@@ -1097,7 +1091,6 @@ window.monitorImageMemory = function() {
 
 // Global function to force cleanup
 window.cleanupImageMemory = function() {
-    console.log('🧹 Starting aggressive image memory cleanup...');
     
     let cleaned = 0;
     
@@ -1107,23 +1100,21 @@ window.cleanupImageMemory = function() {
         window.thumbnailCache.forceCleanup();
         const afterStats = window.thumbnailCache.getStats();
         cleaned += (beforeStats.totalHashes - afterStats.totalHashes);
-        console.log(`🗑️ Cleaned ${beforeStats.totalHashes - afterStats.totalHashes} thumbnail entries`);
+        
     }
     
     // Clean temporary preview cache
     if (window.thumbnailCache && window.thumbnailCache.cleanupTempPreviews) {
         window.thumbnailCache.cleanupTempPreviews();
-        console.log('🗑️ Cleaned temporary preview cache');
+        
     }
     
     // Force garbage collection if available (dev tools)
     if (window.gc) {
         window.gc();
-        console.log('🗑️ Forced garbage collection');
+        
     }
-    
-    console.log(`✅ Memory cleanup complete. Total entries cleaned: ${cleaned}`);
-    
+
     // Show updated stats
     setTimeout(() => window.monitorImageMemory(), 100);
 };

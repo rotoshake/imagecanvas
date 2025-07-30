@@ -12,8 +12,7 @@ class OperationPersistence {
     constructor(app) {
         this.app = app;
         this.initialized = false;
-        
-        console.log('🔄 OperationPersistence initialized');
+
     }
     
     /**
@@ -54,12 +53,10 @@ class OperationPersistence {
      */
     async loadCanvas(canvasId) {
         if (!this.app.networkLayer?.isConnected) {
-            console.error('Cannot load canvas: not connected');
+            
             return false;
         }
-        
-        console.log(`📥 Loading canvas ${canvasId} from server...`);
-        
+
         // Clear current state
         this.app.graph.clear();
         
@@ -70,7 +67,6 @@ class OperationPersistence {
                 this.app.networkLayer.socket.off('operation_history', historyHandler);
                 
                 if (data.operations && Array.isArray(data.operations)) {
-                    console.log(`📥 Received ${data.operations.length} operations`);
                     
                     // Replay operations in order
                     for (const op of data.operations) {
@@ -85,14 +81,13 @@ class OperationPersistence {
                                 }
                             );
                         } catch (error) {
-                            console.error(`Failed to replay operation ${op.type}:`, error);
+                            
                         }
                     }
-                    
-                    console.log('✅ Canvas loaded from operation history');
+
                     resolve(true);
                 } else {
-                    console.log('📭 No operations found for canvas');
+                    
                     resolve(true);
                 }
             };

@@ -125,7 +125,7 @@ class BackgroundSyncManager {
         while (this.operationQueue.length > 0) {
             // Check connection health
             if (!this.isConnectionHealthy()) {
-                console.log('📡 Connection unhealthy, pausing queue processing');
+                
                 await this.delay(5000);
                 continue;
             }
@@ -192,9 +192,7 @@ class BackgroundSyncManager {
      */
     async processBatch(batch) {
         const startTime = Date.now();
-        
-        console.log(`📦 Processing batch of ${batch.length} operations`);
-        
+
         // Group operations by type for efficiency
         const groupedOps = this.groupOperationsByType(batch);
         
@@ -382,13 +380,13 @@ class BackgroundSyncManager {
     isConnectionHealthy() {
         // Check if online
         if (!navigator.onLine) {
-            console.log('📡 Offline according to navigator.onLine');
+            
             return false;
         }
         
         // Check if network layer is connected
         if (this.network && this.network.isConnected === false) {
-            console.log('📡 Network layer disconnected');
+            
             return false;
         }
         
@@ -526,7 +524,7 @@ class BackgroundSyncManager {
      * Handle connection restored
      */
     onConnectionRestored() {
-        console.log('🟢 Connection restored, resuming queue processing');
+        
         this.connectionHealth.isHealthy = true;
         
         if (!this.processingQueue && this.operationQueue.length > 0) {
@@ -538,7 +536,7 @@ class BackgroundSyncManager {
      * Handle connection lost
      */
     onConnectionLost() {
-        console.log('🔴 Connection lost, pausing queue processing');
+        
         this.connectionHealth.isHealthy = false;
     }
     

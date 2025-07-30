@@ -2885,10 +2885,20 @@ Mode: ${this.fpsTestMode}`;
             }
         }
         
-        // If thumbnails exist, we can at least show those while loading
-        if (window.thumbnailCache && window.thumbnailCache.hasThumbnails(hash)) {
+        // Check if thumbnails exist
+        const hasThumbnails = window.thumbnailCache && window.thumbnailCache.hasThumbnails(hash);
+        
+        if (hasThumbnails) {
+            // Thumbnails exist - set to loaded state so thumbnails are used for rendering
             node.loadingState = 'loaded';
             node.loadingProgress = 1.0;
+            
+            // For images, we can load the full image in background without changing loading state
+            // For videos, we still need to load the full video
+            if (isVideo) {
+                node.loadingState = 'loading';
+                node.loadingProgress = 0.1;
+            }
         } else {
             node.loadingState = 'loading';
             node.loadingProgress = 0;

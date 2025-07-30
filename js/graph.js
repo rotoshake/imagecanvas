@@ -129,12 +129,12 @@ class ImageGraph {
     
     start() {
         this.running = true;
-        console.log('Graph started');
+        
     }
     
     stop() {
         this.running = false;
-        console.log('Graph stopped');
+        
     }
     
     updateStats() {
@@ -267,7 +267,7 @@ class ImageGraph {
         // Remove invalid nodes
         this.nodes = this.nodes.filter(node => {
             if (!node || typeof node.validate !== 'function') {
-                console.warn('Removing invalid node:', node);
+                
                 return false;
             }
             
@@ -275,7 +275,7 @@ class ImageGraph {
                 node.validate();
                 return true;
             } catch (error) {
-                console.warn('Node validation failed:', error, node);
+                
                 return false;
             }
         });

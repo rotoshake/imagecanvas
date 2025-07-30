@@ -19,21 +19,20 @@ class PersistenceHandler {
     initialize() {
         // With state-based sync, the server handles all persistence
         // The server maintains the authoritative state and saves it
-        console.log('💾 PersistenceHandler: Server-authoritative mode');
         
         // We can still listen for manual save requests
         window.addEventListener('keydown', (e) => {
             // Ctrl/Cmd + S
             if ((e.ctrlKey || e.metaKey) && e.key === 's') {
                 e.preventDefault();
-                console.log('💾 Manual save requested - server already has latest state');
+                
                 // Could show a notification that changes are automatically saved
             }
         });
         
         // The server automatically persists state changes
         // No need for client-side auto-save
-        console.log('✅ Persistence handled by server state sync');
+        
     }
     
     /**
@@ -74,12 +73,12 @@ class PersistenceHandler {
                 })
             }).then(response => {
                 if (response.ok) {
-                    console.log('💾 Saved');
+                    
                 } else {
-                    console.error('💾 Save failed:', response.status);
+                    
                 }
             }).catch(error => {
-                console.error('💾 Save error:', error.message);
+                
             });
             
             this.hasUnsavedChanges = false;
@@ -88,7 +87,7 @@ class PersistenceHandler {
             return true;
             
         } catch (error) {
-            console.error('❌ Failed to prepare save:', error);
+            
             return false;
         }
     }
@@ -118,10 +117,9 @@ class PersistenceHandler {
                 CONFIG.ENDPOINTS.PROJECT_CANVAS(canvasId),
                 new Blob([data], { type: 'application/json' })
             );
-            
-            console.log('💾 Immediate save sent');
+
         } catch (error) {
-            console.error('Failed to save immediately:', error);
+            
         }
     }
     
@@ -130,7 +128,6 @@ class PersistenceHandler {
      */
     async load(canvasId) {
         try {
-            console.log('📥 Loading canvas:', canvasId);
             
             const response = await fetch(CONFIG.ENDPOINTS.PROJECT_CANVAS(canvasId));
             if (!response.ok) {
@@ -149,8 +146,7 @@ class PersistenceHandler {
                     this.app.graphCanvas,
                     data.canvas_data
                 );
-                
-                console.log('✅ Canvas loaded successfully');
+
                 this.hasUnsavedChanges = false;
                 this.lastSaveTime = Date.now();
                 
@@ -160,7 +156,7 @@ class PersistenceHandler {
             return false;
             
         } catch (error) {
-            console.error('❌ Failed to load canvas:', error);
+            
             return false;
         }
     }

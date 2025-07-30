@@ -525,7 +525,7 @@ class CanvasNavigator {
                 this.performCleanup();
             });
         } else {
-            console.error('❌ Cleanup button not found during setup');
+            
         }
         
         // Keyboard shortcut (Ctrl/Cmd + O)
@@ -593,7 +593,7 @@ class CanvasNavigator {
             this.canvases = await response.json();
             this.renderCanvasList();
         } catch (error) {
-            console.error('Failed to load canvases:', error);
+            
             listContainer.innerHTML = '<div class="error">Failed to load canvases</div>';
         }
     }
@@ -713,18 +713,17 @@ class CanvasNavigator {
             this.loadCanvases();
             
         } catch (error) {
-            console.error('Failed to create canvas:', error);
+            
             alert('Failed to create canvas');
         }
     }
     
     async loadCanvas(canvasId) {
         try {
-            console.log('Loading canvas:', canvasId);
             
             // Don't reload if it's already the current canvas
             if (this.currentCanvasId === canvasId) {
-                console.log('Canvas already loaded');
+                
                 // this.close(); // DISABLED for testing
                 return;
             }
@@ -738,13 +737,13 @@ class CanvasNavigator {
                     attempts++;
                 }
                 if (!this.networkLayer.isConnected) {
-                    console.error('⚠️ Network connection timeout - proceeding anyway');
+                    
                 }
             }
             
             // Disconnect from current project first
             if (this.networkLayer && this.networkLayer.isConnected && this.networkLayer.currentProject) {
-                console.log('Leaving current project before switching...');
+                
                 // NetworkLayer handles its own cleanup
                 
                 // Leave the current project room and wait for confirmation
@@ -759,28 +758,26 @@ class CanvasNavigator {
             if (this.currentCanvasId && this.networkLayer) {
                 // Force save even if hasUnsavedChanges is false, to ensure we don't lose data
                 if (this.app.graph.nodes.length > 0) {
-                    console.log('💾 Saving current canvas before switching...');
-                    console.log('💾 Current canvas ID:', this.currentCanvasId);
-                    console.log('💾 Current nodes:', this.app.graph.nodes.length);
+
                     // Mark as needing save
                     // Saving is now handled by PersistenceHandler
                     if (this.persistenceHandler) {
                         try {
                             await this.persistenceHandler.save();
                         } catch (error) {
-                            console.error('💾 Failed to save before canvas switch:', error);
+                            
                             // Continue with canvas switch even if save fails
                         }
                     } else {
-                        console.warn('💾 No persistence handler available - skipping save');
+                        
                     }
-                    console.log('💾 Save completed');
+                    
                 } else {
-                    console.log('💾 No nodes to save in current canvas');
+                    
                 }
             } else if (!this.currentCanvasId && this.app.graph.nodes.length > 0) {
                 // Don't auto-save if we're in a duplicated tab situation
-                console.log('⚠️ Have nodes but no canvas ID - possible duplicate tab');
+                
                 // Clear the nodes instead of saving to avoid creating unwanted canvases
                 this.app.graph.clear();
             }
@@ -818,7 +815,7 @@ class CanvasNavigator {
                     if (this.app.networkLayer) {
                         await this.joinProjectWithRetry(canvasId);
                     } else {
-                        console.warn('⚠️ No NetworkLayer available - project joining disabled');
+                        
                     }
                     
                     // Show success
@@ -836,11 +833,11 @@ class CanvasNavigator {
                     if (this.app.networkLayer) {
                         await this.joinProjectWithRetry(canvasId);
                     } else {
-                        console.warn('⚠️ No NetworkLayer available - project joining disabled');
+                        
                     }
                 }
             } catch (error) {
-                console.error('Error loading canvas data:', error);
+                
                 // Continue with empty canvas but still join project
                 // Join using the new NetworkLayer with retry logic
                 if (this.app.networkLayer) {
@@ -858,7 +855,7 @@ class CanvasNavigator {
             // this.close();
             
         } catch (error) {
-            console.error('Failed to load canvas:', error);
+            
             alert('Failed to load canvas: ' + error.message);
         }
     }
@@ -866,12 +863,12 @@ class CanvasNavigator {
     async deleteCanvas(canvasId) {
         const canvas = this.canvases.find(c => c.id === canvasId);
         if (!canvas) {
-            console.error('Canvas not found:', canvasId);
+            
             return;
         }
         
         if (!confirm(`Delete "${canvas.name}"? This cannot be undone.`)) {
-            console.log('Delete cancelled by user');
+            
             return;
         }
         
@@ -881,11 +878,10 @@ class CanvasNavigator {
             const response = await fetch(deleteUrl, {
                 method: 'DELETE'
             });
-            
-            
+
             if (!response.ok) {
                 const errorText = await response.text();
-                console.error('Delete failed:', errorText);
+                
                 throw new Error(`Failed to delete canvas: ${response.status} ${response.statusText}`);
             }
             
@@ -912,7 +908,7 @@ class CanvasNavigator {
                 });
             }
         } catch (error) {
-            console.error('Failed to delete canvas:', error);
+            
             alert(`Failed to delete canvas: ${error.message}`);
         }
     }
@@ -970,7 +966,7 @@ class CanvasNavigator {
                 });
             }
         } catch (error) {
-            console.error('Failed to duplicate canvas:', error);
+            
             alert('Failed to duplicate canvas');
         }
     }
@@ -1025,9 +1021,9 @@ class CanvasNavigator {
                     }
                     
                     if (!this.app.networkLayer.isConnected) {
-                        console.warn(`⚠️ Network connection timeout on attempt ${attempt}`);
+                        
                         if (attempt === maxAttempts) {
-                            console.error('❌ Failed to connect to network after all attempts');
+                            
                             return false;
                         }
                         continue; // Try next attempt
@@ -1049,10 +1045,9 @@ class CanvasNavigator {
                 return true;
                 
             } catch (error) {
-                console.error(`❌ Project join attempt ${attempt} failed:`, error);
                 
                 if (attempt === maxAttempts) {
-                    console.error('❌ All project join attempts failed');
+                    
                     return false;
                 }
                 
@@ -1169,7 +1164,7 @@ class CanvasNavigator {
                 });
             }
         } catch (error) {
-            console.error('Failed to rename canvas:', error);
+            
             alert('Failed to rename canvas');
         }
     }
@@ -1230,7 +1225,7 @@ class CanvasNavigator {
             
             return newCanvas;
         } catch (error) {
-            console.error('Failed to save as new canvas:', error);
+            
             if (!silent) {
                 alert('Failed to save canvas');
             }
@@ -1253,7 +1248,7 @@ class CanvasNavigator {
                 }
                 
                 if (!this.app.networkLayer.isConnected) {
-                    console.warn('⚠️ Network connection timeout - proceeding anyway');
+                    
                 }
             }
             
@@ -1298,8 +1293,7 @@ class CanvasNavigator {
             // Don't treat new tabs as duplicates - sessionStorage is shared between tabs!
             // Only check for actual duplicates (same window reloaded)
             const isReload = performance.navigation.type === 1;
-            
-            
+
             // Get last used canvas from localStorage
             const lastCanvasId = localStorage.getItem('lastCanvasId');
             
@@ -1333,7 +1327,7 @@ class CanvasNavigator {
                 }
             }
         } catch (error) {
-            console.error('Failed to load startup canvas:', error);
+            
             // Continue with blank canvas
         }
     }
@@ -1375,7 +1369,7 @@ class CanvasNavigator {
             
             return newCanvas;
         } catch (error) {
-            console.error('Failed to create default canvas:', error);
+            
             return null;
         }
     }
@@ -1403,7 +1397,7 @@ class CanvasNavigator {
     
     async saveCanvasToServer() {
         if (!this.currentCanvasId) {
-            console.warn('No canvas ID - cannot save');
+            
             return false;
         }
         
@@ -1422,7 +1416,7 @@ class CanvasNavigator {
             });
             
             if (!response.ok) {
-                console.error('Failed to save canvas:', response.status, response.statusText);
+                
                 return false;
             }
             
@@ -1434,7 +1428,7 @@ class CanvasNavigator {
             
             return true;
         } catch (error) {
-            console.error('Error saving canvas to server:', error);
+            
             return false;
         }
     }
@@ -1471,7 +1465,7 @@ class CanvasNavigator {
                 }
             }
         } catch (error) {
-            console.error('Failed to get database size:', error);
+            
             const sizeElement = this.panel.querySelector('.size-value');
             if (sizeElement) {
                 sizeElement.textContent = 'Error';
@@ -1482,12 +1476,12 @@ class CanvasNavigator {
     async performCleanup() {
         const cleanupBtn = this.panel.querySelector('.cleanup-btn');
         if (!cleanupBtn) {
-            console.error('Cleanup button not found');
+            
             return;
         }
         
         if (cleanupBtn.classList.contains('loading')) {
-            console.log('Cleanup already in progress');
+            
             return;
         }
         
@@ -1544,8 +1538,7 @@ class CanvasNavigator {
                     ⚠️ This will clear the entire thumbnail cache. Thumbnails will be regenerated when needed.
                 </div>
             </div>
-            
-            
+
             <div style="display: flex; gap: 10px; justify-content: flex-end;">
                 <button id="cleanup-cancel" style="padding: 8px 16px; background: #444; border: none; border-radius: 4px; color: #fff; cursor: pointer;">Cancel</button>
                 <button id="cleanup-proceed" style="padding: 8px 16px; background: #4a9eff; border: none; border-radius: 4px; color: #fff; cursor: pointer; font-weight: bold;">Proceed</button>
@@ -1579,7 +1572,7 @@ class CanvasNavigator {
         document.getElementById('cleanup-cancel').onclick = () => {
             backdrop.remove();
             dialog.remove();
-            console.log('Cleanup cancelled by user');
+            
         };
         
         document.getElementById('cleanup-proceed').onclick = () => {
@@ -1598,7 +1591,7 @@ class CanvasNavigator {
     async executeCleanup(dryRun = false, gracePeriod = 0, deleteAllThumbnails = false) {
         const cleanupBtn = this.panel.querySelector('.cleanup-btn');
         if (!cleanupBtn) {
-            console.error('Cleanup button not found');
+            
             return;
         }
         
@@ -1657,7 +1650,7 @@ class CanvasNavigator {
                     }
                     keysToRemove.forEach(key => localStorage.removeItem(key));
                 } catch (e) {
-                    console.warn('Failed to clear some localStorage entries:', e);
+                    
                 }
             } // End if (!dryRun)
             
@@ -1736,10 +1729,9 @@ class CanvasNavigator {
                     duration: 5000 // Show for longer since it's multi-line
                 });
             }
-            
-            
+
         } catch (error) {
-            console.error('Failed to perform cleanup:', error);
+            
             if (this.app.showNotification) {
                 this.app.showNotification({
                     type: 'error',

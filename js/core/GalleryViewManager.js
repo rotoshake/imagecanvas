@@ -40,9 +40,7 @@ class GalleryViewManager {
      */
     enter(initialNode) {
         if (this.active) return;
-        
-        console.log('🖼️ Entering gallery mode with node:', initialNode.id);
-        
+
         // Save current viewport state
         this.previousViewportState = {
             scale: this.canvas.viewport.scale,
@@ -58,7 +56,7 @@ class GalleryViewManager {
         // Find index of initial node
         const index = this.mediaNodes.findIndex(n => n.id === initialNode.id);
         if (index === -1) {
-            console.error('Initial node not found in media nodes');
+            
             this.exit();
             return;
         }
@@ -84,9 +82,7 @@ class GalleryViewManager {
      */
     exit() {
         if (!this.active) return;
-        
-        console.log('🖼️ Exiting gallery mode');
-        
+
         // Clear any pending timeouts
         if (this.zoomSpringbackTimeout) {
             clearTimeout(this.zoomSpringbackTimeout);
@@ -133,9 +129,7 @@ class GalleryViewManager {
     resetToGalleryDefault() {
         const currentNode = this.getCurrentNode();
         if (!currentNode) return;
-        
-        console.log('🖼️ Resetting to gallery default view');
-        
+
         // Zoom to fit the current node with minimal padding (same as navigateToNode)
         const bbox = currentNode.getBoundingBox();
         const padding = 40;
@@ -178,7 +172,7 @@ class GalleryViewManager {
                 }
             };
         }
-        console.log('🖼️ Gallery interactions enabled');
+        
     }
     
     /**
@@ -195,7 +189,7 @@ class GalleryViewManager {
             }
             this.canvas.viewport._galleryPanHooked = false;
         }
-        console.log('🖼️ Gallery interactions disabled');
+        
     }
     
     /**
@@ -333,7 +327,7 @@ class GalleryViewManager {
         }
         
         if (needsSpringBack && !this.canvas.viewport.isAnimating) {
-            console.log('🖼️ Springing back to valid position');
+            
             // Use the existing animation system for smooth spring-back
             this.canvas.viewport.animateTo(
                 targetOffset,
@@ -406,8 +400,7 @@ class GalleryViewManager {
                 }
                 return ay - by; // Sort by Y position
             });
-        
-        console.log(`🖼️ Found ${this.mediaNodes.length} media nodes`);
+
     }
     
     /**
@@ -419,9 +412,7 @@ class GalleryViewManager {
         const previousNode = this.getCurrentNode();
         this.currentIndex = index;
         const node = this.mediaNodes[index];
-        
-        console.log(`🖼️ Navigating to node ${index + 1}/${this.mediaNodes.length}: ${node.id}`);
-        
+
         // Select the node (updates properties panel)
         this.canvas.selection.clear();
         this.canvas.selection.selectNode(node);

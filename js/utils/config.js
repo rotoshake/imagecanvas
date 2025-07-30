@@ -178,16 +178,16 @@ window.CONFIG = CONFIG;
 window.setLogLevel = function(level = 'warn', system = null) {
     if (system) {
         CONFIG.LOGGING.SYSTEMS[system] = level;
-        console.log(`🔧 Set ${system} logging to: ${level}`);
+        
     } else {
         CONFIG.LOGGING.LEVEL = level;
-        console.log(`🔧 Set global logging to: ${level}`);
+        
     }
 };
 
 window.enableLogType = function(logType, enabled = true) {
     CONFIG.LOGGING.ENABLED[logType] = enabled;
-    console.log(`🔧 ${enabled ? 'Enabled' : 'Disabled'} logging for: ${logType}`);
+    
 };
 
 // Quick presets for common scenarios
@@ -221,6 +221,6 @@ window.setLoggingPreset = function(preset) {
             console.log('🔊 Set logging to verbose mode (all systems enabled)');
             break;
         default:
-            console.log('Available presets: quiet, normal, debug, verbose');
+            
     }
 };

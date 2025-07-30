@@ -98,7 +98,6 @@ class UndoDebugger {
      * Force reload operation history from database
      */
     async forceReloadHistory(projectId) {
-        console.log(`🔄 Force reloading history for project ${projectId}`);
         
         // Clear existing
         this.operationHistory.timeline.delete(projectId);

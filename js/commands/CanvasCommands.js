@@ -99,31 +99,24 @@ class NodeAlignCommand extends Command {
                 }
             });
         }
-        
-        console.log('[NodeAlignCommand] Prepared undo data:', {
-            nodeIds: this.params.nodeIds,
-            previousPositions: this.undoData.previousPositions
-        });
+
     }
 
     async execute(context) {
         const { graph } = context;
         const { nodeIds, positions, axis } = this.params;
-        
-        console.log('[NodeAlignCommand] Executing with params:', { nodeIds, positions, axis });
-        
+
         // Check if grid alignment animation is active
         const alignmentManager = window.app?.graphCanvas?.alignmentManager;
         const isGridAlignAnimating = alignmentManager?.gridAlignAnimating === true;
         
         // If positions are provided (from alignment animation), use them directly
         if (positions && Array.isArray(positions)) {
-            console.log('[NodeAlignCommand] Using provided positions');
             
             // During optimistic execution with active grid animation, skip position updates
             // The animation will handle the visual updates, and the server will sync the final positions
             if (this.origin === 'local' && isGridAlignAnimating && axis === 'grid') {
-                console.log('[NodeAlignCommand] Grid alignment animation active - skipping optimistic position updates');
+                
                 // Still mark canvas dirty to ensure animation continues
                 if (graph.canvas) {
                     graph.canvas.dirty_canvas = true;
@@ -134,7 +127,7 @@ class NodeAlignCommand extends Command {
             for (let i = 0; i < nodeIds.length; i++) {
                 const node = graph.getNodeById(nodeIds[i]);
                 if (node && positions[i]) {
-                    // console.log(`[NodeAlignCommand] Moving node ${nodeIds[i]} to`, positions[i]);
+                    // 
                     node.pos[0] = positions[i][0];
                     node.pos[1] = positions[i][1];
                     // Clear any animation state to prevent overwriting
@@ -160,7 +153,7 @@ class NodeAlignCommand extends Command {
         if (axis === 'horizontal') {
             // Skip during active animation for consistency
             if (this.origin === 'local' && isAutoAlignAnimating) {
-                console.log('[NodeAlignCommand] Auto-align animation active - skipping optimistic updates');
+                
                 return { success: true };
             }
             const avgY = nodes.reduce((sum, node) => sum + node.pos[1], 0) / nodes.length;
@@ -168,14 +161,14 @@ class NodeAlignCommand extends Command {
         } else if (axis === 'vertical') {
             // Skip during active animation for consistency
             if (this.origin === 'local' && isAutoAlignAnimating) {
-                console.log('[NodeAlignCommand] Auto-align animation active - skipping optimistic updates');
+                
                 return { success: true };
             }
             const avgX = nodes.reduce((sum, node) => sum + node.pos[0], 0) / nodes.length;
             nodes.forEach(node => node.pos[0] = avgX);
         } else if (axis === 'grid') {
             // Grid alignment should always provide positions, this is just a fallback
-            console.warn('[NodeAlignCommand] Grid alignment without positions - no changes made');
+            
         }
         return { success: true };
     }
@@ -183,13 +176,11 @@ class NodeAlignCommand extends Command {
     async undo(context) {
         const { graph } = context;
         const { previousPositions } = this.undoData;
-        console.log('[NodeAlignCommand] Undoing with data:', {
-            previousPositions: previousPositions
-        });
+        
         for (const [nodeId, pos] of Object.entries(previousPositions)) {
             const node = graph.getNodeById(nodeId);
             if (node) {
-                console.log(`[NodeAlignCommand] Restoring node ${nodeId} to`, pos);
+                
                 node.pos = [...pos];
                 // Clear any animation state
                 delete node._animPos;

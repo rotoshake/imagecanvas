@@ -156,7 +156,7 @@ const ColorUtils = {
     get(category, name) {
         const color = COLORS[category]?.[name];
         if (!color) {
-            console.warn(`Color not found: ${category}.${name}`);
+            
             return '#ff00ff'; // Magenta as error indicator
         }
         return color;

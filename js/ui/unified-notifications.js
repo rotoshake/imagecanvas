@@ -170,8 +170,7 @@ class UnifiedNotifications {
                 background: rgba(33, 150, 243, 0.9);
                 border-color: rgba(33, 150, 243, 0.2);
             }
-            
-            
+
             /* Close Button */
             .notification-close {
                 width: 14px;
@@ -193,8 +192,7 @@ class UnifiedNotifications {
                 width: 10px;
                 height: 10px;
             }
-            
-            
+
             /* Animations */
             @keyframes pulse {
                 0%, 100% { opacity: 1; }
@@ -288,8 +286,7 @@ class UnifiedNotifications {
         } = options;
         
         const notificationId = id || `notification-${++this.notificationIdCounter}`;
-        
-        
+
         // Remove existing notifications with same ID (immediately for rapid updates)
         if (id) {
             // Remove from notifications map
@@ -334,9 +331,7 @@ class UnifiedNotifications {
                 ${actions ? this.getActionsHTML(actions) : ''}
             </div>
         `;
-        
-        
-        
+
         notification.innerHTML = html;
         
         // Add action button event listeners if actions exist
@@ -483,8 +478,7 @@ class UnifiedNotifications {
             }, 200);
         }, remainingTime);
     }
-    
-    
+
     /**
      * Show a success notification
      */

@@ -38,8 +38,7 @@ class OperationBatcher {
             batchesSent: 0,
             networkCallsReduced: 0
         };
-        
-        console.log('🔄 OperationBatcher initialized');
+
     }
     
     /**
@@ -336,12 +335,7 @@ class OperationBatcher {
         if (options.maxBatchDelay !== undefined) {
             this.maxBatchDelay = Math.max(50, Math.min(5000, options.maxBatchDelay));
         }
-        
-        console.log('🔄 OperationBatcher configuration updated:', {
-            batchTimeout: this.batchTimeout,
-            maxBatchSize: this.maxBatchSize,
-            maxBatchDelay: this.maxBatchDelay
-        });
+
     }
     
     /**
@@ -355,8 +349,7 @@ class OperationBatcher {
         
         // Send any remaining operations
         this.flush();
-        
-        console.log('🔄 OperationBatcher cleaned up');
+
     }
 }
 

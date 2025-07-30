@@ -99,7 +99,7 @@ if (typeof window !== 'undefined' && window.ImageNode) {
                     return originalProcessMouseWheel.call(this, e);
                 };
             } else {
-                console.warn('processMouseWheel not found, trying alternative zoom tracking...');
+                
                 // Try to hook into the canvas wheel event directly
                 canvas.canvas.addEventListener('wheel', function(e) {
                     if (e.ctrlKey || e.metaKey || e.shiftKey) return; // Skip if modifiers
@@ -153,8 +153,7 @@ if (typeof window !== 'undefined' && window.ImageNode) {
                     return result;
                 };
             }
-            
-            console.log('✅ Fast render movement tracking hooked');
+
             return true;
         }
         return false;
@@ -267,6 +266,5 @@ if (typeof window !== 'undefined' && window.ImageNode) {
         // Fall back to original implementation for other states
         return originalOnDrawForeground.call(this, ctx);
     };
-    
-    console.log('✅ Fast render optimizations loaded for ImageNode');
+
 }

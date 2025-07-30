@@ -173,7 +173,7 @@ class CleanupManager {
     cleanupMedia() {
         // Note: WeakSet doesn't have iteration, so we rely on GC
         // This method is here for documentation purposes
-        console.log('Media elements will be garbage collected');
+        
     }
     
     /**
@@ -194,7 +194,6 @@ class CleanupManager {
      * Perform full cleanup
      */
     cleanup() {
-        console.log('🧹 Performing full cleanup...');
         
         // Clear all timers
         this.timers.forEach(timerId => clearTimeout(timerId));
@@ -210,7 +209,7 @@ class CleanupManager {
                 try {
                     element.removeEventListener(event, handler, options);
                 } catch (error) {
-                    console.warn('Failed to remove listener:', error);
+                    
                 }
             });
         });
@@ -221,7 +220,7 @@ class CleanupManager {
             try {
                 observer.disconnect();
             } catch (error) {
-                console.warn('Failed to disconnect observer:', error);
+                
             }
         });
         this.observers.clear();
@@ -231,7 +230,7 @@ class CleanupManager {
             try {
                 controller.abort();
             } catch (error) {
-                console.warn('Failed to abort request:', error);
+                
             }
         });
         this.abortControllers.clear();
@@ -245,8 +244,7 @@ class CleanupManager {
             }
         });
         this.cleanupCallbacks.clear();
-        
-        console.log('✅ Cleanup complete');
+
     }
     
     /**

@@ -95,7 +95,6 @@ class ImageWebPConverter {
             };
             
         } catch (error) {
-            console.warn(`Failed to convert ${file.name} to WebP, using original format:`, error);
             
             // Fallback to original format
             const dataURL = await this.fileToDataURL(file);

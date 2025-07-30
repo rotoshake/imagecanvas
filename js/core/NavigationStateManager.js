@@ -52,11 +52,10 @@ class NavigationStateManager {
      */
     setupViewportListeners() {
         if (!this.canvas.viewport) {
-            console.warn('Viewport not available yet, retrying...');
+            
             setTimeout(() => this.setupViewportListeners(), 500);
             return;
         }
-
 
         // Check if already hooked to prevent double-hooking
         if (this.canvas.viewport._navigationHooked) {
@@ -120,7 +119,7 @@ class NavigationStateManager {
      */
     setupCanvasSwitchListeners() {
         if (!this.canvasNavigator) {
-            console.warn('Canvas navigator not available');
+            
             return;
         }
 
@@ -188,7 +187,7 @@ class NavigationStateManager {
      */
     setupDragEndListeners() {
         if (!this.canvas.finishInteractions) {
-            console.warn('finishInteractions not available');
+            
             return;
         }
 
@@ -221,9 +220,9 @@ class NavigationStateManager {
         
         // Only log in debug mode
         if (window.DEBUG_NAVIGATION) {
-            console.log('NavigationStateManager: onViewportChange called');
+            
             const state = this.getCurrentNavigationState();
-            console.log('Current viewport state:', state);
+            
         }
         
         // Save to local cache immediately
@@ -259,10 +258,9 @@ class NavigationStateManager {
 
         // Validate state
         if (!this.isValidNavigationState(state)) {
-            console.warn('Invalid navigation state, ignoring:', state);
+            
             return false;
         }
-
 
         // Set flag to prevent saving during restore
         this.isRestoring = true;
@@ -276,7 +274,6 @@ class NavigationStateManager {
         this.canvas.dirty_canvas = true;
         this.canvas.draw();
 
-        
         // Clear flag after a short delay
         setTimeout(() => {
             this.isRestoring = false;

@@ -22,8 +22,7 @@ class OffscreenRenderCache {
         // Cleanup interval
         this.cleanupInterval = 30000; // 30 seconds
         this.lastCleanup = Date.now();
-        
-        console.log('🖼️ OffscreenRenderCache initialized');
+
     }
     
     /**

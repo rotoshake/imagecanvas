@@ -17,8 +17,7 @@ class CanvasStateManager {
         
         // Operation validators
         this.validators = this.createValidators();
-        
-        console.log('🎨 CanvasStateManager initialized');
+
     }
     
     /**
@@ -172,7 +171,7 @@ class CanvasStateManager {
                         // The client sends complete positions after alignment animation
                         node.pos = [...operation.params.positions[index]];
                         changes.updated.push(node);
-                        console.log(`[node_align] Updated node ${nodeId} to position [${node.pos[0]}, ${node.pos[1]}]`);
+                        
                     }
                 });
                 break;
@@ -181,7 +180,7 @@ class CanvasStateManager {
                 return this.applyImageUploadComplete(operation.params, state, changes);
                 
             default:
-                console.warn('Unhandled operation type:', operation.type);
+                
                 return null;
         }
         
@@ -249,7 +248,7 @@ class CanvasStateManager {
             
             // Ensure we have the essential references
             if (!optimized.hash) {
-                console.warn('⚠️ Media node created without hash - clients may not find image');
+                
             }
         }
         
@@ -357,11 +356,11 @@ class CanvasStateManager {
             if (nodeDirectProperties.includes(params.property)) {
                 // Update property directly on the node object
                 node[params.property] = params.value;
-                console.log(`📝 Updated node.${params.property} = "${params.value}" for node ${params.nodeId}`);
+                
             } else {
                 // Update property in the properties object
                 node.properties[params.property] = params.value;
-                console.log(`📝 Updated node.properties.${params.property} = "${params.value}" for node ${params.nodeId}`);
+                
             }
             
             changes.updated.push(node);
@@ -631,8 +630,7 @@ class CanvasStateManager {
                 
                 changes.updated.push(node);
                 updatedCount++;
-                
-                console.log(`✅ Updated node ${node.id} with serverUrl after upload`);
+
             }
         }
         

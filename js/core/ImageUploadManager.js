@@ -50,7 +50,7 @@ class ImageUploadManager {
     async uploadImage(imageData, filename, hash, mimeType = 'image/jpeg') {
         // Check if already uploading
         if (this.uploadQueue.has(hash)) {
-            console.log(`⏳ Upload already in progress for ${hash}`);
+            
             return this.uploadQueue.get(hash);
         }
 
@@ -238,7 +238,6 @@ class ImageUploadManager {
         
         // Mark as active
         this.activeUploads.add(hash);
-        console.log(`🚀 Starting upload ${this.activeUploads.size}/${this.currentConcurrentLimit}: ${filename}`);
         
         try {
             const result = await this._performUpload(imageData, filename, hash, mimeType);
@@ -377,7 +376,6 @@ class ImageUploadManager {
      * Cancel all pending uploads
      */
     cancelAllUploads() {
-        console.log(`🛑 Cancelling ${this.pendingUploads.length} pending uploads and ${this.activeUploads.size} active uploads`);
         
         // Clear pending queue
         const cancelledCount = this.pendingUploads.length;
@@ -391,15 +389,13 @@ class ImageUploadManager {
             const uploadPromise = this.uploadQueue.get(hash);
             if (uploadPromise) {
                 // The actual cancellation will be handled by the XMLHttpRequest abort in _uploadWithProgress
-                console.log(`🛑 Marking upload ${hash} for cancellation`);
+                
             }
         });
         
         // Clear upload queue
         this.uploadQueue.clear();
-        
-        console.log(`✅ Cancelled ${cancelledCount} pending uploads`);
-        
+
         // Reset bulk operation flag
         this.isBulkOperation = false;
         this.currentConcurrentLimit = this.baseConcurrentUploads;
@@ -412,7 +408,7 @@ class ImageUploadManager {
      */
     pauseUploads() {
         this.uploadsPaused = true;
-        console.log(`⏸️ Upload processing paused. ${this.pendingUploads.length} uploads queued, ${this.activeUploads.size} still active`);
+        
         return {
             paused: true,
             pending: this.pendingUploads.length,
@@ -425,7 +421,6 @@ class ImageUploadManager {
      */
     resumeUploads() {
         this.uploadsPaused = false;
-        console.log(`▶️ Upload processing resumed. Processing ${this.pendingUploads.length} pending uploads`);
         
         // Restart queue processing
         this._processUploadQueue();
@@ -462,7 +457,7 @@ class ImageUploadManager {
     retryFailedUploads() {
         // This would require tracking failed uploads, which could be implemented
         // by storing failed upload info instead of just rejecting promises
-        console.log('🔄 Retry functionality not fully implemented yet');
+        
         return { message: 'Retry functionality requires implementation of failed upload tracking' };
     }
     

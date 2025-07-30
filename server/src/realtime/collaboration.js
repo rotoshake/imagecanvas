@@ -43,7 +43,6 @@ class CollaborationManager {
     
     setupSocketHandlers() {
         this.io.on('connection', (socket) => {
-            console.log(`🔌 New socket connection: ${socket.id}`);
             
             // Project management
             socket.on('join_project', async (data) => {
@@ -165,7 +164,6 @@ class CollaborationManager {
             
             // Initialize operation history for this project
             await this.operationHistory.initializeProject(project.id);
-            console.log(`📚 Initialized operation history for project ${project.id}`);
             
             // Join socket room
             socket.join(`project_${project.id}`);
@@ -231,7 +229,6 @@ class CollaborationManager {
             }
             
             console.log(`✅ ${username} (${session.tabId}) joined project ${project.name}`);
-            console.log(`📊 Project ${project.id} now has ${room.sockets.size} connections`);
             
             // Send initial undo state to the user
             const undoState = this.operationHistory.getUserUndoState(user.id, project.id);
@@ -239,7 +236,6 @@ class CollaborationManager {
                 undoState,
                 projectId: project.id
             });
-            console.log(`📤 Sent initial undo state to ${username}:`, undoState);
             
         } catch (error) {
             console.error('Error in handleJoinProject:', error);
@@ -306,7 +302,7 @@ class CollaborationManager {
             fromSocketId: socket.id
         });
         
-        // console.log(`📤 Operation ${operation.type} from ${session.username} (${session.tabId}`);
+        // 
     }
     
     /**
@@ -320,7 +316,7 @@ class CollaborationManager {
             const result = await this.stateManager.executeOperation(projectId, stateOperation, operation.userId);
             return result;
         } else {
-            console.warn(`⚠️ No state operation created for canvas operation:`, operation.type);
+            
         }
     }
     
@@ -364,7 +360,7 @@ class CollaborationManager {
                 };
             
             default:
-                console.warn('Unknown canvas operation type for state conversion:', operation.type);
+                
                 return null;
         }
     }
@@ -461,7 +457,7 @@ class CollaborationManager {
             // Clean up empty rooms
             if (room.sockets.size === 0) {
                 this.projectRooms.delete(session.projectId);
-                console.log(`🧹 Cleaned up empty room for project ${session.projectId}`);
+                
             }
         }
     }
@@ -554,31 +550,19 @@ class CollaborationManager {
                     sequenceNumber: result.stateVersion
                 };
                 
-                // console.log(`📝 About to record operation with undo data:`, !!undoData);
-                
+                // 
                 // Get active transaction if any
                 const transactionKey = `${session.userId}-${projectId}`;
                 const activeTransaction = this.activeTransactions.get(transactionKey);
                 const txId = activeTransaction ? activeTransaction.id : transactionId;
-                
-                console.log(`📝 Recording operation in history:`, {
-                    operationId: operation.id,
-                    type: operation.type,
-                    hasUndoData: !!operation.undoData,
-                    userId: session.userId,
-                    projectId: projectId,
-                    transactionId: txId
-                });
-                
+
                 await this.operationHistory.recordOperation(
                     operation,
                     session.userId,
                     projectId,
                     txId
                 );
-                
-                console.log(`✅ Operation recorded successfully`);
-                
+
                 // Send acknowledgment to originator
                 socket.emit('operation_ack', {
                     operationId,
@@ -596,17 +580,13 @@ class CollaborationManager {
                 
                 // Send updated undo state to all user's sessions
                 const undoState = this.operationHistory.getUserUndoState(session.userId, projectId);
-                console.log(`📤 Sending undo state update to user ${session.userId}:`, {
-                    canUndo: undoState.canUndo,
-                    undoCount: undoState.undoCount,
-                    projectId: projectId
-                });
+                
                 this.undoStateSync.broadcastToUser(session.userId, 'undo_state_update', {
                     projectId,
                     undoState
                 });
                 
-                // console.log(`✅ Operation ${type} executed, new version: ${result.stateVersion}`);
+                // 
             } else {
                 // Reject operation
                 socket.emit('operation_rejected', {
@@ -615,7 +595,7 @@ class CollaborationManager {
                     stateVersion: result.stateVersion
                 });
                 
-                // console.log(`❌ Operation ${type} rejected: ${result.error}`);
+                // 
             }
         } catch (error) {
             console.error('Error executing operation:', error);
@@ -646,8 +626,7 @@ class CollaborationManager {
                 state: fullState,
                 stateVersion: fullState.version
             });
-            
-            console.log(`📤 Sent full state sync to ${session.username}, version: ${fullState.version}`);
+
         } catch (error) {
             console.error('Error sending full state sync:', error);
             socket.emit('error', { message: 'Failed to sync state' });
@@ -687,8 +666,7 @@ class CollaborationManager {
                         changes: result.stateUpdate,
                         isUndo: true
                     });
-                    
-                    console.log(`📡 Broadcast undo state changes to project ${session.projectId}`);
+
                 }
             } else {
                 socket.emit('undo_failed', result);
@@ -732,8 +710,7 @@ class CollaborationManager {
                         changes: result.stateUpdate,
                         isRedo: true
                     });
-                    
-                    console.log(`📡 Broadcast redo state changes to project ${session.projectId}`);
+
                 }
             } else {
                 socket.emit('redo_failed', result);
@@ -748,7 +725,6 @@ class CollaborationManager {
      * Get detailed undo history for debug HUD
      */
     async handleGetUndoHistory(socket, data) {
-        console.log('📥 Server: Received get_undo_history request:', data);
         
         const session = this.socketSessions.get(socket.id);
         if (!session) {
@@ -756,12 +732,7 @@ class CollaborationManager {
             socket.emit('error', { message: 'Not authenticated' });
             return;
         }
-        
-        console.log('✅ Server: Session found for get_undo_history:', {
-            userId: session.userId,
-            projectId: session.projectId
-        });
-        
+
         const { limit = 10, showAllUsers = false } = data;
         
         try {
@@ -880,13 +851,7 @@ class CollaborationManager {
                 serverStateVersion: this.stateManager.stateVersions.get(session.projectId) || 0,
                 timestamp: Date.now()
             };
-            
-            console.log('📤 Server: Sending undo_history response:', {
-                undoCount: undoDetails.length,
-                redoCount: redoDetails.length,
-                timestamp: response.timestamp
-            });
-            
+
             socket.emit('undo_history', response);
             
         } catch (error) {
@@ -907,30 +872,13 @@ class CollaborationManager {
         }
         
         // Log the request details
-        console.log('📋 Undo state requested:', {
-            socketId: socket.id,
-            sessionUserId: session.userId,
-            sessionProjectId: session.projectId,
-            requestUserId: data?.userId,
-            requestProjectId: data?.projectId,
-            tabId: session.tabId
-        });
         
         try {
             const undoState = this.operationHistory.getUserUndoState(
                 session.userId,
                 session.projectId
             );
-            
-            console.log('📊 Undo state retrieved:', {
-                userId: session.userId,
-                projectId: session.projectId,
-                canUndo: undoState.canUndo,
-                undoCount: undoState.undoCount,
-                canRedo: undoState.canRedo,
-                redoCount: undoState.redoCount
-            });
-            
+
             socket.emit('undo_state_update', {
                 projectId: session.projectId,
                 undoState
@@ -960,13 +908,12 @@ class CollaborationManager {
         }
         
         try {
-            console.log(`🧹 Clearing undo history for project ${projectId} requested by user ${session.userId}`);
             
             // Clear the operation history for this project
             if (this.operationHistory) {
                 // Clear project's operation history
                 const cleared = await this.operationHistory.clearProjectHistory(projectId);
-                console.log(`✅ Cleared ${cleared} operations for project ${projectId}`);
+                
             }
             
             // Clear from database
@@ -974,7 +921,6 @@ class CollaborationManager {
                 'DELETE FROM operations WHERE project_id = ?',
                 [projectId]
             );
-            console.log(`🗑️ Deleted ${deleteResult.changes} operations from database for project ${projectId}`);
             
             // Notify all users in the project that undo history was cleared
             const undoState = {
@@ -997,8 +943,7 @@ class CollaborationManager {
                 success: true,
                 deletedCount: deleteResult.changes
             });
-            
-            console.log(`✅ Undo history cleared for project ${projectId}`);
+
         } catch (error) {
             console.error('Error clearing undo history:', error);
             socket.emit('error', { message: 'Failed to clear undo history' });
@@ -1091,8 +1036,7 @@ class CollaborationManager {
         socket.emit('transaction_aborted', {
             transactionId: transaction.id
         });
-        
-        console.log(`❌ Transaction aborted: ${transaction.id}`);
+
     }
 }
 

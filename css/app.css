@@ -1,6 +1,3 @@
-/* Import fonts */
-@import url('fonts.css');
-
 /* Global font configuration - CHANGE FONT HERE */
 :root {
     --app-font-family: 'Univers', sans-serif;

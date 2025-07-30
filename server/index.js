@@ -21,7 +21,7 @@ let Database, CollaborationManager;
 try {
     Database = require('./src/database/database');
 } catch (error) {
-    console.log('⚠️  Database module not ready, using placeholder');
+    
     Database = class {
         async init() { console.log('📊 Placeholder database initialized'); }
         async close() { console.log('📊 Placeholder database closed'); }
@@ -31,10 +31,10 @@ try {
 try {
     CollaborationManager = require('./src/realtime/collaboration');
 } catch (error) {
-    console.log('⚠️  Collaboration module not ready, using placeholder');
+    
     CollaborationManager = class {
         constructor(io, db) {
-            console.log('🔌 Placeholder collaboration manager initialized');
+            
         }
     };
 }
@@ -193,13 +193,12 @@ class ImageCanvasServer {
                         size: req.file.size
                     });
 
-                    console.log(`✅ Image uploaded via API: ${req.file.originalname} -> ${req.file.filename}`);
                 } catch (thumbnailError) {
                     // If thumbnail generation fails, clean up the uploaded file
                     console.error('Thumbnail generation failed, cleaning up:', thumbnailError);
                     try {
                         await fs.unlink(req.file.path);
-                        console.log('🗑️ Cleaned up failed upload file');
+                        
                     } catch (unlinkError) {
                         console.error('Failed to clean up file:', unlinkError);
                     }
@@ -212,7 +211,7 @@ class ImageCanvasServer {
                 if (req.file && req.file.path) {
                     try {
                         await fs.unlink(req.file.path);
-                        console.log('🗑️ Cleaned up failed upload file');
+                        
                     } catch (unlinkError) {
                         console.error('Failed to clean up file:', unlinkError);
                     }
@@ -265,7 +264,7 @@ class ImageCanvasServer {
                     console.error('Thumbnail generation failed, cleaning up:', thumbnailError);
                     try {
                         await fs.unlink(req.file.path);
-                        console.log('🗑️ Cleaned up failed upload file');
+                        
                     } catch (unlinkError) {
                         console.error('Failed to clean up file:', unlinkError);
                     }
@@ -273,7 +272,6 @@ class ImageCanvasServer {
                 }
 
                 // Broadcast to other users in the project (excluding uploader)
-                console.log(`📤 Broadcasting media upload: ${fileInfo.original_name} to project_${projectId}`);
                 
                 // Get uploader's socket ID if available
                 let uploaderSocketId = parsedNodeData.uploaderSocketId || null;
@@ -289,7 +287,7 @@ class ImageCanvasServer {
                             }
                         }
                     } catch (e) {
-                        console.warn('Could not find uploader socket:', e.message);
+                        
                     }
                 }
                 
@@ -328,7 +326,7 @@ class ImageCanvasServer {
                 if (req.file && req.file.path) {
                     try {
                         await fs.unlink(req.file.path);
-                        console.log('🗑️ Cleaned up failed upload file');
+                        
                     } catch (unlinkError) {
                         console.error('Failed to clean up file:', unlinkError);
                     }
@@ -378,7 +376,6 @@ class ImageCanvasServer {
         this.app.post('/projects', async (req, res) => {
             try {
                 const { name, description, ownerId } = req.body;
-                console.log('📝 Creating project:', { name, description, ownerId });
                 
                 // Validate input
                 if (!name || !ownerId) {
@@ -394,16 +391,14 @@ class ImageCanvasServer {
                 // Get or create user by username
                 let user = await this.db.getUserByUsername(ownerId);
                 if (!user) {
-                    console.log(`📝 Creating new user: ${ownerId}`);
+                    
                     const userId = await this.db.createUser(ownerId, ownerId);
                     user = await this.db.getUserById(userId);
                 }
                 
                 const projectId = await this.db.createProject(name, user.id, description);
-                console.log('✅ Project created with ID:', projectId);
                 
                 const project = await this.db.getProject(projectId);
-                console.log('📦 Retrieved project:', project);
                 
                 res.json(project);
             } catch (error) {
@@ -733,7 +728,6 @@ class ImageCanvasServer {
         /*
         this.app.post('/database/cleanup', async (req, res) => {
             try {
-                console.log('🧹 Starting SAFE database cleanup...');
                 
                 // Check if database is initialized
                 if (!this.db || !this.db.dbPath) {
@@ -742,9 +736,7 @@ class ImageCanvasServer {
                 }
                 
                 // TEMPORARY: Skip all file deletion until we implement proper mark-and-sweep
-                console.log('⚠️ File cleanup is temporarily disabled for safety');
-                console.log('✅ Only cleaning up old operations and optimizing database');
-                
+
                 // Clean up old operations only (safe)
                 let operationsDeleted = 0;
                 try {
@@ -755,9 +747,9 @@ class ImageCanvasServer {
                     `, [Date.now() - 24 * 60 * 60 * 1000]); // Older than 1 day
                     
                     operationsDeleted = result.changes || 0;
-                    console.log(`🗑️ Deleted ${operationsDeleted} old operations`);
+                    
                 } catch (error) {
-                    console.warn('Failed to clean operations:', error);
+                    
                 }
                 
                 // Return simple success response
@@ -778,7 +770,7 @@ class ImageCanvasServer {
                 // SAFETY: Check for query parameter to force unsafe cleanup (for testing)
                 const forceUnsafe = req.query.force === 'true';
                 if (forceUnsafe) {
-                    console.warn('⚠️ FORCE UNSAFE CLEANUP MODE - USE WITH CAUTION');
+                    
                 }
                 
                 // CRITICAL: Check for active collaborative sessions
@@ -793,9 +785,9 @@ class ImageCanvasServer {
                 }
                 
                 if (activeSessionCount > 0) {
-                    console.log(`⚠️ Found ${activeSessionCount} active collaborative sessions - proceeding with extra caution`);
+                    
                 } else {
-                    console.log('✅ No active collaborative sessions detected');
+                    
                 }
                 
                 // Get initial size
@@ -822,7 +814,7 @@ class ImageCanvasServer {
                 let allFiles = [];
                 try {
                     allFiles = await this.db.all('SELECT * FROM files');
-                    console.log(`🗄️ Files table contains ${allFiles.length} records`);
+                    
                 } catch (error) {
                     console.error('❌ Failed to get files from database:', error);
                     return res.status(500).json({ 
@@ -853,13 +845,12 @@ class ImageCanvasServer {
                 
                 // Method 1: Check CanvasStateManager
                 if (this.canvasStateManager && this.canvasStateManager.projectStates) {
-                    console.log('📡 Checking CanvasStateManager for active states...');
-                    console.log(`  Found ${this.canvasStateManager.projectStates.size} active project states`);
+
                     for (const [projectId, state] of this.canvasStateManager.projectStates.entries()) {
                         activeProjects.add(parseInt(projectId));
                         // Add the active state as if it were a saved project
                         if (state && state.nodes) {
-                            console.log(`  Project ${projectId} has ${state.nodes.length} nodes`);
+                            
                             projects.push({
                                 id: projectId,
                                 canvas_data: JSON.stringify({ nodes: state.nodes }),
@@ -868,18 +859,18 @@ class ImageCanvasServer {
                         }
                     }
                 } else {
-                    console.log('⚠️ No CanvasStateManager available or no projectStates');
+                    
                 }
                 
                 // Method 2: Check collaboration rooms directly
                 if (this.collaborationManager && this.collaborationManager.io) {
-                    console.log('🔍 Checking collaboration rooms for active sessions...');
+                    
                     const rooms = this.collaborationManager.io.sockets.adapter.rooms;
                     for (const [roomName, room] of rooms.entries()) {
                         if (roomName.startsWith('project_') && room.size > 0) {
                             const projectId = parseInt(roomName.replace('project_', ''));
                             activeProjects.add(projectId);
-                            console.log(`  - Active room: ${roomName} with ${room.size} users`);
+                            
                         }
                     }
                 }
@@ -933,12 +924,10 @@ class ImageCanvasServer {
                 }
                 
                 console.log(`📋 Scanning ${projects.length} projects (${activeProjects.size} active) for used files...`);
-                console.log(`🔰 Protected ${activeFiles.size} files from recent operations`);
                 
                 // Extract all media URLs from all projects
                 const usedFilenames = new Set();
                 const usedFilenamesLower = new Set(); // Case-insensitive matching
-                console.log(`📋 Scanning ${projects.length} projects for used files...`);
                 
                 // Helper function to add a filename in all variations
                 const addUsedFilename = (filename) => {
@@ -1058,20 +1047,19 @@ class ImageCanvasServer {
                 console.log(`✅ Found ${usedFilenames.size} files in use:
   - From canvas data: ${usedFilenames.size - activeFiles.size}
   - From active operations (last 5 min): ${activeFiles.size}`);
-                console.log(`📁 Database contains ${allFiles.length} file records`);
                 
                 // Debug: Log all used filenames
-                console.log('📋 Used filenames found:', usedFilenames.size);
+                
                 if (usedFilenames.size <= 20) {
                     for (const filename of usedFilenames) {
-                        console.log(`  - ${filename}`);
+                        
                     }
                 } else {
                     console.log('  (too many to list)');
                 }
                 
                 // Debug: Log all database filenames
-                console.log('📋 Database filenames:', allFiles.length);
+                
                 if (allFiles.length <= 20) {
                     for (const file of allFiles) {
                         console.log(`  - ${file.filename} (uploaded: ${new Date(file.upload_date).toISOString()})`);
@@ -1099,9 +1087,9 @@ class ImageCanvasServer {
                 }
                 
                 // Debug: Log orphaned files
-                console.log(`🗑️ Found ${orphanedFiles.length} orphaned files:`);
+                
                 for (const file of orphanedFiles) {
-                    console.log(`  - ${file.filename}`);
+                    
                 }
                 
                 // 2. Delete orphaned file records and actual files
@@ -1135,9 +1123,7 @@ class ImageCanvasServer {
                 try {
                     const diskFiles = await fs.readdir(uploadsDir);
                     const dbFilenames = new Set(allFiles.map(f => f.filename));
-                    
-                    console.log(`🔍 Checking ${diskFiles.length} files on disk...`);
-                    
+
                     for (const diskFile of diskFiles) {
                         // Skip non-file entries (directories, etc)
                         const filePath = path.join(uploadsDir, diskFile);
@@ -1156,7 +1142,7 @@ class ImageCanvasServer {
                             for (const usedFile of usedFilenames) {
                                 if (usedFile.includes(diskFile) || diskFile.includes(usedFile)) {
                                     isUsedAnywhere = true;
-                                    console.log(`  🔍 Found partial match: ${diskFile} matches ${usedFile}`);
+                                    
                                     break;
                                 }
                             }
@@ -1174,7 +1160,6 @@ class ImageCanvasServer {
                             try {
                                 await fs.unlink(filePath);
                                 orphanedDiskFiles++;
-                                console.log(`🗑️ Deleted orphaned disk file: ${diskFile}`);
                                 
                                 // Also try to delete associated thumbnails
                                 const nameWithoutExt = path.parse(diskFile).name;
@@ -1211,14 +1196,12 @@ class ImageCanvasServer {
                         DELETE FROM operations 
                         WHERE operation_data LIKE '%data:image%'
                     `);
-                    console.log(`🗑️ Deleted ${imageDataOpsResult.changes} operations containing embedded image data`);
                     
                     // Also delete any large operations (over 10KB) that might contain other embedded data
                     largeOpsResult = await this.db.run(`
                         DELETE FROM operations 
                         WHERE length(operation_data) > 10000
                     `);
-                    console.log(`🗑️ Deleted ${largeOpsResult.changes} additional large operations`);
                     
                     // Keep only the most recent 50 operations per project (was 1000)
                     cleanupResult = await this.db.run(`
@@ -1238,14 +1221,12 @@ class ImageCanvasServer {
                     const sessionResult = await this.db.run(
                         "DELETE FROM active_sessions WHERE last_activity < datetime('now', '-1 hour')"
                     );
-                    console.log(`🗑️ Deleted ${sessionResult.changes} inactive sessions`);
                     
                     // 5. Clean up orphaned project data (projects without owners)
                     const orphanProjectResult = await this.db.run(`
                         DELETE FROM projects 
                         WHERE owner_id NOT IN (SELECT id FROM users)
                     `);
-                    console.log(`🗑️ Deleted ${orphanProjectResult.changes} orphaned projects`);
                     
                     // 6. Clean up users who don't own any projects and aren't collaborators
                     userCleanupResult = await this.db.run(`
@@ -1256,7 +1237,6 @@ class ImageCanvasServer {
                             SELECT DISTINCT user_id FROM project_collaborators
                         )
                     `);
-                    console.log(`👤 Deleted ${userCleanupResult.changes} orphaned users`);
                     
                 } finally {
                     // Re-enable foreign key constraints
@@ -1264,15 +1244,13 @@ class ImageCanvasServer {
                 }
                 
                 // 7. Checkpoint WAL file and VACUUM to reclaim space
-                console.log('🔄 Checkpointing WAL file...');
+                
                 // First, checkpoint the WAL file to merge it back to main database
                 await this.db.run('PRAGMA wal_checkpoint(TRUNCATE)');
-                
-                console.log('🗜️ Running VACUUM to reclaim space...');
+
                 // Then vacuum to reclaim space
                 await this.db.run('VACUUM');
-                
-                console.log('🔄 Final checkpoint...');
+
                 // Finally, checkpoint again to clean up
                 await this.db.run('PRAGMA wal_checkpoint(TRUNCATE)');
                 
@@ -1302,19 +1280,12 @@ class ImageCanvasServer {
                                      (cleanupResult?.changes || 0);
                     totalUsersDeleted = userCleanupResult?.changes || 0;
                 } catch (e) {
-                    console.warn('Could not count some cleanup results:', e);
+                    
                 }
-                
-                console.log(`\n📊 Cleanup Summary:
-                - Files removed from database: ${deletedFiles}
-                - Orphaned disk files removed: ${orphanedDiskFiles}
-                - Operations deleted: ${totalOpsDeleted}
-                - Users deleted: ${totalUsersDeleted}
-                - Files still in use: ${usedFilenames.size}`);
-                
+
                 // Safety check - warn if we're about to delete a lot of files
                 if (deletedFiles + orphanedDiskFiles > 100) {
-                    console.warn(`⚠️ Large number of files deleted: ${deletedFiles + orphanedDiskFiles}`);
+                    
                 }
                 
                 res.json({ 
@@ -1336,7 +1307,7 @@ class ImageCanvasServer {
                 });
                 
                 console.log(`📊 Final database size: ${this.formatBytes(totalSize)} (was ${this.formatBytes(initialSize)})`);
-                console.log('✅ Database cleanup completed');
+                
             } catch (error) {
                 console.error('Failed to perform cleanup:', error);
                 console.error('Stack trace:', error.stack);
@@ -1352,7 +1323,6 @@ class ImageCanvasServer {
         // This is a closure that will use this.db when the endpoint is called
         this.app.post('/database/cleanup', async (req, res) => {
             try {
-                console.log('🧹 Starting cleanup...');
                 
                 // Check if database is initialized
                 if (!this.db) {
@@ -1375,7 +1345,7 @@ class ImageCanvasServer {
                     
                     operationsDeleted = imageOpsResult.changes || 0;
                 } catch (error) {
-                    console.warn('Failed to clean operations:', error);
+                    
                 }
                 
                 // Return results
@@ -1463,7 +1433,7 @@ class ImageCanvasServer {
             
             // Skip if image is corrupted or invalid
             if (!metadata.width || !metadata.height) {
-                console.warn(`⚠️ Invalid image metadata for ${filename}`);
+                
                 return;
             }
             
@@ -1482,7 +1452,7 @@ class ImageCanvasServer {
                         // Check if thumbnail already exists
                         try {
                             await fs.access(thumbnailPath);
-                            console.log(`⏭️ Thumbnail ${size}px already exists for ${filename}`);
+                            
                             return;
                         } catch (e) {
                             // File doesn't exist, continue to generate
@@ -1497,10 +1467,9 @@ class ImageCanvasServer {
                             })
                             .webp({ quality: 85 })
                             .toFile(thumbnailPath);
-                            
-                        console.log(`✅ Generated ${size}px thumbnail for ${filename}`);
+
                     } catch (error) {
-                        console.warn(`⚠️ Failed to generate ${size}px thumbnail for ${filename}:`, error.message);
+                        
                     }
                 }));
                 
@@ -1519,7 +1488,7 @@ class ImageCanvasServer {
         try {
             this.db = new Database(path.join(__dirname, 'database', 'canvas.db'));
             await this.db.init();
-            console.log('✅ Database initialized');
+            
         } catch (error) {
             console.error('❌ Database initialization failed:', error);
             // Continue with placeholder for development
@@ -1527,7 +1496,7 @@ class ImageCanvasServer {
     }
     
     async performStartupCleanup() {
-        console.log('🧹 Performing startup cleanup...');
+        
         try {
             // Wait a bit for database to be fully ready
             await new Promise(resolve => setTimeout(resolve, 1000));
@@ -1544,7 +1513,6 @@ class ImageCanvasServer {
             
             const usedFilenames = new Set();
             const usedFilenamesLower = new Set(); // Case-insensitive matching
-            console.log(`📋 Scanning ${projects.length} projects for used files...`);
             
             // Helper function to add a filename in all variations
             const addUsedFilename = (filename) => {
@@ -1640,7 +1608,6 @@ class ImageCanvasServer {
             
             try {
                 const diskFiles = await fs.readdir(uploadsDir);
-                console.log(`✅ Found ${usedFilenames.size} files in use, ${diskFiles.length} files on disk`);
                 
                 for (const diskFile of diskFiles) {
                     const filePath = path.join(uploadsDir, diskFile);
@@ -1679,8 +1646,7 @@ class ImageCanvasServer {
                                     // Thumbnail might not exist
                                 }
                             }
-                            
-                            console.log(`  🗑️ Cleaned up orphaned file: ${diskFile}`);
+
                         } catch (error) {
                             console.error(`  ❌ Failed to clean up ${diskFile}:`, error.message);
                         }
@@ -1692,7 +1658,7 @@ class ImageCanvasServer {
                 if (cleanedFiles > 0) {
                     console.log(`✅ Startup cleanup complete: removed ${cleanedFiles} files (${this.formatBytes(cleanedSize)})`);
                 } else {
-                    console.log('✅ Startup cleanup complete: no orphaned files found');
+                    
                 }
             } catch (error) {
                 console.error('Error during startup cleanup:', error);
@@ -1711,10 +1677,9 @@ class ImageCanvasServer {
             // NOTE: Commenting out to avoid conflicts with CollaborationManager
             /*
             this.io.on('connection', (socket) => {
-                console.log(`👋 Client connected: ${socket.id}`);
                 
                 socket.on('test_message', (data) => {
-                    console.log('Test message received:', data);
+                    
                     socket.emit('test_response', { 
                         message: 'Hello from ImageCanvas server!',
                         echo: data,
@@ -1723,12 +1688,11 @@ class ImageCanvasServer {
                 });
                 
                 socket.on('disconnect', () => {
-                    console.log(`👋 Client disconnected: ${socket.id}`);
+                    
                 });
             });
             */
-            
-            console.log('✅ Real-time collaboration initialized');
+
         } catch (error) {
             console.error('❌ Real-time setup failed:', error);
         }
@@ -1752,11 +1716,7 @@ class ImageCanvasServer {
             // }, 2000);
             
             this.server.listen(this.port, () => {
-                console.log(`🚀 ImageCanvas Collaborative Server running on port ${this.port}`);
-                console.log(`📊 Health check: http://localhost:${this.port}/health`);
-                console.log(`🔌 WebSocket test: http://localhost:${this.port}/test-websocket`);
-                console.log(`📁 File uploads: http://localhost:${this.port}/uploads`);
-                console.log(`📋 Projects: http://localhost:${this.port}/projects`);
+
             });
         } catch (error) {
             console.error('❌ Failed to start server:', error);
@@ -1769,7 +1729,7 @@ class ImageCanvasServer {
             await this.db.close();
         }
         this.server.close();
-        console.log('🛑 Server stopped');
+        
     }
 
     /**
@@ -1813,7 +1773,7 @@ if (require.main === module) {
     
     // Graceful shutdown
     process.on('SIGINT', async () => {
-        console.log('\n🛑 Shutting down gracefully...');
+        
         await server.stop();
         process.exit(0);
     });

@@ -41,8 +41,7 @@ class TransactionManager {
         if (this.undoManager) {
             this.undoManager.beginTransaction(source);
         }
-        
-        console.log(`📝 Manual transaction started: ${source}`);
+
     }
     
     /**
@@ -66,9 +65,7 @@ class TransactionManager {
      */
     abortTransaction() {
         if (!this.activeTransaction) return;
-        
-        console.log(`❌ Transaction aborted: ${this.activeTransaction.source}`);
-        
+
         if (this.undoManager) {
             this.undoManager.abortTransaction();
         }

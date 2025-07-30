@@ -97,7 +97,7 @@ class ResourceManager {
             } else if (timer.type === 'interval') {
                 clearInterval(timer.id);
             }
-            console.log(`🧹 Cleared timer: ${name}`);
+            
         }
         this.timers.clear();
     }
@@ -110,7 +110,7 @@ class ResourceManager {
             for (const { element, event, handler, options } of listeners) {
                 element.removeEventListener(event, handler, options);
             }
-            console.log(`🧹 Cleared ${listeners.size} listeners for: ${key}`);
+            
         }
         this.eventListeners.clear();
     }
@@ -121,7 +121,7 @@ class ResourceManager {
     cleanupType(type) {
         const resources = this.resources.get(type);
         if (resources) {
-            console.log(`🧹 Cleaning up ${resources.size} ${type} resources`);
+            
             resources.clear();
         }
     }
@@ -130,7 +130,6 @@ class ResourceManager {
      * Execute all cleanup functions
      */
     executeCleanups() {
-        console.log(`🧹 Executing ${this.cleanupFunctions.size} cleanup functions`);
         
         for (const cleanup of this.cleanupFunctions) {
             try {
@@ -147,7 +146,6 @@ class ResourceManager {
      * Clean up all resources
      */
     cleanupAll() {
-        console.log('🧹 Starting complete resource cleanup');
         
         // Clear all timers first
         this.clearAllTimers();
@@ -160,8 +158,7 @@ class ResourceManager {
         
         // Clear all resource collections
         this.resources.clear();
-        
-        console.log('✅ Resource cleanup complete');
+
     }
     
     /**
@@ -189,22 +186,21 @@ class ResourceManager {
      */
     logResourceUsage() {
         const stats = this.getStats();
-        console.log('📊 Resource Usage:', stats);
         
         if (stats.timers > 0) {
-            console.log(`  ⏱️  Active timers: ${stats.timers}`);
+            
             for (const [name, timer] of this.timers) {
                 console.log(`     - ${name} (${timer.type})`);
             }
         }
         
         if (stats.eventListeners > 0) {
-            console.log(`  🎯 Event listeners: ${stats.eventListeners}`);
+            
         }
         
         for (const [type, count] of Object.entries(stats.resources)) {
             if (count > 0) {
-                console.log(`  📦 ${type}: ${count}`);
+                
             }
         }
     }

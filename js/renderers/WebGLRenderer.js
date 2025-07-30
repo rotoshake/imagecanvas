@@ -31,7 +31,7 @@ class WebGLRenderer {
                   this.glCanvas.getContext('webgl', { premultipliedAlpha: false });
 
         if (!this.gl) {
-            console.warn('WebGL not supported – falling back to Canvas2D');
+            
             return;
         }
 

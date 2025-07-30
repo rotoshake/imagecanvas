@@ -26,9 +26,7 @@ class GraphCircularReferenceResolver {
         if (this.initialized || typeof LGraph === 'undefined') {
             return;
         }
-        
-        console.log('🏗️ Initializing Graph Circular Reference Resolver...');
-        
+
         // Store original methods
         const originalAdd = LGraph.prototype.add;
         const originalRemove = LGraph.prototype.remove;
@@ -121,8 +119,7 @@ class GraphCircularReferenceResolver {
                 this.setNodeGraph(node, graph);
             }
         });
-        
-        console.log(`📊 Fixed ${graph.nodes.length} existing nodes`);
+
     }
 }
 

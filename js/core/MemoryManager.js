@@ -25,8 +25,7 @@ class MemoryManager {
         
         // Disable aggressive unloading for bulk operations
         this.bulkOperationInProgress = false;
-        
-        console.log('💾 MemoryManager initialized with 4GB limit');
+
     }
     
     /**
@@ -121,11 +120,11 @@ class MemoryManager {
                 });
             }
             this.notificationShown = true;
-            console.warn(`⚠️ Memory critical: ${percentage}% used`);
+            
         } else if (usage > this.criticalThreshold) {
-            console.log(`📊 Memory high: ${percentage}% used, degrading distant images`);
+            
         } else if (usage > this.warningThreshold) {
-            console.log(`📊 Memory warning: ${percentage}% used`);
+            
         } else if (usage < 0.7 && this.notificationShown) {
             // Reset notification flag when memory recovers
             this.notificationShown = false;

@@ -814,21 +814,17 @@ class FloatingPropertiesInspector {
 
     initializeSelectionIntegration() {
         try {
-            console.log('🔍 Initializing properties inspector selection integration...');
-            console.log('Canvas object:', this.canvas);
-            console.log('Selection object:', this.canvas.selection);
-            
+
             if (this.canvas && this.canvas.selection) {
                 this.canvas.selection.addCallback((selectedNodes) => {
-                    // console.log('🎯 Selection changed:', selectedNodes.size, 'nodes selected');
+                    // 
                     this.updateSelection(selectedNodes);
                 });
-                console.log('✅ Properties inspector connected to selection system');
                 
                 // Add listeners for canvas state changes to update statistics
                 this.setupCanvasStateListeners();
             } else {
-                console.warn('⚠️ Canvas or selection system not ready yet, retrying...');
+                
                 setTimeout(() => {
                     this.initializeSelectionIntegration();
                 }, 500);
@@ -1466,12 +1462,12 @@ class FloatingPropertiesInspector {
                 e.preventDefault();
                 e.stopPropagation();
                 // Commit change and blur with delay to prevent UI rebuild
-                console.log(`Committing ${prop} change: "${input.value}"`);
+                
                 this.updateNodeProperty(prop, input.value);
                 
                 // Keep input in focused set briefly to prevent UI rebuild
                 setTimeout(() => {
-                    console.log(`Blurring ${prop} input`);
+                    
                     input.blur();
                 }, 50);
             } else if (e.key === 'Escape') {
@@ -1973,7 +1969,7 @@ class FloatingPropertiesInspector {
         } else {
             // Send to server on mouse up - creates undo state
             if (!window.app?.operationPipeline) {
-                console.warn('Operation pipeline not available');
+                
                 return;
             }
             
@@ -2247,7 +2243,7 @@ class FloatingPropertiesInspector {
     handleReset(resetType) {
         // Access operation pipeline from global app object
         if (!window.app?.operationPipeline) {
-            console.warn('Operation pipeline not available');
+            
             return;
         }
         
@@ -2331,7 +2327,6 @@ class FloatingPropertiesInspector {
         }
     }
 
-
     updatePosition() {
         this.panel.style.left = `${this.position.x}px`;
         this.panel.style.top = `${this.position.y}px`;
@@ -2408,7 +2403,7 @@ class FloatingPropertiesInspector {
                 visible: this.isVisible
             }));
         } catch (e) {
-            console.warn('Failed to save properties panel state:', e);
+            
         }
     }
     
@@ -2435,7 +2430,7 @@ class FloatingPropertiesInspector {
                 }
             }
         } catch (e) {
-            console.warn('Failed to load properties panel state:', e);
+            
         }
     }
 

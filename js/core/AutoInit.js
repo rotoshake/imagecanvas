@@ -4,7 +4,6 @@
  */
 
 (function() {
-    console.log('🚀 Auto-initialization script loaded');
     
     let initialized = false;
     
@@ -12,23 +11,20 @@
         if (initialized || !window.app) return;
         
         try {
-            console.log('🏗️ Auto-initializing collaborative architecture...');
             
             // Create and initialize the architecture
             const arch = new CollaborativeArchitecture(window.app);
             window.app.collaborativeArchitecture = arch;
             await arch.initialize();
-            
-            
+
             // Initialize systems that depend on the collaborative architecture
             if (window.app.collaborativeArchitecture) {
-                console.log('🚀 Initializing post-architecture systems...');
                 
                 // Initialize the canvas integration
                 // if (window.CanvasIntegration) {
                 //     window.app.canvasIntegration = new CanvasIntegration(window.app);
                 //     window.app.canvasIntegration.initialize();
-                //     console.log('✅ CanvasIntegration initialized and active');
+                //     
                 // }
                 
                 // Initialize background sync manager

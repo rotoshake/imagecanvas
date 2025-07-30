@@ -30,7 +30,7 @@ class AnimationSystem {
             window.app.userProfileSystem.addListener('preferenceChanged', (data) => {
                 if (data.key === 'enableAnimations') {
                     this.enabled = data.value;
-                    console.log(`🎬 Animations ${data.value ? 'enabled' : 'disabled'}`);
+                    
                 }
             });
             

@@ -15,7 +15,6 @@ class OperationTracker {
      * Track a new operation with its temporary nodes
      */
     trackOperation(operationId, details) {
-        console.log(`📊 Tracking operation ${operationId}:`, details);
         
         this.pendingOperations.set(operationId, {
             id: operationId,
@@ -47,7 +46,7 @@ class OperationTracker {
         if (op) {
             op.status = 'sent';
             op.sentTimestamp = Date.now();
-            console.log(`📤 Operation ${operationId} sent to server`);
+            
         }
     }
     
@@ -57,16 +56,14 @@ class OperationTracker {
     markAcknowledged(operationId, serverNodes) {
         const op = this.pendingOperations.get(operationId);
         if (!op) {
-            console.warn(`⚠️ Unknown operation acknowledged: ${operationId}`);
+            
             return;
         }
         
         op.status = 'acknowledged';
         op.serverNodes = serverNodes;
         op.acknowledgedTimestamp = Date.now();
-        
-        console.log(`✅ Operation ${operationId} acknowledged with ${serverNodes.length} nodes`);
-        
+
         // Update correlations with server node data
         op.tempNodeIds.forEach((tempId, index) => {
             const correlation = this.nodeCorrelations.get(tempId);
@@ -140,9 +137,7 @@ class OperationTracker {
             op.status = 'completed';
             op.completedTimestamp = Date.now();
             this.completedOperations.add(operationId);
-            
-            console.log(`🎉 Operation ${operationId} completed in ${op.completedTimestamp - op.timestamp}ms`);
-            
+
             // Clean up correlations after a delay
             setTimeout(() => {
                 op.tempNodeIds.forEach(tempId => {
@@ -188,7 +183,7 @@ class OperationTracker {
         }
         
         if (cleaned > 0) {
-            console.log(`🧹 Cleaned up ${cleaned} completed operations`);
+            
         }
         
         // Check for timed out operations

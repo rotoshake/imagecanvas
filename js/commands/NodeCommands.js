@@ -256,7 +256,7 @@ class CreateNodeCommand extends Command {
             // This should match what will be generated on the server
             this.undoData = { nodeId: 'temp_' + Date.now() };
         }
-        // console.log(`📝 Prepared undo data for CreateNodeCommand: nodeId=${this.undoData.nodeId}`);
+        // 
     }
     
     async execute(context) {
@@ -334,7 +334,7 @@ class CreateNodeCommand extends Command {
                 // This ensures loading ring shows while image loads
             } else if (this.params.imageData) {
                 // Legacy: embedded image data (should be avoided)
-                console.warn('⚠️ Using legacy embedded image data - this should be avoided');
+                
                 node.setImage(
                     this.params.imageData.src,
                     this.params.imageData.filename,
@@ -343,7 +343,7 @@ class CreateNodeCommand extends Command {
             } else if (this.params.properties?.src) {
                 // New: local data URL that will be uploaded later
                 // This should only happen as a fallback
-                console.warn('⚠️ Creating image node with local data URL - upload failed?');
+                
                 node.setImage(
                     this.params.properties.src,
                     this.params.properties.filename,
@@ -370,15 +370,10 @@ class CreateNodeCommand extends Command {
             
             // Handle background upload if needed
             if (needsUpload && window.imageUploadManager) {
-                // console.log(`🔍 Upload needed for node ${node.id}:`, {
-                //     hash: this.params.properties.hash,
-                //     filename: this.params.properties.filename,
-                //     srcLength: this.params.properties.src?.length || 0
-                // });
-                
+                // 
                 // Pre-populate cache with local data URL so duplicates can use it immediately
                 if (window.app?.imageResourceCache && this.params.properties.hash) {
-                    console.log('📋 Pre-caching image with local data URL for immediate duplicates');
+                    
                     window.app.imageResourceCache.set(this.params.properties.hash, {
                         url: this.params.properties.src, // Local data URL
                         serverFilename: null, // Will be updated when upload completes
@@ -389,24 +384,21 @@ class CreateNodeCommand extends Command {
                 }
                 
                 // Start background upload
-                console.log(`📤 Starting background upload for ${this.params.properties.filename}`);
+                
                 const uploadPromise = window.imageUploadManager.uploadImage(
                     this.params.properties.src,
                     this.params.properties.filename,
                     this.params.properties.hash
                 );
-                
-                console.log('📎 Upload promise created, attaching handlers...');
-                
+
                 // Update node when upload completes
                 uploadPromise.then(async (uploadResult) => {
-                    console.log('✅ Image uploaded, updating node with server URL');
                     
                     // Check if node still exists (might have been deleted during upload)
                     // Use window.app.graph instead of context.graph as context might not be available in promise
                     const currentNode = window.app?.graph?.getNodeById(node.id);
                     if (!currentNode) {
-                        console.warn('Node was deleted during upload');
+                        
                         return;
                     }
                     
@@ -444,26 +436,16 @@ class CreateNodeCommand extends Command {
                                 serverUrl: uploadResult.url,
                                 serverFilename: uploadResult.serverFilename || uploadResult.filename
                             });
-                            console.log(`✅ Server notified of upload completion:`, completeResult);
+                            
                         } catch (error) {
                             console.error('❌ Failed to notify server of upload completion:', error);
                             console.error('Error details:', error.stack);
                         }
                     } else {
-                        console.warn('Cannot send image_upload_complete:', {
-                            hasOperationPipeline: !!window.app?.operationPipeline,
-                            hasHash: !!currentNode.properties.hash
-                        });
+                        
                     }
                     
                     // Debug cache state
-                    console.log('🔍 Cache debug after upload:', {
-                        hasCache: !!window.app?.imageResourceCache,
-                        hasHash: !!node.properties.hash,
-                        hash: node.properties.hash,
-                        cacheSize: window.app?.imageResourceCache?.hashToUrl?.size || 0,
-                        nodeId: node.id
-                    });
                     
                     // Upgrade cache with server URL (replacing any local data URL)
                     if (window.app?.imageResourceCache && node.properties.hash) {
@@ -491,8 +473,7 @@ class CreateNodeCommand extends Command {
                                 existingNode.properties.hash === node.properties.hash &&
                                 existingNode.id !== node.id &&
                                 !existingNode.properties.serverUrl) {
-                                
-                                console.log(`🔄 Updating existing node ${existingNode.id} with server URL`);
+
                                 existingNode.properties.serverUrl = fullUrl;
                                 existingNode.properties.serverFilename = uploadResult.serverFilename || uploadResult.filename;
                                 
@@ -505,13 +486,10 @@ class CreateNodeCommand extends Command {
                         });
                         
                         if (updatedNodes > 0) {
-                            console.log(`🔄 Updated ${updatedNodes} existing nodes with server URL`);
+                            
                         }
                     } else {
-                        console.warn('❌ Could not add to cache:', {
-                            cache: !!window.app?.imageResourceCache,
-                            hash: node.properties.hash
-                        });
+                        
                     }
                 }).catch(error => {
                     console.error('❌ Failed to upload image:', error);
@@ -523,8 +501,7 @@ class CreateNodeCommand extends Command {
                     });
                     // Node remains with local data URL
                 });
-                
-                console.log('✅ Upload handlers attached successfully');
+
             } else {
                 console.log('🔍 No upload needed:', {
                     needsUpload,
@@ -554,7 +531,7 @@ class CreateNodeCommand extends Command {
                 node.loadingProgress = 50;
             } else if (this.params.properties?.src) {
                 // Fallback: local data URL 
-                console.warn('⚠️ Creating video node with local data URL - upload failed?');
+                
                 node.setVideo(
                     this.params.properties.src,
                     this.params.properties.filename,
@@ -666,8 +643,7 @@ class DeleteNodeCommand extends Command {
                 this.undoData.deletedNodes.push(nodeData);
             }
         });
-        
-        console.log(`📝 Prepared undo data for DeleteNodeCommand: ${this.undoData.deletedNodes.length} nodes`);
+
     }
     
     async execute(context) {
@@ -675,9 +651,7 @@ class DeleteNodeCommand extends Command {
         
         // Store nodes for undo
         this.undoData = { deletedNodes: [] };
-        
-        console.log(`🗑️ DeleteNodeCommand: Deleting ${this.params.nodeIds.length} nodes`);
-        
+
         this.params.nodeIds.forEach(nodeId => {
             const node = graph.getNodeById(nodeId);
             if (node) {
@@ -893,13 +867,7 @@ class UpdateNodePropertyCommand extends Command {
             
             // Debug logging for title property
             if (this.params.property === 'title') {
-                console.log(`🔍 Debug title property for node ${node.id}:`, {
-                    nodeTitle: node.title,
-                    nodeType: node.type,
-                    nodeProperties: node.properties,
-                    oldValue: oldValue,
-                    newValue: this.params.value
-                });
+                
             }
             
             // Use server format for undo data
@@ -912,10 +880,9 @@ class UpdateNodePropertyCommand extends Command {
             this.undoData.previousProperties[node.id] = {
                 [this.params.property]: oldValue
             };
-            
-            console.log(`📝 Prepared undo data for UpdateNodePropertyCommand: ${this.params.property}=${oldValue} -> ${this.params.value}`);
+
         } else {
-            console.warn(`⚠️ Cannot prepare undo data for UpdateNodePropertyCommand: node ${this.params.nodeId} not found`);
+            
         }
     }
     

@@ -27,7 +27,7 @@ class IndexedDBThumbnailStore {
         try {
             // Check if IndexedDB is available
             if (!window.indexedDB) {
-                console.warn('IndexedDB not available - thumbnails will not persist');
+                
                 this.isAvailable = false;
                 return false;
             }
@@ -45,7 +45,7 @@ class IndexedDBThumbnailStore {
                     // Create indexes for efficient queries
                     store.createIndex('timestamp', 'timestamp', { unique: false });
                     store.createIndex('serverFilename', 'serverFilename', { unique: false });
-                    console.log('🗄️ Created IndexedDB thumbnail store');
+                    
                 }
             };
             
@@ -340,7 +340,7 @@ class IndexedDBThumbnailStore {
             });
             
             if (deletedCount > 0) {
-                console.log(`🧹 Cleaned up ${deletedCount} old thumbnail entries`);
+                
             }
         } catch (error) {
             console.error('Cleanup error:', error);
@@ -441,7 +441,7 @@ class IndexedDBThumbnailStore {
                     const response = await fetch(previewData);
                     data.thumbnails[size] = await response.blob();
                 } catch (error) {
-                    console.warn(`Failed to convert blob URL for preview ${size}:`, error);
+                    
                     return;
                 }
             }
@@ -503,8 +503,7 @@ class IndexedDBThumbnailStore {
         const tempPreviews = this.tempPreviewCache.get(tempHash);
         this.tempPreviewCache.set(realHash, tempPreviews);
         this.tempPreviewCache.delete(tempHash);
-        
-        console.log(`🔄 Updated preview hash mapping: ${tempHash} → ${realHash}`);
+
     }
     
     /**
@@ -539,9 +538,7 @@ class IndexedDBThumbnailStore {
                 request.onsuccess = () => resolve();
                 request.onerror = () => reject(request.error);
             });
-            
-            console.log('🗑️ Cleared all IndexedDB thumbnail data');
-            
+
             // Also clean up temporary previews
             this.cleanupTempPreviews();
         } catch (error) {

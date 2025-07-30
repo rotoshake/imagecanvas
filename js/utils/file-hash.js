@@ -26,7 +26,7 @@ class FileHashCalculator {
         
         // Return pending promise if already calculating
         if (this.pendingHashes.has(cacheKey)) {
-            console.log(`⏳ Waiting for pending hash calculation: ${file.name}`);
+            
             return this.pendingHashes.get(cacheKey);
         }
         
@@ -104,7 +104,7 @@ class FileHashCalculator {
      * @returns {Promise<Map<File, string>>} Map of file -> hash
      */
     async calculateBatchHashes(files, progressCallback = null) {
-        console.log(`🔐 Calculating hashes for ${files.length} files...`);
+        
         const startTime = Date.now();
         
         // Calculate batch size based on total files (avoid overwhelming the system)
@@ -170,7 +170,7 @@ class FileHashCalculator {
         const size = this.hashCache.size;
         this.hashCache.clear();
         this.pendingHashes.clear();
-        console.log(`🗑️ Cleared ${size} cached hashes`);
+        
     }
     
     /**

@@ -2,7 +2,6 @@
  * Extended node commands for all operations
  */
 
-
 class ResizeNodeCommand extends Command {
     constructor(params, origin = 'local') {
         super('node_resize', params, origin);
@@ -54,12 +53,7 @@ class ResizeNodeCommand extends Command {
     async execute(context) {
         const { graph } = context;
         
-        // console.log('🎯 ResizeNodeCommand.execute:', {
-        //     origin: this.origin,
-        //     nodeIds: this.params.nodeIds,
-        //     sizes: this.params.sizes
-        // });
-        
+        // 
         this.params.nodeIds.forEach((nodeId, index) => {
             const node = graph.getNodeById(nodeId);
             if (!node) return;
@@ -103,7 +97,7 @@ class ResizeNodeCommand extends Command {
         });
         
         this.executed = true;
-        // // console.log('✅ ResizeNodeCommand.executed = true, undoData created');
+        // // 
         return { success: true };
     }
     
@@ -225,7 +219,7 @@ class ResetNodeCommand extends Command {
     async execute(context) {
         const { graph, canvas } = context;
         
-        // // console.log(`🚀 ResetNodeCommand: Resetting ${this.params.nodeIds.length} nodes`);
+        // // 
         const startTime = performance.now();
         
         // First pass: Apply all changes locally immediately for instant feedback
@@ -544,7 +538,7 @@ class VideoToggleCommand extends Command {
             } else {
                 await node.video.play().catch(() => {
                     // Handle autoplay restrictions
-                    console.warn('Video autoplay prevented');
+                    
                 });
             }
         }
@@ -748,7 +742,7 @@ class DuplicateNodesCommand extends Command {
                     // Don't add them again - this would create phantom duplicates
                     // Only add to graph if this is a server/remote operation (server applying the change)
                     if (isRemoteOrigin) {
-                        console.log(`➕ Server adding duplicate node: ${duplicate.id}`);
+                        
                         graph.add(duplicate);
                     } else {
                         console.log(`⏭️ Skipping local add for Alt+drag node: ${duplicate.id} (already in graph)`);
@@ -764,8 +758,7 @@ class DuplicateNodesCommand extends Command {
             for (const nodeId of this.params.nodeIds) {
                 const originalNode = graph.getNodeById(nodeId);
                 if (!originalNode) continue;
-                
-                
+
                 // Serialize and deserialize to create a copy
                 const nodeData = this.serializeNode(originalNode);
                 const duplicate = this.createNodeFromData(nodeData, context);
@@ -908,7 +901,7 @@ class DuplicateNodesCommand extends Command {
                     
                     // Check if we have a server URL already (from synced node)
                     if (nodeData.properties.serverUrl) {
-                        // console.log('📥 Using existing server URL from node data');
+                        // 
                         node.setImage(
                             nodeData.properties.serverUrl,
                             nodeData.properties.filename,
@@ -921,7 +914,7 @@ class DuplicateNodesCommand extends Command {
                                 serverFilename: nodeData.properties.serverFilename,
                                 originalFilename: nodeData.properties.filename
                             });
-                            // console.log('💾 Added to cache from duplicate data');
+                            // 
                         }
                     } else {
                         // Not cached and no server URL - check if original node has data URL we can reuse
@@ -940,13 +933,13 @@ class DuplicateNodesCommand extends Command {
                                 originalFilename: nodeData.properties.filename,
                                 isLocal: true // Mark as local so we know it needs server upgrade later
                             });
-                            // console.log('💾 Pre-cached with local data for future duplicates');
+                            // 
                         }
                     }
                 }
             } else {
                 // No cache available, use original data
-                // console.log('⚠️ No cache available');
+                // 
                 node.setImage(
                     nodeData.properties.src,
                     nodeData.properties.filename,
@@ -1139,7 +1132,7 @@ class PasteNodesCommand extends Command {
                     
                     // Check if we have a server URL already (from synced node)
                     if (nodeData.properties.serverUrl) {
-                        // console.log('📥 Using existing server URL from node data');
+                        // 
                         node.setImage(
                             nodeData.properties.serverUrl,
                             nodeData.properties.filename,
@@ -1152,7 +1145,7 @@ class PasteNodesCommand extends Command {
                                 serverFilename: nodeData.properties.serverFilename,
                                 originalFilename: nodeData.properties.filename
                             });
-                            // console.log('💾 Added to cache from duplicate data');
+                            // 
                         }
                     } else {
                         // Not cached and no server URL - check if original node has data URL we can reuse
@@ -1171,13 +1164,13 @@ class PasteNodesCommand extends Command {
                                 originalFilename: nodeData.properties.filename,
                                 isLocal: true // Mark as local so we know it needs server upgrade later
                             });
-                            // console.log('💾 Pre-cached with local data for future duplicates');
+                            // 
                         }
                     }
                 }
             } else {
                 // No cache available, use original data
-                // console.log('⚠️ No cache available');
+                // 
                 node.setImage(
                     nodeData.properties.src,
                     nodeData.properties.filename,
@@ -1224,7 +1217,6 @@ class PasteNodesCommand extends Command {
         return { available: false };
     }
 }
-
 
 // Register extended commands
 if (typeof window !== 'undefined') {

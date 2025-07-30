@@ -42,9 +42,7 @@ class OperationHistory {
                  ORDER BY sequence_number ASC`,
                 [projectId]
             );
-            
-            console.log(`📚 Loading history for project ${projectId}: found ${operations.length} operations`);
-            
+
             const projectTimeline = [];
             
             for (const op of operations) {
@@ -70,7 +68,6 @@ class OperationHistory {
                     this.userOperations.set(userKey, []);
                 }
                 this.userOperations.get(userKey).push(operation.id);
-                console.log(`  - Loaded operation ${operation.id} for user ${userKey}`);
                 
                 // Track transaction
                 if (operation.transactionId) {
@@ -96,19 +93,11 @@ class OperationHistory {
         
         // Generate operation ID if not provided
         const operationId = operation.id || `op_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-        
-        console.log(`📝 Recording operation ${operationId}:`, {
-            type: operation.type,
-            userId: userId,
-            userIdType: typeof userId,
-            hasUndoData: !!operation.undoData,
-            transactionId: transactionId
-        });
-        
+
         // Warn if operation is missing undo data for undoable types
         const undoableTypes = ['node_move', 'node_create', 'node_delete', 'node_duplicate', 'node_property_update'];
         if (undoableTypes.includes(operation.type) && !operation.undoData) {
-            console.warn(`⚠️ Operation ${operationId} of type ${operation.type} is missing undo data - will not be undoable`);
+            
         }
         
         // Store operation record
@@ -194,14 +183,7 @@ class OperationHistory {
         const projectTimeline = this.timeline.get(projectId) || [];
         const undoable = [];
         const processedTransactions = new Set();
-        
-        console.log(`🔍 Getting undoable operations for user ${userId} in project ${projectId}:`, {
-            timelineLength: projectTimeline.length,
-            userId: userId,
-            userIdType: typeof userId,
-            limit: limit
-        });
-        
+
         // Walk backwards through the timeline
         for (let i = projectTimeline.length - 1; i >= 0 && undoable.length < limit; i--) {
             const opId = projectTimeline[i];
@@ -244,16 +226,7 @@ class OperationHistory {
                     });
                 }
             } else if (op) {
-                console.log(`  ❌ Operation ${opId} not undoable:`, {
-                    opUserId: op.userId,
-                    opUserIdType: typeof op.userId,
-                    expectedUserId: userId,
-                    expectedUserIdType: typeof userId,
-                    strictMatch: op.userId === userId,
-                    looseMatch: op.userId == userId,
-                    state: op.state,
-                    hasUndoData: !!op.undoData
-                });
+                
             }
         }
         
@@ -506,12 +479,7 @@ class OperationHistory {
     getAllProjectOperations(projectId, limit = 20, type = 'undo') {
         const projectTimeline = this.timeline.get(projectId) || [];
         const operations = [];
-        
-        console.log(`🔍 Getting all ${type} operations for project ${projectId}:`, {
-            timelineLength: projectTimeline.length,
-            limit: limit
-        });
-        
+
         if (type === 'undo') {
             // Get most recent applied operations
             for (let i = projectTimeline.length - 1; i >= 0 && operations.length < limit; i--) {
@@ -558,8 +526,7 @@ class OperationHistory {
                 }
             }
         }
-        
-        console.log(`📊 Found ${operations.length} ${type} operations for all users`);
+
         return operations;
     }
     
@@ -578,8 +545,7 @@ class OperationHistory {
             nextUndo: undoable[0] || null,
             nextRedo: redoable[0] || null
         };
-        
-        console.log(`📊 getUserUndoState for user ${userId} project ${projectId}:`, state);
+
         return state;
     }
     

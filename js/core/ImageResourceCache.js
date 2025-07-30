@@ -157,7 +157,7 @@ class ImageResourceCache {
             misses: 0,
             bytesSaved: 0
         };
-        console.log('🧹 ImageResourceCache cleared');
+        
     }
 }
 

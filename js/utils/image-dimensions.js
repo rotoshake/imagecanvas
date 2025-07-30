@@ -24,7 +24,7 @@ class ImageDimensionReader {
                 bitmap.close(); // Clean up
                 return dimensions;
             } catch (e) {
-                console.warn('createImageBitmap failed, falling back to header parsing', e);
+                
             }
         }
 
@@ -249,7 +249,7 @@ class ImageDimensionReader {
                         resizedBitmap.close();
                     }
                 } catch (previewError) {
-                    console.warn(`Failed to generate ${size}px preview for ${file.name}:`, previewError);
+                    
                 }
             }
             

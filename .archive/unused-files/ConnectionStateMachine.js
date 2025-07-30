@@ -40,7 +40,7 @@ class ConnectionStateMachine {
      * Set current state (for emergency corrections)
      */
     set currentState(newState) {
-        console.warn(`⚠️ Direct state change: ${this.state} -> ${newState}`);
+        
         this.state = newState;
     }
     
@@ -64,7 +64,6 @@ class ConnectionStateMachine {
         const transitionStartTime = Date.now();
         
         // Log transition attempt
-        console.log(`🔄 Connection state transition: ${oldState} -> ${newState}`);
         
         // Update state optimistically
         this.state = newState;
@@ -162,9 +161,7 @@ class ConnectionStateMachine {
     async processPendingOperations() {
         const operations = [...this.pendingOperations];
         this.pendingOperations = [];
-        
-        console.log(`📤 Processing ${operations.length} pending operations`);
-        
+
         for (const { operation, resolve, reject } of operations) {
             try {
                 const result = await operation();

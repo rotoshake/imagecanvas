@@ -20,15 +20,15 @@ class StateManager {
         try {
             this.db = await this.openDB();
             this.undoStack = await this.loadUndoStack();
-            console.log('State manager initialized with', this.undoStack.length, 'undo states');
+            
         } catch (error) {
-            console.warn('State database not available, using localStorage:', error);
+            
             // Fallback: try to load from localStorage
             try {
                 const saved = localStorage.getItem(this.undoStackKey);
                 this.undoStack = saved ? JSON.parse(saved) : [];
             } catch (e) {
-                console.warn('Failed to load undo stack from localStorage:', e);
+                
                 this.undoStack = [];
             }
         }
@@ -339,13 +339,13 @@ class StateManager {
                 }
                 return; // Successfully loaded from cache
             } catch (error) {
-                console.warn('Failed to load cached media:', error);
+                
             }
         }
         
         // Cache miss - try to load from server URL if available
         if (node.properties.src && !node.properties.src.startsWith('data:')) {
-            console.log(`Cache miss for ${node.properties.hash}, loading from server: ${node.properties.src}`);
+            
             try {
                 if (nodeType === 'media/video') {
                     await node.setVideo(node.properties.src, node.properties.filename, node.properties.hash);
@@ -370,7 +370,7 @@ class StateManager {
         } else if (node.properties.serverFilename) {
             // Try to construct server URL from serverFilename
             const serverUrl = `${window.CONFIG?.SERVER?.API_BASE || ''}/uploads/${node.properties.serverFilename}`;
-            console.log(`Cache miss, trying server URL: ${serverUrl}`);
+            
             try {
                 if (nodeType === 'media/video') {
                     await node.setVideo(serverUrl, node.properties.filename, node.properties.hash);
@@ -441,7 +441,7 @@ class StateManager {
                 localStorage.setItem(this.undoStackKey, JSON.stringify(this.undoStack));
             }
         } catch (error) {
-            console.warn('Failed to save undo stack:', error);
+            
         }
     }
     
@@ -458,14 +458,14 @@ class StateManager {
             
             return undoStack || [];
         } catch (error) {
-            console.warn('Failed to load undo stack:', error);
+            
             return [];
         }
     }
     
     handleStorageError(error) {
         if (error.name === 'QuotaExceededError') {
-            console.warn('Storage quota exceeded, attempting cleanup');
+            
             this.cleanupStorage();
         }
     }

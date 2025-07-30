@@ -95,8 +95,7 @@ class ImageLoadManager {
     _startLoad(request) {
         this.activeLoads++;
         this.stats.concurrentHighWaterMark = Math.max(this.stats.concurrentHighWaterMark, this.activeLoads);
-        
-        
+
         // Use the optimized loading approach with progress tracking
         this._loadImageWithProgress(request.url, request.hash)
             .then(img => {
@@ -221,7 +220,7 @@ class ImageLoadManager {
                     })
                     .catch(error => {
                         // Fallback to regular image loading if fetch fails
-                        console.warn('Fetch failed, falling back to regular image loading:', error);
+                        
                         img.onload = () => {
                             notifyProgress(1.0);
                             resolve(img);

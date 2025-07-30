@@ -62,7 +62,7 @@ class WorkerImageProcessor {
                     resizedBitmap.close();
                     
                 } catch (previewError) {
-                    console.warn(`Failed to generate ${size}px preview for ${fileName}:`, previewError);
+                    
                 }
             }
             

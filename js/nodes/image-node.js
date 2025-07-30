@@ -104,9 +104,9 @@ class ImageNode extends BaseNode {
                 // Keep loading state for temporary nodes to show spinner
                 this.loadingState = 'loading';
                 this.loadingProgress = 0.5; // Show some progress
-                console.log(`⏳ Temporary node ${this.id} - keeping loading state`);
+                
             } else {
-                console.warn(`⚠️ No image source available yet for node ${this.id} - waiting for upload`);
+                
                 // Don't set error state immediately - the image might still be uploading
                 // Keep it in loading state to show progress ring
                 if (!this.properties.serverUrl && !this.properties.hash) {
@@ -480,7 +480,7 @@ class ImageNode extends BaseNode {
                     })
                     .catch(error => {
                         // Fallback to regular image loading if fetch fails
-                        console.warn('Fetch failed, falling back to regular image loading:', error);
+                        
                         img.onload = () => {
                             this.loadingProgress = 1.0;
                             // Trigger redraw when image loads
@@ -556,7 +556,7 @@ class ImageNode extends BaseNode {
                 }
                 this.img = null;
                 this.isUnloaded = true;
-                console.log(`💾 Degraded node ${this.id} to thumbnail-only`);
+                
             }
         } else if (level === 'minimal') {
             // Only use smallest thumbnail (64px)
@@ -567,7 +567,7 @@ class ImageNode extends BaseNode {
                 }
                 this.img = null;
                 this.isUnloaded = true;
-                console.log(`💾 Degraded node ${this.id} to minimal quality`);
+                
             }
         }
         
@@ -585,7 +585,6 @@ class ImageNode extends BaseNode {
         if (this.isUnloaded && this.properties.hash) {
             this._forceThumbnailSize = null;
             this.isUnloaded = false;
-            console.log(`🔄 Restoring full quality for node ${this.id}`);
             
             // Trigger image reload
             this.setImage(
@@ -726,7 +725,7 @@ class ImageNode extends BaseNode {
             return (x + w >= viewBounds.left && x <= viewBounds.right &&
                     y + h >= viewBounds.top && y <= viewBounds.bottom);
         } catch (error) {
-            console.warn('Failed to check node visibility:', error);
+            
             return false;
         }
     }
@@ -743,7 +742,7 @@ class ImageNode extends BaseNode {
             this._viewportObserver = () => {
                 // Check if node is now visible and needs thumbnails
                 if (this._thumbnailsDeferred && this._isNodeVisible() && this.img) {
-                    console.log(`👁️ Node visible, generating deferred thumbnails for ${this.properties?.filename}`);
+                    
                     this._thumbnailsDeferred = false;
                     
                     window.thumbnailCache.generateThumbnailsProgressive(
@@ -774,8 +773,7 @@ class ImageNode extends BaseNode {
                 setTimeout(() => this._viewportObserver(), 5000);
             }
         }
-        
-        console.log(`⏸️ Deferred thumbnail generation for ${this.properties?.filename} until visible`);
+
     }
     
     drawProgressRingOnly(ctx, progress = 0) {

@@ -122,7 +122,7 @@ class OperationPipeline {
 
         // If command not found, try registering extended commands as a fallback
         if (!CommandClass && (type === 'node_resize' || type === 'node_rotate' || type === 'node_reset')) {
-            console.warn(`⚠️ Command ${type} not found, attempting to register extended commands...`);
+            
             this.registerExtendedCommands();
             CommandClass = this.commandRegistry.get(type);
         }
@@ -145,8 +145,7 @@ class OperationPipeline {
         if (typeof commandOrType === 'string') {
             // REMOVED: Pre-validation was causing more problems than it solved
             // Operations should succeed locally and handle server errors gracefully
-            
-            
+
             command = this.createCommand(commandOrType, params, options.origin || 'local');
         } else {
             command = commandOrType;
@@ -159,7 +158,7 @@ class OperationPipeline {
 
         // Check for duplicate remote operations
         if (command.origin === 'remote' && this.executedOperations.has(command.id)) {
-            console.log(`⏭️ Skipping duplicate operation: ${command.id}`);
+            
             return { success: false, reason: 'duplicate' };
         }
         
@@ -247,7 +246,6 @@ class OperationPipeline {
             // Check if we should use state sync
             if (this.shouldUseStateSync(command) && !options.skipBroadcast) {
                 // Route through StateSyncManager for server-authoritative execution
-                console.log('🔄 Using server-authoritative state sync');
                 
                 // StateSyncManager already handles optimistic updates properly
                 // We should NOT execute commands here as it interferes with undo data preparation
@@ -368,7 +366,7 @@ class OperationPipeline {
      */
     clearHistory() {
         this.executedOperations.clear();
-        console.log('🗑️ History cleared');
+        
     }
     
     /**

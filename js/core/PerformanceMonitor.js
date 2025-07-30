@@ -40,8 +40,7 @@ class PerformanceMonitor {
         // Update interval
         this.updateInterval = 500; // Update stats every 500ms
         this.lastUpdate = performance.now();
-        
-        console.log('📊 PerformanceMonitor initialized');
+
     }
     
     /**
@@ -53,7 +52,7 @@ class PerformanceMonitor {
             window.app.userProfileSystem.addListener('preferenceChanged', (data) => {
                 if (data.key === 'showPerformance') {
                     this.showHUD = data.value;
-                    console.log(`📊 Performance HUD ${data.value ? 'enabled' : 'disabled'}`);
+                    
                 }
             });
             
@@ -148,10 +147,10 @@ class PerformanceMonitor {
                 // Downgrade quality
                 if (this.qualityLevel === 'high') {
                     this.qualityLevel = 'medium';
-                    // console.log('📉 Reducing quality to medium for better performance');
+                    // 
                 } else if (this.qualityLevel === 'medium') {
                     this.qualityLevel = 'low';
-                    // console.log('📉 Reducing quality to low for better performance');
+                    // 
                 }
                 this.consecutiveBadFrames = 0;
             }
@@ -165,10 +164,10 @@ class PerformanceMonitor {
             if (this.consecutiveBadFrames === 0 && this.frameCount % 120 === 0) {
                 if (this.qualityLevel === 'low' && this.metrics.avgFrameTime < 20) {
                     this.qualityLevel = 'medium';
-                    // console.log('📈 Increasing quality to medium');
+                    // 
                 } else if (this.qualityLevel === 'medium' && this.metrics.avgFrameTime < 12) {
                     this.qualityLevel = 'high';
-                    // console.log('📈 Increasing quality to high');
+                    // 
                 }
             }
         }

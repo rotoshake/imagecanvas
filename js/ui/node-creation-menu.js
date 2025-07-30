@@ -43,7 +43,7 @@ class NodeCreationMenu {
         // Get node creation menu data
         const menuData = window.app?.nodePluginSystem?.getNodeCreationMenu();
         if (!menuData) {
-            console.warn('No node creation menu data available');
+            
             return;
         }
         
@@ -142,7 +142,7 @@ class NodeCreationMenu {
     
     createNode(nodeType, screenX, screenY) {
         if (!window.app?.nodePluginSystem) {
-            console.error('NodePluginSystem not available');
+            
             return;
         }
         
@@ -165,11 +165,8 @@ class NodeCreationMenu {
             
             // Trigger redraw
             window.app.graphCanvas.dirty_canvas = true;
-            
-            console.log(`✅ Created ${nodeType} node at ${graphPos}`);
-            
+
         } catch (error) {
-            console.error('Failed to create node:', error);
             
             // Show user-friendly error
             if (window.unifiedNotifications) {

@@ -12,8 +12,7 @@ class CollaborativeArchitecture {
         this.networkLayer = null;
         this.persistenceHandler = null;
         this.stateSyncManager = null;
-        
-        console.log('🏗️ CollaborativeArchitecture ready');
+
     }
     
     /**
@@ -63,10 +62,9 @@ class CollaborativeArchitecture {
         
         // Connection status is now handled by unified notifications
         // updateConnectionStatus is already defined in app.js
-        console.log('✅ Connection status handled by unified notifications');
         
         this.app.updateActiveUsers = (users) => {
-            console.log(`Active users:`, users);
+            
             // Update UI if needed
         };
         
@@ -76,7 +74,7 @@ class CollaborativeArchitecture {
         };
         
         this.app.handleStateSync = (state) => {
-            console.log('Handling state sync:', state);
+            
             // Implement state sync logic
         };
     }
@@ -87,7 +85,6 @@ class CollaborativeArchitecture {
     async loadCommands() {
         // Commands might already be loaded via script tags
         if (typeof MoveNodeCommand === 'undefined') {
-            console.log('Loading command classes...');
             
             // In a real implementation, you'd load these dynamically
             // For now, we assume they're loaded via script tags
@@ -176,7 +173,7 @@ class CollaborativeArchitecture {
         // The ClientUndoManager now handles all keyboard shortcuts
         // This method is kept for backward compatibility but does nothing
         // to prevent duplicate event handlers
-        console.log('Keyboard shortcuts are now handled by ClientUndoManager');
+        
     }
     
     /**
@@ -190,14 +187,7 @@ class CollaborativeArchitecture {
             stateSync: this.stateSyncManager ? '✅' : '❌',
             connected: this.networkLayer?.isConnected ? '✅' : '❌'
         };
-        
-        console.log('=== Architecture Status ===');
-        console.log(`Pipeline: ${status.pipeline}`);
-        console.log(`Network: ${status.network}`);
-        console.log(`Persistence: ${status.persistence}`);
-        console.log(`State Sync: ${status.stateSync}`);
-        console.log(`Connected: ${status.connected}`);
-        console.log('========================');
+
     }
     
     /**

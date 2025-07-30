@@ -16,7 +16,6 @@ class ImageCanvasApp {
     }
     
     async init() {
-        console.log('Initializing Image Canvas App...');
         
         try {
             // Initialize caching systems
@@ -69,8 +68,7 @@ class ImageCanvasApp {
             
             // Setup cleanup
             this.setupCleanup();
-            
-            console.log('Image Canvas App initialized successfully');
+
             this.logControls();
             
             // Setup FPS testing helpers
@@ -93,7 +91,6 @@ class ImageCanvasApp {
     }
     
     cleanup() {
-        console.log('🧹 Cleaning up ImageCanvasApp...');
         
         if (this.autoSaveInterval) {
             clearInterval(this.autoSaveInterval);
@@ -115,8 +112,7 @@ class ImageCanvasApp {
         if (this.dragDropManager?.cleanup) {
             this.dragDropManager.cleanup();
         }
-        
-        
+
         if (this.networkLayer?.cleanup) {
             this.networkLayer.cleanup();
         }
@@ -140,7 +136,7 @@ class ImageCanvasApp {
     }
     
     logControls() {
-        console.log('🎮 ImageCanvas ready! Drag & drop images/videos, use Ctrl+D to duplicate, F to fit view.');
+        
     }
     
     /**
@@ -158,7 +154,7 @@ class ImageCanvasApp {
         }
         
         // Fallback to simple notification if unified system not loaded
-        console.log(`[${options.type || 'info'}] ${options.message}`);
+        
     }
     
     /**
@@ -191,8 +187,7 @@ class ImageCanvasApp {
         
         // Add to DOM
         document.body.appendChild(this.propertiesBtn);
-        
-        console.log('✅ Properties inspector button created');
+
     }
     
     /**
@@ -276,7 +271,7 @@ class ImageCanvasApp {
             const modeName = modes[mode] || mode;
             
             if (!['normal', 'minimal', 'nocap', 'noanimations', 'noloading'].includes(modeName)) {
-                console.log('❌ Invalid mode. Use:');
+                
                 console.log('  testFPS(1) - Normal');
                 console.log('  testFPS(2) - Minimal (raw performance)');
                 console.log('  testFPS(3) - No FPS cap');
@@ -286,7 +281,7 @@ class ImageCanvasApp {
             }
             
             canvas.setFPSTestMode(modeName);
-            console.log(`✅ FPS Test Mode set to: ${modeName}`);
+            
             console.log('⚠️  Reload the page: location.reload()');
         };
         
@@ -298,9 +293,7 @@ class ImageCanvasApp {
             }
             
             const stats = canvas.getFrameTimeStats();
-            console.log(`📊 Current FPS: ${canvas.fps}`);
-            console.log(`🧪 Test Mode: ${canvas.fpsTestMode}`);
-            
+
             if (stats && stats.samples > 0) {
                 console.log(`⏱️  Frame Times: ${stats.avg}ms avg (${stats.avgFPS} FPS), ${stats.p50}ms median`);
             } else {
@@ -315,9 +308,7 @@ class ImageCanvasApp {
                 console.error('Canvas not ready');
                 return;
             }
-            
-            console.log(`🧪 Testing with max ${maxNodes} nodes...`);
-            
+
             // Store original nodes
             const originalNodes = canvas.graph.nodes;
             
@@ -326,13 +317,11 @@ class ImageCanvasApp {
             
             // Monitor FPS for 5 seconds
             setTimeout(() => {
-                console.log(`📊 FPS with ${maxNodes} nodes: ${canvas.fps}`);
                 
                 // Restore original nodes
                 canvas.graph.nodes = originalNodes;
                 canvas.dirty_canvas = true;
-                
-                console.log('✅ Node count restored');
+
             }, 5000);
             
             canvas.dirty_canvas = true;
@@ -345,10 +334,7 @@ class ImageCanvasApp {
                 console.error('Canvas not ready');
                 return;
             }
-            
-            console.log('🔍 Profiling draw performance for 10 seconds...');
-            console.log('👆 Drag a node around to see active rendering performance');
-            
+
             const originalDraw = canvas.draw;
             const timings = {
                 grid: [],
@@ -454,15 +440,13 @@ class ImageCanvasApp {
                 canvas.draw = originalDraw;
                 
                 if (timings.total.length === 0) {
-                    console.log('❌ No frames rendered during profiling - try dragging a node');
+                    
                     return;
                 }
                 
                 const avg = (arr) => arr.reduce((a, b) => a + b, 0) / arr.length;
                 const max = (arr) => Math.max(...arr);
-                
-                console.log('📊 Draw Performance Results:');
-                console.log(`Frames analyzed: ${timings.total.length}`);
+
                 console.log(`Total time - avg: ${avg(timings.total).toFixed(2)}ms, max: ${max(timings.total).toFixed(2)}ms`);
                 console.log(`Grid - avg: ${avg(timings.grid).toFixed(2)}ms, max: ${max(timings.grid).toFixed(2)}ms`);
                 console.log(`Culling - avg: ${avg(timings.culling).toFixed(2)}ms, max: ${max(timings.culling).toFixed(2)}ms`);
@@ -479,23 +463,16 @@ class ImageCanvasApp {
                 console.error('Canvas not ready');
                 return;
             }
-            
-            console.log('🔍 Checking render loop state...');
-            console.log(`Current FPS: ${canvas.fps}`);
-            console.log(`Dirty canvas: ${canvas.dirty_canvas}`);
-            console.log(`Animation system active: ${canvas.animationSystem?.animations?.size || 0} animations`);
-            console.log(`Viewport animating: ${canvas.viewport?.isAnimating || false}`);
+
             console.log(`Alignment active: ${canvas.alignmentManager?.isAnimating() || false}`);
             
             const videoCount = canvas.graph.nodes.filter(n => 
                 n.type === 'media/video' && n.video && !n.video.paused
             ).length;
-            console.log(`Playing videos: ${videoCount}`);
             
             const loadingCount = canvas.graph.nodes.filter(n => 
                 n.loadingState === 'loading'
             ).length;
-            console.log(`Loading nodes: ${loadingCount}`);
             
             // Check if the render loop is actually running at 73 FPS
             let frameCount = 0;
@@ -528,15 +505,14 @@ class ImageCanvasApp {
                 console.error('Canvas not ready');
                 return;
             }
-            
-            console.log('🧪 Switching to minimal mode immediately...');
+
             canvas.setFPSTestMode('minimal');
             
             // Wait 3 seconds then show stats
             setTimeout(() => {
-                console.log('📊 Minimal mode stats:');
+                
                 const stats = canvas.getFrameTimeStats();
-                console.log(`Current FPS: ${canvas.fps}`);
+                
                 if (stats && stats.samples > 0) {
                     console.log(`Frame Times: ${stats.avg}ms avg (${stats.avgFPS} FPS)`);
                 }
@@ -545,7 +521,6 @@ class ImageCanvasApp {
         
         // Quick test function that creates a simple animation to verify FPS capability
         window.testRawFPS = () => {
-            console.log('🧪 Testing raw animation FPS...');
             
             // Create a simple test canvas
             const testCanvas = document.createElement('canvas');
@@ -573,7 +548,7 @@ class ImageCanvasApp {
                     testFPS = frameCount;
                     frameCount = 0;
                     lastTime = currentTime;
-                    console.log(`🚀 Raw animation FPS: ${testFPS}`);
+                    
                 }
                 
                 // Clear and draw
@@ -603,7 +578,7 @@ class ImageCanvasApp {
             // Remove after 10 seconds
             setTimeout(() => {
                 document.body.removeChild(testCanvas);
-                console.log('✅ Raw FPS test completed');
+                
             }, 10000);
         };
         
@@ -614,10 +589,7 @@ class ImageCanvasApp {
                 console.error('Canvas not ready');
                 return;
             }
-            
-            console.log('🔍 Debugging FPS limiting for 5 seconds...');
-            console.log('👆 Drag a node around while this runs');
-            
+
             // Check the target frame time
             const targetFPS = window.CONFIG?.PERFORMANCE?.MAX_FPS || 120;
             const targetFrameTime = 1000 / targetFPS;
@@ -644,14 +616,13 @@ class ImageCanvasApp {
             
             setTimeout(() => {
                 window.requestAnimationFrame = originalRequestAnimationFrame;
-                console.log(`✅ Debug complete: ${frameCount} total frames, ${skippedFrames} skipped`);
+                
                 console.log(`Effective FPS: ${(frameCount / 5).toFixed(1)}`);
             }, 5000);
         };
         
         // Quick test for FPS limiting bug
         window.testFPSLimiting = () => {
-            console.log('🧪 Testing FPS limiting bug...');
             
             // Enable FPS limit debugging
             window.DEBUG_FPS_LIMIT = true;
@@ -659,17 +630,13 @@ class ImageCanvasApp {
             // Switch back to normal mode (with FPS limiting)
             const canvas = this.graphCanvas;
             canvas.setFPSTestMode('normal');
-            
-            console.log('👆 Drag a node around and watch frame timing in console');
-            console.log('Look for frames being skipped when they shouldn\'t be');
-            
+
             setTimeout(() => {
                 window.DEBUG_FPS_LIMIT = false;
-                console.log('✅ FPS limiting test complete');
+                
             }, 10000);
         };
-        
-        console.log('🚀 FPS Testing Ready! Commands:');
+
         console.log('  testFPSLimiting() - Test FPS limiting bug (drag while running)');
         console.log('  profileDraw()  - Profile draw performance');
         console.log('  testMinimal()  - Test minimal mode (200+ FPS)');
@@ -709,7 +676,7 @@ class NodeFactory {
                 
                 return node;
             } catch (error) {
-                console.warn('NodePluginSystem failed, falling back to legacy system:', error);
+                
             }
         }
         
@@ -739,7 +706,7 @@ class NodeFactory {
                     node = new TextNode();
                     break;
                 default:
-                    console.warn('Unknown node type:', type);
+                    
                     return null;
             }
         }
@@ -782,7 +749,7 @@ class NodeFactory {
     
     static registerNodeType(type, nodeClass) {
         this.nodeTypes.set(type, nodeClass);
-        console.log('Registered node type:', type);
+        
     }
 }
 
@@ -860,7 +827,7 @@ async function initApp() {
         
         // Add event listener for node added to graph
         app.graph.onNodeAdded = (node) => {
-            console.log(`Node added: ${node.id}`);
+            
             // If the node has an initSubscriptions method, call it.
             // This ensures that subscriptions are set up after all managers are initialized.
             if (typeof node.initSubscriptions === 'function') {
@@ -870,12 +837,10 @@ async function initApp() {
 
         // Undo/Redo Manager
         app.undoManager = new ClientUndoManager(app.graph, app.operationPipeline);
-        
-        
+
         // Load last canvas or create default
         // Use more robust initialization that doesn't strictly depend on collaborative architecture
         setTimeout(() => {
-            console.log('🚀 Preparing to load startup canvas...');
             
             let attempts = 0;
             const maxAttempts = 20; // 10 seconds max wait
@@ -891,20 +856,7 @@ async function initApp() {
                 const isArchitectureReady = app.collaborativeArchitecture?.initialized;
                 
                 if (isArchitectureReady || (hasEssentials && attempts > 6)) {
-                    console.log('✅ Starting canvas load:', {
-                        architectureReady: isArchitectureReady,
-                        hasEssentials: hasEssentials,
-                        attempts: attempts,
-                        fallbackMode: !isArchitectureReady
-                    });
-                    
-                    console.log('📊 Component status:', {
-                        hasNetworkLayer: !!app.networkLayer,
-                        isConnected: app.networkLayer?.isConnected,
-                        hasStateSyncManager: !!app.stateSyncManager,
-                        hasCanvasNavigator: !!app.canvasNavigator
-                    });
-                    
+
                     // Initialize NavigationStateManager if available
                     if (app.navigationStateManager) {
                         app.navigationStateManager.initialize();
@@ -912,7 +864,7 @@ async function initApp() {
                     
                     // Ensure extended commands are registered
                     if (app.operationPipeline && app.operationPipeline.registerExtendedCommands) {
-                        console.log('📝 Ensuring extended commands are registered...');
+                        
                         app.operationPipeline.registerExtendedCommands();
                     }
                     
@@ -923,13 +875,11 @@ async function initApp() {
                             // Continue anyway, user can manually open navigator
                         });
                     } else {
-                        console.warn('⚠️ Canvas navigator not available for startup loading');
+                        
                     }
                     
                 } else if (attempts >= maxAttempts) {
-                    console.warn('⚠️ Startup loading timeout - proceeding without full initialization');
-                    console.warn('User will need to manually select a canvas');
-                    
+
                     // Still try to load if we have canvas navigator
                     if (app.canvasNavigator?.loadStartupCanvas) {
                         app.canvasNavigator.loadStartupCanvas().catch(error => {

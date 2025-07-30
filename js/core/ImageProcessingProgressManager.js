@@ -44,9 +44,9 @@ class ImageProcessingProgressManager {
                 thumbnailed: 0,
                 failed: 0
             });
-            console.log(`🆕 Created new batch: ${this.currentBatchId}`);
+            
         } else {
-            console.log(`📦 Adding to existing batch: ${this.currentBatchId}`);
+            
         }
         
         const batch = this.batches.get(this.currentBatchId);
@@ -89,7 +89,7 @@ class ImageProcessingProgressManager {
         
         // Set timeout to close batch after 2 seconds of inactivity
         this.batchTimeout = setTimeout(() => {
-            console.log(`⏰ Batch timeout - closing batch: ${this.currentBatchId}`);
+            
             this.currentBatchId = null;
             this.batchTimeout = null;
         }, 2000);
@@ -487,7 +487,7 @@ class ImageProcessingProgressManager {
      * Update file hash (DEPRECATED - no longer needed with real hashes)
      */
     updateFileHash(placeholderHash, actualHash) {
-        console.warn(`⚠️ DEPRECATED: updateFileHash called with temp hash system disabled`);
+        
         console.warn(`   Old: ${placeholderHash?.substring(0, 20)}...`);
         console.warn(`   New: ${actualHash?.substring(0, 8)}...`);
         // This method is now deprecated since we use real hashes from the start

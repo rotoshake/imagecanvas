@@ -25,8 +25,7 @@ class Database {
         
         // Initialize schema
         await this.createTables();
-        
-        console.log('✅ Database configured with WAL mode and optimizations');
+
     }
     
     async createTables() {
@@ -130,7 +129,6 @@ class Database {
         `;
         
         await this.exec(schema);
-        console.log('✅ Database schema created/updated');
         
         // Apply undo system migrations
         await this.applyUndoMigrations();
@@ -142,7 +140,7 @@ class Database {
                 'INSERT INTO users (id, username, display_name) VALUES (?, ?, ?)',
                 [1, 'default', 'Default User']
             );
-            console.log('✅ Default user created');
+            
         }
     }
     
@@ -153,7 +151,6 @@ class Database {
             const hasTransactionId = columns.some(col => col.name === 'transaction_id');
             
             if (!hasTransactionId) {
-                console.log('📦 Applying undo system migrations...');
                 
                 // Add undo support columns to operations table
                 await this.run('ALTER TABLE operations ADD COLUMN transaction_id TEXT');
@@ -184,8 +181,7 @@ class Database {
                 
                 await this.run('CREATE INDEX IF NOT EXISTS idx_active_transactions_user ON active_transactions(user_id, state)');
                 await this.run('CREATE INDEX IF NOT EXISTS idx_active_transactions_project ON active_transactions(project_id)');
-                
-                console.log('✅ Undo system migrations applied');
+
             }
         } catch (error) {
             console.error('⚠️ Error applying undo migrations:', error);
@@ -334,8 +330,7 @@ class Database {
         await this.run(
             "DELETE FROM active_sessions WHERE last_activity < datetime('now', '-1 hour')"
         );
-        
-        console.log('🧹 Database cleanup completed');
+
     }
     
     async close() {
@@ -343,7 +338,7 @@ class Database {
             await this.cleanup();
             this.db.close();
             this.db = null;
-            console.log('📊 Database connection closed');
+            
         }
     }
 }

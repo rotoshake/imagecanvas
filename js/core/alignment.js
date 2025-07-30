@@ -54,7 +54,6 @@ class AutoAlignmentManager {
     
     startAutoAlign(startPos) {
         if (this.selection.size() < 2) return false;
-        
 
         this.autoAlignMode = true;
         this.autoAlignStart = [...startPos];
@@ -85,7 +84,6 @@ class AutoAlignmentManager {
     updateAutoAlign(currentPos) {
         if (!this.autoAlignMode) return;
 
-        
         const threshold = 40 / this.viewport.scale;
         const dx = currentPos[0] - this.autoAlignStart[0];
         const dy = currentPos[1] - this.autoAlignStart[1];
@@ -116,9 +114,7 @@ class AutoAlignmentManager {
             
             if ((commitAxis === 'horizontal' && Math.abs(cdx) > threshold) || 
                 (commitAxis === 'vertical' && Math.abs(cdy) > threshold)) {
-                
 
-                
                 this.autoAlignCommitted = true;
                 this.autoAlignCommittedAxis = commitAxis;
                 this.autoAlignCommittedDirection = commitDir;
@@ -204,7 +200,6 @@ class AutoAlignmentManager {
                     positions.push(this.autoAlignCommittedTargets[node.id]);
                 }
             }
-            
 
             window.app.undoManager.endInteraction('node_align', { 
                 nodeIds, 
@@ -213,7 +208,9 @@ class AutoAlignmentManager {
             });
         } else {
             // No alignment was committed, so cancel the interaction
-            window.app.undoManager.cancelInteraction();
+            if (window.app?.undoManager?.cancelInteraction) {
+                window.app.undoManager.cancelInteraction();
+            }
         }
 
         this.autoAlignMode = false;
@@ -234,7 +231,6 @@ class AutoAlignmentManager {
         if (this.selection.size() < 2) {
             return;
         }
-        
 
         // Store original positions if not already set
         if (!this.autoAlignOriginals) {
@@ -320,9 +316,7 @@ class AutoAlignmentManager {
         
         // Sort nodes according to master order
         let sortedNodes = masterOrder.map(id => selectedNodes.find(n => n.id === id)).filter(Boolean);
-        
 
-        
         // If in reorder mode, reverse the order
         if (this.autoAlignIsReorderMode) {
             sortedNodes = sortedNodes.reverse();
@@ -431,7 +425,6 @@ class AutoAlignmentManager {
     
     startGridAlign(startPos) {
         if (this.selection.size() === 0) return false;
-        
 
         this.gridAlignMode = true;
         this.gridAlignDragging = true;
@@ -541,7 +534,6 @@ class AutoAlignmentManager {
     
     finishGridAlign() {
 
-        
         // Capture the current targets for saving (before they might get cleared by animation)
         // Use the final targets backup if animation already cleared the main targets
         const targetsForSave = this.gridAlignAnimTargets ? { ...this.gridAlignAnimTargets } : 
@@ -552,18 +544,14 @@ class AutoAlignmentManager {
             const selectedNodes = this.selection.getSelectedNodes();
             const nodeIds = [];
             const positions = [];
-            
 
-            
             for (const node of selectedNodes) {
                 if (targetsForSave[node.id]) {
                     nodeIds.push(node.id);
                     positions.push(targetsForSave[node.id]);
                 }
             }
-            
 
-            
             window.app.undoManager.endInteraction('node_align', { 
                 nodeIds, 
                 positions, 
@@ -575,16 +563,16 @@ class AutoAlignmentManager {
             if (selectedNodes.length > 0) {
                 const nodeIds = selectedNodes.map(node => node.id);
                 const positions = selectedNodes.map(node => [...node.pos]);
-                
 
-                
                 window.app.undoManager.endInteraction('node_align', { 
                     nodeIds, 
                     positions, 
                     axis: 'grid' 
                 });
             } else {
-                window.app.undoManager.cancelInteraction();
+                if (window.app?.undoManager?.cancelInteraction) {
+                    window.app.undoManager.cancelInteraction();
+                }
             }
         }
 
@@ -905,7 +893,6 @@ class AutoAlignmentManager {
                     cleanedCount++;
                 }
             }
-            
 
         }
     }

@@ -5,7 +5,6 @@ const isWorker = typeof importScripts !== 'undefined';
 
 if (isWorker) {
     // Web Worker code
-    console.log('🔧 Performance Worker initialized');
     
     // Import any necessary libraries for the worker
     // Note: In a real implementation, you might want to import compression libraries here
@@ -276,8 +275,7 @@ if (isWorker) {
             
             // Initialize workers
             this.initializeWorkers();
-            
-            console.log(`🔧 PerformanceWorkerManager initialized with ${this.workerCount} workers`);
+
         }
         
         /**
@@ -312,7 +310,7 @@ if (isWorker) {
                 URL.revokeObjectURL(workerUrl);
                 
             } catch (error) {
-                console.warn('Failed to initialize workers:', error);
+                
                 this.workers = []; // Fallback to main thread processing
             }
         }
@@ -325,7 +323,6 @@ if (isWorker) {
             // In a real implementation, you might load this from a separate file
             return `
                 // Web Worker code (embedded version of the worker functions above)
-                console.log('🔧 Performance Worker initialized');
                 
                 self.onmessage = function(e) {
                     const { taskId, type, data } = e.data;
@@ -487,7 +484,7 @@ if (isWorker) {
             const pendingTask = this.pendingTasks.get(taskId);
             
             if (!pendingTask) {
-                console.warn('Received result for unknown task:', taskId);
+                
                 return;
             }
             
@@ -540,7 +537,7 @@ if (isWorker) {
             }
             this.workers = [];
             this.pendingTasks.clear();
-            console.log('🔧 PerformanceWorkerManager cleaned up');
+            
         }
         
         /**

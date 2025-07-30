@@ -9,8 +9,7 @@ class ConnectionStatus {
         // No UI creation - we only use unified notifications now
         this.updateStatus('disconnected');
     }
-    
-    
+
     /**
      * Update the connection status (notification-based only)
      * @param {string} status - 'connected', 'connecting', 'disconnected', 'error'
@@ -41,8 +40,7 @@ class ConnectionStatus {
                 });
             }
         }
-        
-        console.log(`🔗 Connection status: ${status}${detail ? ' - ' + detail : ''}`);
+
     }
     
     /**
@@ -86,7 +84,6 @@ class ConnectionStatus {
      * Trigger manual reconnection
      */
     manualReconnect() {
-        console.log('🔄 Manual reconnection triggered from connection status');
         
         // Hide current notification
         if (window.unifiedNotifications) {
@@ -97,7 +94,7 @@ class ConnectionStatus {
         if (window.app?.networkLayer?.manualReconnect) {
             window.app.networkLayer.manualReconnect();
         } else {
-            console.warn('⚠️ No manual reconnection method available');
+            
         }
     }
     
@@ -109,8 +106,7 @@ class ConnectionStatus {
             window.unifiedNotifications.remove('connection-status');
         }
     }
-    
-    
+
     /**
      * Clean up the component
      */

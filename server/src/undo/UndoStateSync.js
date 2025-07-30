@@ -58,7 +58,6 @@ class UndoStateSync {
      * Handle undo request from client
      */
     async handleUndo(userId, projectId, socketId) {
-        console.log(`🔄 Undo request from user ${userId} in project ${projectId}`);
         
         try {
             const undoable = this.history.getUndoableOperations(userId, projectId, 1);
@@ -75,7 +74,7 @@ class UndoStateSync {
 
             const conflicts = await this.history.checkUndoConflicts(operationIds, userId, projectId);
             if (conflicts.length > 0) {
-                console.log(`⚠️ Undo conflicts detected:`, conflicts);
+                
             }
 
             const stateChanges = await this.executeUndo(operations, projectId);
@@ -96,7 +95,6 @@ class UndoStateSync {
      * Handle redo request from client
      */
     async handleRedo(userId, projectId, socketId) {
-        console.log(`🔄 Redo request from user ${userId} in project ${projectId}`);
         
         // Get next redoable operation(s)
         const redoable = this.history.getRedoableOperations(userId, projectId, 1);
@@ -160,8 +158,7 @@ class UndoStateSync {
                 redoneOperations: operationIds,
                 affectedNodes: this.extractAffectedNodes(operations)
             });
-            
-            console.log(`✅ Redo completed for user ${userId}`);
+
             return response;
             
         } catch (error) {
@@ -187,9 +184,7 @@ class UndoStateSync {
         
         // Get current state
         const state = await this.stateManager.getCanvasState(projectId);
-        
-        console.log(`🔄 Executing undo for ${operations.length} operations`);
-        
+
         // Process operations in reverse order
         for (let i = operations.length - 1; i >= 0; i--) {
             const op = operations[i];
@@ -275,7 +270,6 @@ class UndoStateSync {
             return handler.call(this, operation, state, changes);
         }
 
-        console.warn(`No undo handler for operation type: ${operation.type}`);
         return null;
     }
     
@@ -294,7 +288,7 @@ class UndoStateSync {
             for (const nodeData of undoData.nodes) {
                 const node = state.nodes.find(n => n.id == nodeData.id);
                 if (node && nodeData.oldPosition) {
-                    console.log(`🔄 Restoring node ${nodeData.id} position from [${node.pos}] to [${nodeData.oldPosition}]`);
+                    
                     node.pos = [...nodeData.oldPosition];
                     if (!updatedNodeIds.has(node.id)) {
                         changes.updated.push(node);
@@ -348,7 +342,7 @@ class UndoStateSync {
             for (const [nodeId, pos] of Object.entries(undoData.previousPositions)) {
                 const node = state.nodes.find(n => n.id == nodeId); // Use loose equality for type conversion
                 if (node) {
-                    console.log(`🔄 Restoring node ${nodeId} position from [${node.pos}] to [${pos}]`);
+                    
                     node.pos = [...pos];
                     if (!updatedNodeIds.has(node.id)) {
                         changes.updated.push(node);
@@ -373,22 +367,22 @@ class UndoStateSync {
         }
         
         if (undoData.previousRotations) {
-            console.log('📐 Found previousRotations in undo data:', undoData.previousRotations);
+            
             // Restore previous rotations
             for (const [nodeId, rotation] of Object.entries(undoData.previousRotations)) {
                 const node = state.nodes.find(n => n.id == nodeId); // Use loose equality for type conversion
                 if (node) {
-                    console.log(`🔄 Restoring node ${nodeId} rotation from ${node.rotation} to ${rotation}`);
+                    
                     const oldRotation = node.rotation;
                     node.rotation = rotation;
-                    console.log(`✅ Node ${nodeId} rotation changed: ${oldRotation} -> ${node.rotation}`);
+                    
                     if (!updatedNodeIds.has(node.id)) {
                         // Push the actual node - the state will be saved correctly
                         changes.updated.push(node);
                         updatedNodeIds.add(node.id);
                     }
                 } else {
-                    console.log(`❌ Node ${nodeId} not found in state!`);
+                    
                 }
             }
         }
@@ -431,9 +425,9 @@ class UndoStateSync {
             if (index !== -1) {
                 state.nodes.splice(index, 1);
                 changes.removed.push(nodeId);
-                console.log(`✅ Removed node ${nodeId} using undo data`);
+                
             } else {
-                console.warn(`⚠️ Node ${nodeId} not found in state for undo`);
+                
             }
         } 
         // Fallback to params.id if available
@@ -443,7 +437,7 @@ class UndoStateSync {
             if (index !== -1) {
                 state.nodes.splice(index, 1);
                 changes.removed.push(nodeId);
-                console.log(`✅ Removed node ${nodeId} using params.id`);
+                
             }
         } else {
             console.error('❌ Cannot undo node_create - no node ID found in undoData or params');

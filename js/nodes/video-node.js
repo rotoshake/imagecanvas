@@ -61,7 +61,7 @@ class VideoNode extends BaseNode {
         // Resolve the actual video source
         const videoSrc = await this.resolveVideoSource(src);
         if (!videoSrc) {
-            console.warn(`⚠️ No video source available yet for node ${this.id} - waiting for upload`);
+            
             if (!this.properties.serverUrl && !this.properties.hash) {
                 this.loadingState = 'error';
             }
@@ -224,7 +224,7 @@ class VideoNode extends BaseNode {
                     ctx.drawImage(this.video, 0, 0, thumbWidth, thumbHeight);
                     
                 } catch (drawError) {
-                    console.warn(`Failed to draw video thumbnail for ${this.id}:`, drawError);
+                    
                     // Create a placeholder thumbnail
                     ctx.fillStyle = '#333';
                     ctx.fillRect(0, 0, thumbWidth, thumbHeight);
@@ -243,8 +243,7 @@ class VideoNode extends BaseNode {
             
             // Store thumbnail
             this.thumbnail = canvas;
-            
-            
+
             // Complete loading progress - this is a video thumbnail, not image thumbnails
             this.loadingProgress = 1.0;
             
@@ -260,7 +259,7 @@ class VideoNode extends BaseNode {
             }
             
         } catch (error) {
-            console.warn('Failed to create video thumbnail:', error);
+            
             // Set progress to complete even if thumbnail failed
             this.loadingProgress = 1.0;
             
@@ -458,8 +457,7 @@ class VideoNode extends BaseNode {
         const screenHeight = this.size[1] * scale;
         const useThumbnail = screenWidth < CONFIG.PERFORMANCE.THUMBNAIL_THRESHOLD || 
                             screenHeight < CONFIG.PERFORMANCE.THUMBNAIL_THRESHOLD;
-        
-        
+
         try {
             if (useThumbnail && this.thumbnail) {
                 // Use simple video thumbnail for small sizes
@@ -478,7 +476,7 @@ class VideoNode extends BaseNode {
                 }
             }
         } catch (error) {
-            console.warn('Video drawing error:', error);
+            
             this.drawPlaceholder(ctx, 'Video Error');
         }
         
@@ -520,8 +518,7 @@ class VideoNode extends BaseNode {
             this.video.loop = this.properties.loop;
         }
     }
-    
-    
+
     drawPlayIndicator(ctx) {
         ctx.save();
         
@@ -594,9 +591,9 @@ class VideoNode extends BaseNode {
                 if (error.name === 'NotAllowedError') {
                     // Mark as needing user interaction
                     this._needsUserInteraction = true;
-                    console.log(`🎬 Video ${this.id} needs user interaction to play`);
+                    
                 } else {
-                    console.warn('Video play error:', error);
+                    
                 }
             });
         }

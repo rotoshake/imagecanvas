@@ -16,7 +16,7 @@ class WorkerImageProcessor {
         try {
             // Check if Web Workers are supported
             if (typeof Worker === 'undefined') {
-                console.warn('Web Workers not supported, falling back to main thread processing');
+                
                 return;
             }
             
@@ -35,10 +35,9 @@ class WorkerImageProcessor {
             };
             
             this.isAvailable = true;
-            console.log('📊 Image Preview Worker initialized successfully');
             
         } catch (error) {
-            console.warn('Failed to initialize Image Preview Worker:', error);
+            
             this.isAvailable = false;
         }
     }
@@ -48,7 +47,7 @@ class WorkerImageProcessor {
         const request = this.pendingRequests.get(id);
         
         if (!request) {
-            console.warn('Received message for unknown request ID:', id);
+            
             return;
         }
         
@@ -198,7 +197,7 @@ class WorkerImageProcessor {
         this.pendingRequests.clear();
         
         this.isAvailable = false;
-        console.log('📊 Image Preview Worker terminated');
+        
     }
     
     /**

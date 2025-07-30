@@ -28,13 +28,13 @@ class BulkOperationManager {
     validateItems(items, operationType) {
         // Paste operations send full node data, not IDs - don't validate
         if (operationType === 'node_paste') {
-            console.log(`📋 Paste operation with ${items.length} nodes - no validation needed`);
+            
             return items;
         }
         
         // Duplicate operations with node data also don't need validation
         if (operationType === 'node_duplicate' && items.length > 0 && typeof items[0] === 'object') {
-            console.log(`📋 Duplicate operation with node data - no validation needed`);
+            
             return items;
         }
         
@@ -44,12 +44,12 @@ class BulkOperationManager {
             return items.filter(nodeId => {
                 const node = window.app?.graph?.getNodeById(nodeId);
                 if (!node) {
-                    console.warn(`Skipping non-existent node: ${nodeId}`);
+                    
                     return false;
                 }
                 // For move operations, skip temporary nodes
                 if (operationType === 'node_move' && (node._isTemporary || node._localId || node._syncFailed)) {
-                    console.warn(`Skipping temporary/failed node for move: ${nodeId}`);
+                    
                     return false;
                 }
                 return true;
@@ -86,12 +86,12 @@ class BulkOperationManager {
             // Validate items first
             const validItems = this.validateItems(items, operationType);
             if (validItems.length === 0) {
-                console.warn('No valid items for bulk operation');
+                
                 return { success: true, result: { nodes: [] } };
             }
             
             if (validItems.length < items.length) {
-                console.log(`📊 Filtered ${items.length - validItems.length} invalid items, processing ${validItems.length} valid items`);
+                
             }
             
             // Prepare items and calculate payload sizes
@@ -104,9 +104,7 @@ class BulkOperationManager {
             // Create optimized chunks
             const chunks = this.createOptimizedChunks(preparedItems, operationType);
             operation.chunks = chunks;
-            
-            console.log(`📊 Bulk operation ${operationType}: ${items.length} items in ${chunks.length} chunks`);
-            
+
             // Show initial progress notification
             let progressNotification = null;
             if (chunks.length > 1 || items.length > 10) {
@@ -122,7 +120,6 @@ class BulkOperationManager {
             
             if (typeof BulkCommand !== 'undefined' && chunks.length > 1) {
                 // Use BulkCommand for multi-chunk operations
-                console.log(`📦 Using BulkCommand for ${chunks.length} chunks`);
                 
                 try {
                     // Create and execute bulk command
@@ -240,8 +237,7 @@ class BulkOperationManager {
                 
                 // Log details about failed nodes for debugging
                 if (failedNodes > 0) {
-                    console.warn(`📋 Failed to paste ${failedNodes} nodes. Check console for details.`);
-                    console.warn('Failed node details:', combinedResult.result.errors);
+
                 }
             } else if (items.length > 10) {
                 window.app?.notifications?.show({
@@ -263,7 +259,6 @@ class BulkOperationManager {
      */
     async executeChunkWithRetry(chunk, operationType, options, chunkIndex, totalChunks, retryCount = 0) {
         try {
-            console.log(`📤 Sending chunk ${chunkIndex + 1}/${totalChunks} with ${chunk.items.length} items`);
             
             const result = await window.app.operationPipeline.execute(operationType, {
                 ...options,
@@ -283,7 +278,7 @@ class BulkOperationManager {
             if (retryCount < this.MAX_RETRIES) {
                 // For large chunks that fail, try splitting them
                 if (chunk.items.length > 10) {
-                    console.log(`🔀 Splitting failed chunk of ${chunk.items.length} items into smaller chunks`);
+                    
                     const midpoint = Math.floor(chunk.items.length / 2);
                     const chunk1 = { items: chunk.items.slice(0, midpoint), size: chunk.size / 2 };
                     const chunk2 = { items: chunk.items.slice(midpoint), size: chunk.size / 2 };
@@ -307,7 +302,7 @@ class BulkOperationManager {
                 
                 // Small chunk - retry with exponential backoff
                 const delay = this.RETRY_DELAY * Math.pow(2, retryCount);
-                console.log(`⏳ Retrying chunk ${chunkIndex + 1} after ${delay}ms delay...`);
+                
                 await this.delay(delay);
                 return this.executeChunkWithRetry(chunk, operationType, options, chunkIndex, totalChunks, retryCount + 1);
             }
@@ -326,7 +321,6 @@ class BulkOperationManager {
         
         // Get chunk size for this operation type
         const chunkSize = this.CHUNK_SIZES[operationType] || this.CHUNK_SIZES.default;
-        console.log(`📦 Using chunk size ${chunkSize} for ${operationType} operation`);
         
         for (const item of preparedItems) {
             // Check if adding this item would exceed limits
@@ -543,10 +537,9 @@ class BulkOperationManager {
         }
         
         if (orphanedNodes.length > 0) {
-            console.warn(`🔍 Found ${orphanedNodes.length} orphaned temporary nodes after bulk operation`);
             
             // Log details for debugging
-            console.log('Orphaned node details:');
+            
             orphanedNodes.forEach(node => {
                 console.log(`  - Node ${node.id} at [${Math.round(node.pos[0])}, ${Math.round(node.pos[1])}], type: ${node.type}, age: ${Math.round((now - (node._temporaryCreatedAt || now))/1000)}s`);
             });
@@ -554,9 +547,7 @@ class BulkOperationManager {
             // Check how many nodes we expected vs what we have
             const totalNodes = window.app.graph.nodes.length;
             const tempNodes = window.app.graph.nodes.filter(n => n._isTemporary).length;
-            console.log(`📊 Graph state: ${totalNodes} total nodes, ${tempNodes} temporary`);
-            console.log(`📊 Expected to process: ${originalItems.length} items`);
-            
+
             // Notify user
             window.app?.notifications?.show({
                 type: 'warning',
@@ -564,7 +555,7 @@ class BulkOperationManager {
                 timeout: 10000
             });
         } else {
-            console.log(`✅ Bulk operation ${operationId} verified - no orphaned nodes found`);
+            
         }
     }
 }

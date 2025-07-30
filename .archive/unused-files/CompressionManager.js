@@ -18,11 +18,7 @@ class CompressionManager {
             compressionTime: 0,
             decompressionTime: 0
         };
-        
-        console.log('🗜️ CompressionManager initialized', {
-            supported: this.supportsCompression,
-            threshold: this.compressionThreshold
-        });
+
     }
     
     /**
@@ -47,7 +43,7 @@ class CompressionManager {
             
             return false;
         } catch (error) {
-            console.warn('Compression support check failed:', error);
+            
             return false;
         }
     }
@@ -126,7 +122,7 @@ class CompressionManager {
             }
             
         } catch (error) {
-            console.warn('Compression failed, using original data:', error);
+            
             return {
                 data: data,
                 compressed: false,
@@ -404,11 +400,7 @@ class CompressionManager {
         if (options.level !== undefined) {
             this.compressionLevel = Math.max(1, Math.min(9, options.level));
         }
-        
-        console.log('🗜️ Compression settings updated:', {
-            threshold: this.compressionThreshold,
-            level: this.compressionLevel
-        });
+
     }
     
     /**

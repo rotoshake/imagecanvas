@@ -20,7 +20,6 @@ class ThumbnailPreloader {
         const checkApp = setInterval(() => {
             if (window.app?.graph?.nodes && window.app?.graphCanvas?.viewport) {
                 clearInterval(checkApp);
-                console.log('🔮 ThumbnailPreloader initialized');
                 
                 // Monitor viewport changes
                 this.monitorViewport();
@@ -94,7 +93,6 @@ class ThumbnailPreloader {
         
         // Add to preload queue (limit batch size)
         const toPreload = candidates.slice(0, this.maxPreloadPerBatch);
-        console.log(`🔮 Found ${candidates.length} nodes to preload, queuing ${toPreload.length}`);
         
         this.preloadQueue.push(...toPreload);
         this.processQueue();
@@ -131,7 +129,7 @@ class ThumbnailPreloader {
     // Clear queue (e.g., when user starts interacting)
     clearQueue() {
         this.preloadQueue = [];
-        console.log('🔮 Cleared preload queue');
+        
     }
 }
 

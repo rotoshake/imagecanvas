@@ -20,7 +20,7 @@ class ErrorBoundary {
         const startTime = Date.now();
         
         try {
-            console.log(`🛡️ Executing operation: ${operationId}`);
+            
             const result = await operation();
             
             // Reset error count on success
@@ -58,7 +58,6 @@ class ErrorBoundary {
         
         // Check if we should retry
         if (errorCount < this.maxRetries && this.isRetryableError(error)) {
-            console.log(`🔄 Retrying operation ${operationId} in ${this.retryDelay}ms...`);
             
             // Exponential backoff with jitter
             const delay = this.retryDelay * Math.pow(2, errorCount) + Math.random() * 1000;
@@ -69,7 +68,6 @@ class ErrorBoundary {
                 
                 // Reset error count on success
                 this.errorCount.delete(operationId);
-                console.log(`✅ Operation ${operationId} succeeded after retry`);
                 
                 return result;
                 
@@ -146,7 +144,7 @@ class ErrorBoundary {
     async executeFallback(error, operationId, context) {
         if (context.fallback && typeof context.fallback === 'function') {
             try {
-                console.log(`🎯 Executing fallback for operation: ${operationId}`);
+                
                 return await context.fallback(error);
             } catch (fallbackError) {
                 console.error('Fallback execution failed:', fallbackError);
@@ -244,7 +242,7 @@ class ErrorBoundary {
      */
     getFromCache(operationId) {
         // ✅ Caching implemented via ImageResourceCache and ThumbnailCache
-        console.log(`📋 Getting cached result for: ${operationId}`);
+        
         return null;
     }
     
@@ -253,7 +251,7 @@ class ErrorBoundary {
      */
     queueForRetry(operationId, context) {
         // ✅ Retry system implemented via OperationPipeline and StateSyncManager
-        console.log(`📥 Queuing operation for retry: ${operationId}`);
+        
     }
 }
 

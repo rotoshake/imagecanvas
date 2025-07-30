@@ -81,8 +81,7 @@ class ClientUndoManager {
             if (data.project && data.project.id) {
                 this.projectId = data.project.id;
             }
-            
-            
+
             // Request undo state for the project after a short delay
             setTimeout(() => {
                 this.requestUndoState();
@@ -141,7 +140,7 @@ class ClientUndoManager {
         });
         
         this.networkLayer.on('transaction_aborted', (data) => {
-            console.log(`❌ Transaction aborted: ${data.transactionId}`);
+            
             this.currentTransaction = null;
         });
     }
@@ -152,7 +151,7 @@ class ClientUndoManager {
      */
     beginInteraction(nodes) {
         if (this.interactionInitialState) {
-            console.warn("An interaction is already in progress. Finishing the previous one.");
+            
             this.cancelInteraction(); // Use cancelInteraction instead of endInteraction
         }
 
@@ -169,7 +168,6 @@ class ClientUndoManager {
             });
         });
 
-        console.log(`[UndoManager] Interaction started for ${nodes.length} nodes.`);
     }
 
     /**
@@ -179,7 +177,7 @@ class ClientUndoManager {
      */
     endInteraction(commandType, finalParams) {
         if (!this.interactionInitialState) {
-            console.warn("endInteraction called without a beginning.");
+            
             if (commandType && finalParams) {
                  window.app.operationPipeline.execute(commandType, finalParams);
             }
@@ -214,7 +212,7 @@ class ClientUndoManager {
         window.app.operationPipeline.execute(commandType, params, { initialState });
 
         this.interactionInitialState = null;
-        console.log(`[UndoManager] Interaction ended, command ${commandType} executed.`);
+        
     }
     
     /**
@@ -222,7 +220,7 @@ class ClientUndoManager {
      */
     cancelInteraction() {
         if (this.interactionInitialState) {
-            console.log('[UndoManager] Interaction cancelled.');
+            
             this.interactionInitialState = null;
         }
     }
@@ -257,7 +255,7 @@ class ClientUndoManager {
      */
     requestUndoState() {
         if (!this.networkLayer || !this.networkLayer.isConnected) {
-            console.log('❌ Cannot request undo state - not connected');
+            
             return;
         }
         
@@ -273,8 +271,7 @@ class ClientUndoManager {
     updateUndoState(undoState) {
         const previousState = { ...this.undoState };
         this.undoState = undoState;
-        
-        
+
         // Update UI
         this.updateUndoRedoUI();
         
@@ -290,19 +287,19 @@ class ClientUndoManager {
     async undo() {
         
         if (!this.undoState.canUndo || this.pendingUndoRedo) {
-            console.log('❌ Cannot undo:', { canUndo: this.undoState.canUndo, pending: this.pendingUndoRedo });
+            
             return;
         }
         
         if (!this.networkLayer || !this.networkLayer.isConnected) {
-            console.log('❌ Cannot undo - not connected to server');
+            
             return;
         }
         
         // Check if we have a recent operation that might not be recorded yet
         const timeSinceLastOperation = Date.now() - (this.lastOperationTime || 0);
         if (timeSinceLastOperation < 500) { // 500ms grace period
-            console.log('⏳ Delaying undo request to allow server to record recent operations');
+            
             setTimeout(() => this.undo(), 250);
             return;
         }
@@ -361,7 +358,7 @@ class ClientUndoManager {
      * Handle failed undo from server
      */
     handleUndoFailed(data) {
-        console.log('❌ Undo failed:', data.reason);
+        
         this.pendingUndoRedo = null;
         
         // Update undo state
@@ -378,7 +375,7 @@ class ClientUndoManager {
      */
     applyStateChanges(stateUpdate) {
         if (!stateUpdate || !this.app.graph) {
-            console.warn('Cannot apply state changes - no update or graph');
+            
             return;
         }
         
@@ -473,7 +470,7 @@ class ClientUndoManager {
      * Handle failed redo from server
      */
     handleRedoFailed(data) {
-        console.log('❌ Redo failed:', data.reason);
+        
         this.pendingUndoRedo = null;
         
         // Update undo state
@@ -550,7 +547,7 @@ class ClientUndoManager {
      */
     beginTransaction(source) {
         if (this.currentTransaction) {
-            console.warn('Transaction already in progress');
+            
             return;
         }
         
@@ -578,8 +575,7 @@ class ClientUndoManager {
         
         // Notify server
         this.networkLayer.emit('commit_transaction', {});
-        
-        
+
         this.currentTransaction = null;
     }
     
@@ -593,8 +589,7 @@ class ClientUndoManager {
         
         // Notify server
         this.networkLayer.emit('abort_transaction', {});
-        
-        
+
         this.currentTransaction = null;
     }
     
@@ -693,7 +688,7 @@ class ClientUndoManager {
      */
     clearHistory() {
         // This would typically require admin permissions
-        console.warn('Clear history not implemented - requires server support');
+        
     }
 }
 

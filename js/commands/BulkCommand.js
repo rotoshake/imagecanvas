@@ -19,7 +19,6 @@ class BulkCommand extends Command { // Command is imported/defined elsewhere in 
     }
     
     async execute(context) {
-        console.log(`🎯 Executing bulk ${this.operationType} with ${this.chunks.length} chunks`);
         
         const results = {
             success: true,
@@ -36,7 +35,6 @@ class BulkCommand extends Command { // Command is imported/defined elsewhere in 
         // Process each chunk
         for (let i = 0; i < this.chunks.length; i++) {
             const chunk = this.chunks[i];
-            console.log(`  Processing chunk ${i + 1}/${this.chunks.length} with ${chunk.items.length} items`);
             
             try {
                 // Create command for this chunk
@@ -103,7 +101,6 @@ class BulkCommand extends Command { // Command is imported/defined elsewhere in 
         }
         
         this.executed = true;
-        console.log(`✅ Bulk operation completed: ${results.nodes.length} nodes, ${results.errors.length} errors`);
         
         return {
             success: results.success,
@@ -112,7 +109,6 @@ class BulkCommand extends Command { // Command is imported/defined elsewhere in 
     }
     
     async undo(context) {
-        console.log(`↩️ Undoing bulk ${this.operationType} with ${this.undoData.chunkCommands.length} chunks`);
         
         if (!this.undoData || !this.undoData.chunkCommands) {
             throw new Error('No undo data available for bulk operation');
@@ -121,7 +117,6 @@ class BulkCommand extends Command { // Command is imported/defined elsewhere in 
         // Undo all chunks in reverse order
         for (let i = this.undoData.chunkCommands.length - 1; i >= 0; i--) {
             const { command, undoData } = this.undoData.chunkCommands[i];
-            console.log(`  Undoing chunk ${i + 1}/${this.undoData.chunkCommands.length}`);
             
             try {
                 // Restore the undo data to the command
@@ -137,7 +132,6 @@ class BulkCommand extends Command { // Command is imported/defined elsewhere in 
     }
     
     async redo(context) {
-        console.log(`↪️ Redoing bulk ${this.operationType}`);
         
         // Simply re-execute
         return this.execute(context);

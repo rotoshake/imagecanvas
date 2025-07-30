@@ -50,7 +50,7 @@ class ViewportManager {
         if (!Utils.isValidArray(this.offset, 2) || 
             Math.abs(this.offset[0]) > this.maxOffset || 
             Math.abs(this.offset[1]) > this.maxOffset) {
-            console.warn('Invalid viewport offset, resetting:', this.offset);
+            
             this.offset = [0, 0];
         }
         
@@ -58,7 +58,7 @@ class ViewportManager {
         if (!Utils.isValidNumber(this.scale) || 
             this.scale < CONFIG.CANVAS.MIN_SCALE || 
             this.scale > CONFIG.CANVAS.MAX_SCALE) {
-            console.warn('Invalid viewport scale, resetting:', this.scale);
+            
             this.scale = CONFIG.CANVAS.DEFAULT_SCALE;
         }
     }

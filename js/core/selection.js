@@ -35,7 +35,7 @@ class SelectionManager {
             try {
                 callback(this.selectedNodes);
             } catch (error) {
-                console.warn('Selection callback error:', error);
+                
             }
         });
     }

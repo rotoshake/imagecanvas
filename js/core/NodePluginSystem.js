@@ -16,8 +16,7 @@ class NodePluginSystem {
         
         // Built-in node types
         this.registerBuiltinNodes();
-        
-        console.log('🔌 NodePluginSystem initialized');
+
     }
     
     /**
@@ -224,8 +223,7 @@ class NodePluginSystem {
             },
             category: 'text'
         });
-        
-        console.log('✅ Registered built-in node types');
+
     }
     
     /**
@@ -244,7 +242,7 @@ class NodePluginSystem {
         }
         
         this.registerNodeType(typeName, config);
-        console.log(`🔌 Registered custom node type: ${typeName}`);
+        
     }
     
     /**
