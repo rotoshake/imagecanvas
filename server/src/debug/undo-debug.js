@@ -8,13 +8,13 @@ class UndoDebugger {
     }
     
     /**
-     * Get comprehensive debug info for a user/project
+     * Get comprehensive debug info for a user/canvas
      */
-    async getDebugInfo(userId, projectId) {
+    async getDebugInfo(userId, canvasId) {
         const info = {
             timestamp: new Date().toISOString(),
             userId,
-            projectId,
+            canvasId,
             database: {},
             memory: {},
             timeline: {},
@@ -28,8 +28,8 @@ class UndoDebugger {
                         COUNT(CASE WHEN undo_data IS NOT NULL THEN 1 END) as with_undo,
                         COUNT(CASE WHEN undo_data IS NULL THEN 1 END) as without_undo
                  FROM operations 
-                 WHERE project_id = ? AND user_id = ?`,
-                [projectId, userId]
+                 WHERE canvas_id = ? AND user_id = ?`,
+                [canvasId, userId]
             );
             
             info.database = dbOps[0] || { total: 0, with_undo: 0, without_undo: 0 };
@@ -39,7 +39,7 @@ class UndoDebugger {
             }
             
             // 2. Check in-memory state
-            const timeline = this.operationHistory.timeline.get(projectId) || [];
+            const timeline = this.operationHistory.timeline.get(canvasId) || [];
             const userOps = this.operationHistory.userOperations.get(userId) || [];
             
             info.memory = {
@@ -59,17 +59,17 @@ class UndoDebugger {
             }
             
             // 4. Get current undo state
-            info.undoState = this.operationHistory.getUserUndoState(userId, projectId);
+            info.undoState = this.operationHistory.getUserUndoState(userId, canvasId);
             
             // 5. Check for recent operations
             const recentOps = await this.db.all(
                 `SELECT id, operation_type, applied_at, 
                         CASE WHEN undo_data IS NOT NULL THEN 1 ELSE 0 END as has_undo
                  FROM operations 
-                 WHERE project_id = ? AND user_id = ?
+                 WHERE canvas_id = ? AND user_id = ?
                  ORDER BY applied_at DESC
                  LIMIT 5`,
-                [projectId, userId]
+                [canvasId, userId]
             );
             
             info.recentOperations = recentOps;
@@ -97,15 +97,15 @@ class UndoDebugger {
     /**
      * Force reload operation history from database
      */
-    async forceReloadHistory(projectId) {
+    async forceReloadHistory(canvasId) {
         
         // Clear existing
-        this.operationHistory.timeline.delete(projectId);
+        this.operationHistory.timeline.delete(canvasId);
         
         // Reload
-        await this.operationHistory.loadProjectHistory(projectId);
+        await this.operationHistory.loadCanvasHistory(canvasId);
         
-        const timeline = this.operationHistory.timeline.get(projectId) || [];
+        const timeline = this.operationHistory.timeline.get(canvasId) || [];
         return {
             success: true,
             operationsLoaded: timeline.length

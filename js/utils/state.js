@@ -110,7 +110,7 @@ class StateManager {
     serializeProperties(node) {
         if (node.type === 'media/image') {
             // Image nodes: store hash, filename, server URL, and any other properties
-            return {
+            const serialized = {
                 hash: node.properties.hash,
                 filename: node.properties.filename,
                 serverFilename: node.properties.serverFilename,
@@ -122,6 +122,22 @@ class StateManager {
                     )
                 )
             };
+            
+            // Add color correction data if present
+            if (node.adjustments) {
+                serialized.adjustments = { ...node.adjustments };
+            }
+            if (node.toneCurve) {
+                serialized.toneCurve = node.toneCurve;
+            }
+            if (node.toneCurveBypassed !== undefined) {
+                serialized.toneCurveBypassed = node.toneCurveBypassed;
+            }
+            if (node.colorAdjustmentsBypassed !== undefined) {
+                serialized.colorAdjustmentsBypassed = node.colorAdjustmentsBypassed;
+            }
+            
+            return serialized;
         } else if (node.type === 'media/video') {
             // Video nodes: store hash, filename, server URL, and all video properties (loop, muted, autoplay, paused, etc.)
             return {
@@ -264,6 +280,20 @@ class StateManager {
                     this.loadNodeFromCache(node, node.type);
                 }
             }
+            
+            // Restore color correction settings
+            if (nodeData.properties.adjustments) {
+                node.adjustments = { ...nodeData.properties.adjustments };
+            }
+            if (nodeData.properties.toneCurve !== undefined) {
+                node.toneCurve = nodeData.properties.toneCurve;
+            }
+            if (nodeData.properties.toneCurveBypassed !== undefined) {
+                node.toneCurveBypassed = nodeData.properties.toneCurveBypassed;
+            }
+            if (nodeData.properties.colorAdjustmentsBypassed !== undefined) {
+                node.colorAdjustmentsBypassed = nodeData.properties.colorAdjustmentsBypassed;
+            }
         } else if (node.type === 'media/video') {
             const oldHash = node.properties.hash;
             const newHash = nodeData.properties.hash;
@@ -319,6 +349,22 @@ class StateManager {
             node.flags = { ...node.flags, ...nodeData.flags };
         }
         node.title = nodeData.title;
+        
+        // Apply color correction settings for image nodes
+        if (node.type === 'media/image' && nodeData.properties) {
+            if (nodeData.properties.adjustments) {
+                node.adjustments = { ...nodeData.properties.adjustments };
+            }
+            if (nodeData.properties.toneCurve !== undefined) {
+                node.toneCurve = nodeData.properties.toneCurve;
+            }
+            if (nodeData.properties.toneCurveBypassed !== undefined) {
+                node.toneCurveBypassed = nodeData.properties.toneCurveBypassed;
+            }
+            if (nodeData.properties.colorAdjustmentsBypassed !== undefined) {
+                node.colorAdjustmentsBypassed = nodeData.properties.colorAdjustmentsBypassed;
+            }
+        }
     }
     
     async loadNodeFromCache(node, nodeType) {

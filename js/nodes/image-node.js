@@ -112,6 +112,14 @@ class ImageNode extends BaseNode {
                 if (!this.properties.serverUrl && !this.properties.hash) {
                     // Only error if we have no way to get the image
                     this.loadingState = 'error';
+                } else if (this.properties.hash && !this._retryScheduled) {
+                    // We have a hash but no data yet - schedule a retry
+                    this._retryScheduled = true;
+                    setTimeout(() => {
+                        this._retryScheduled = false;
+                        this._sourceErrorLogged = false; // Allow logging again
+                        this.setImage(this.properties.serverUrl, this.properties.filename, this.properties.hash);
+                    }, 1000); // Retry after 1 second
                 }
             }
             return;
@@ -321,13 +329,11 @@ class ImageNode extends BaseNode {
         }
         
         // 5. No source available
-        console.error(`❌ No image source available for node ${this.id}`, {
-            hash: this.properties.hash,
-            serverUrl: this.properties.serverUrl,
-            filename: this.properties.filename,
-            hasImageCache: !!window.imageCache,
-            hasResourceCache: !!window.app?.imageResourceCache
-        });
+        // Only log error once per node to avoid spam
+        if (!this._sourceErrorLogged) {
+            this._sourceErrorLogged = true;
+            console.warn(`⏳ No image source available yet for node ${this.id} (hash: ${this.properties.hash?.substring(0, 8)}...) - will retry`);
+        }
         return null;
     }
     
@@ -688,6 +694,16 @@ class ImageNode extends BaseNode {
             return true;
         }
         
+        // Show loading ring during upload/processing even if we have a preview
+        if (this._pendingServerSync || (this.loadingState === 'preview' && !this.img)) {
+            return true;
+        }
+        
+        // Show loading ring if we're uploading (no serverUrl yet)
+        if (!this.properties.serverUrl && !this.img && this.properties.file) {
+            return true;
+        }
+        
         return false;
     }
     
@@ -776,6 +792,14 @@ class ImageNode extends BaseNode {
 
     }
     
+    drawProgressRing(ctx, progress = 0) {
+        // Draw the grey placeholder box first
+        this.drawPlaceholder(ctx);
+        
+        // Then draw the progress ring on top
+        this.drawProgressRingOnly(ctx, progress);
+    }
+    
     drawProgressRingOnly(ctx, progress = 0) {
         const centerX = this.size[0] / 2;
         const centerY = this.size[1] / 2;
@@ -820,6 +844,25 @@ class ImageNode extends BaseNode {
         ctx.strokeStyle = '#404040';
         ctx.lineWidth = 1;
         ctx.strokeRect(0, 0, this.size[0], this.size[1]);
+    }
+    
+    drawPlaceholder(ctx, text = 'Loading...') {
+        // Draw grey box with border
+        ctx.fillStyle = '#2a2a2a';
+        ctx.fillRect(0, 0, this.size[0], this.size[1]);
+        
+        ctx.strokeStyle = '#404040';
+        ctx.lineWidth = 1;
+        ctx.strokeRect(0, 0, this.size[0], this.size[1]);
+        
+        // Draw text if provided
+        if (text) {
+            ctx.fillStyle = '#666';
+            ctx.font = '14px Arial';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText(text, this.size[0] / 2, this.size[1] / 2);
+        }
     }
     
     onDrawForeground(ctx) {
@@ -933,8 +976,10 @@ class ImageNode extends BaseNode {
             // Determine which progress to show
             let targetProgress = this.loadingProgress;
             
-            // If we have an image and we're just waiting for thumbnails, show faded image behind ring
+            // Check if we should show preview or image behind the ring
+            const hasPreview = this._previewUrl && (this.loadingState === 'preview' || this._pendingServerSync);
             const showingImageBehindRing = this.img && this.loadingState === 'loaded';
+            
             if (showingImageBehindRing) {
                 // Use thumbnail progress for thumbnail generation phase
                 targetProgress = this.thumbnailProgress;
@@ -945,6 +990,21 @@ class ImageNode extends BaseNode {
                 ctx.imageSmoothingQuality = CONFIG.THUMBNAILS.QUALITY;
                 ctx.drawImage(this.img, 0, 0, this.size[0], this.size[1]);
                 ctx.restore();
+            } else if (hasPreview) {
+                // Show preview image behind loading ring during upload
+                if (!this._previewImg) {
+                    // Create preview image if needed
+                    this._previewImg = new Image();
+                    this._previewImg.src = this._previewUrl;
+                }
+                
+                if (this._previewImg && this._previewImg.complete) {
+                    ctx.save();
+                    ctx.globalAlpha = 0.5; // Semi-transparent preview
+                    ctx.imageSmoothingEnabled = true;
+                    ctx.drawImage(this._previewImg, 0, 0, this.size[0], this.size[1]);
+                    ctx.restore();
+                }
             }
             
             // Smooth the progress display to prevent jittering
@@ -960,15 +1020,12 @@ class ImageNode extends BaseNode {
             }
             
             // Draw placeholder with info first for instant feedback
-            if (!showingImageBehindRing && !this.img) {
+            if (!showingImageBehindRing && !this.img && !hasPreview) {
                 this.drawPlaceholderWithInfo(ctx);
                 // Draw just the progress ring on top
                 this.drawProgressRingOnly(ctx, this.displayedProgress);
-            } else if (!showingImageBehindRing) {
-                // Legacy behavior for when we have partial image data
-                this.drawProgressRing(ctx, this.displayedProgress);
             } else {
-                // Draw just the ring without the background
+                // Just draw the ring - image or preview is already shown behind
                 this.drawProgressRingOnly(ctx, this.displayedProgress);
             }
             return;

@@ -25,8 +25,27 @@ class PerformanceMonitor {
             droppedFrames: 0,
             renderTime: 0,
             cullTime: 0,
-            drawTime: 0
+            drawTime: 0,
+            cpuUsage: 0,
+            gpuTime: 0,
+            memoryUsage: 0
         };
+        
+        // CPU/GPU monitoring
+        this.cpuSamples = [];
+        this.gpuSamples = [];
+        this.maxSamples = 30; // Keep last 30 samples for averaging
+        this.lastCPUTime = performance.now();
+        this.lastIdleTime = 0;
+        
+        // GPU timing (if available)
+        this.supportsGPUTiming = false;
+        this.gpuTimingExt = null;
+        this.setupGPUTiming();
+        
+        // Retry GPU setup after WebGL is initialized
+        setTimeout(() => this.setupGPUTiming(), 1000);
+        setTimeout(() => this.setupGPUTiming(), 3000);
         
         // Adaptive quality
         this.qualityLevel = 'high'; // high, medium, low
@@ -41,6 +60,24 @@ class PerformanceMonitor {
         this.updateInterval = 500; // Update stats every 500ms
         this.lastUpdate = performance.now();
 
+    }
+    
+    /**
+     * Setup GPU timing extension if available
+     */
+    setupGPUTiming() {
+        // Try to get WebGL context from renderer
+        if (window.app?.graphCanvas?.webglRenderer?.gl) {
+            const gl = window.app.graphCanvas.webglRenderer.gl;
+            
+            // Check for timer query extension
+            this.gpuTimingExt = gl.getExtension('EXT_disjoint_timer_query_webgl2') ||
+                               gl.getExtension('EXT_disjoint_timer_query');
+            
+            if (this.gpuTimingExt) {
+                this.supportsGPUTiming = true;
+            }
+        }
     }
     
     /**
@@ -128,10 +165,98 @@ class PerformanceMonitor {
         // Calculate FPS
         this.fps = Math.round(1000 / this.metrics.avgFrameTime);
         
+        // Update CPU usage estimate
+        this.updateCPUMetrics();
+        
+        // Update GPU metrics if available
+        this.updateGPUMetrics();
+        
+        // Update memory usage
+        this.updateMemoryMetrics();
+        
         // Log if performance is poor
         // if (this.fps < 30) {
         //     console.warn(`⚠️ Low FPS detected: ${this.fps}fps (avg frame time: ${this.metrics.avgFrameTime.toFixed(1)}ms)`);
         // }
+    }
+    
+    /**
+     * Estimate CPU usage based on frame timing
+     */
+    updateCPUMetrics() {
+        // Estimate CPU usage based on frame time vs idle time
+        // This is a rough approximation since we can't directly access CPU stats in browser
+        const now = performance.now();
+        const elapsed = now - this.lastCPUTime;
+        
+        if (elapsed > 0) {
+            // Estimate CPU usage as percentage of time spent in frame vs total time
+            const busyTime = this.metrics.avgFrameTime;
+            const totalTime = 1000 / 60; // Target 60fps frame time
+            const cpuUsage = Math.min(100, (busyTime / totalTime) * 100);
+            
+            this.cpuSamples.push(cpuUsage);
+            if (this.cpuSamples.length > this.maxSamples) {
+                this.cpuSamples.shift();
+            }
+            
+            // Average the samples
+            const avgCPU = this.cpuSamples.reduce((a, b) => a + b, 0) / this.cpuSamples.length;
+            this.metrics.cpuUsage = Math.round(avgCPU);
+            
+            this.lastCPUTime = now;
+        }
+    }
+    
+    /**
+     * Update GPU metrics if extension is available
+     */
+    updateGPUMetrics() {
+        // For now, estimate GPU load based on WebGL renderer activity
+        // and texture memory usage
+        if (window.app?.graphCanvas?.webglRenderer?.lodManager) {
+            const lodManager = window.app.graphCanvas.webglRenderer.lodManager;
+            const stats = lodManager.getStats();
+            
+            // Estimate GPU load based on texture memory usage and upload activity
+            const memoryUsage = (stats.totalMemory / lodManager.maxTextureMemory) * 100;
+            const uploadActivity = stats.queueLength * 5; // Each queued upload adds load
+            
+            const gpuLoad = Math.min(100, memoryUsage * 0.7 + uploadActivity * 0.3);
+            
+            this.gpuSamples.push(gpuLoad);
+            if (this.gpuSamples.length > this.maxSamples) {
+                this.gpuSamples.shift();
+            }
+            
+            // Average the samples
+            const avgGPU = this.gpuSamples.reduce((a, b) => a + b, 0) / this.gpuSamples.length;
+            this.metrics.gpuTime = Math.round(avgGPU);
+        } else {
+            // No WebGL, estimate based on canvas operations
+            const canvasLoad = this.metrics.avgFrameTime > 16 ? 50 : 20;
+            this.metrics.gpuTime = canvasLoad;
+        }
+    }
+    
+    /**
+     * Update memory usage metrics
+     */
+    updateMemoryMetrics() {
+        if (performance.memory) {
+            // Chrome provides memory info
+            const used = performance.memory.usedJSHeapSize;
+            const total = performance.memory.totalJSHeapSize;
+            this.metrics.memoryUsage = Math.round((used / total) * 100);
+        } else {
+            // Estimate based on texture memory if available
+            if (window.app?.graphCanvas?.webglRenderer?.lodManager) {
+                const lodManager = window.app.graphCanvas.webglRenderer.lodManager;
+                const stats = lodManager.getStats();
+                // Convert to percentage of max allowed
+                this.metrics.memoryUsage = Math.round((stats.totalMemory / lodManager.maxTextureMemory) * 100);
+            }
+        }
     }
     
     /**
@@ -239,18 +364,78 @@ class PerformanceMonitor {
         let y = 70; // Start below other HUD elements
         
         ctx.save();
+        
+        // Background for better readability
+        const lineHeight = 15;
+        const numLines = 7; // Increased for new metrics
+        ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+        ctx.fillRect(x - 5, y - 12, 250, numLines * lineHeight + 10);
+        
+        // FPS
         ctx.font = '12px monospace';
         ctx.fillStyle = this.fps < 30 ? '#ff4444' : this.fps < 50 ? '#ffaa44' : '#44ff44';
-        
         ctx.fillText(`FPS: ${stats.fps}`, x, y);
-        y += 15;
+        
+        // Frame time
+        y += lineHeight;
+        ctx.fillStyle = '#ffffff';
         ctx.fillText(`Frame: ${stats.avgFrameTime}ms (max: ${stats.maxFrameTime}ms)`, x, y);
-        y += 15;
+        
+        // CPU usage
+        y += lineHeight;
+        ctx.fillStyle = this.metrics.cpuUsage > 80 ? '#ff4444' : this.metrics.cpuUsage > 60 ? '#ffaa44' : '#44ff44';
+        ctx.fillText(`CPU: ${this.metrics.cpuUsage}%`, x, y);
+        
+        // GPU usage
+        y += lineHeight;
+        ctx.fillStyle = this.metrics.gpuTime > 80 ? '#ff4444' : this.metrics.gpuTime > 60 ? '#ffaa44' : '#44ff44';
+        ctx.fillText(`GPU: ${this.metrics.gpuTime}%`, x, y);
+        
+        // Memory usage
+        y += lineHeight;
+        ctx.fillStyle = this.metrics.memoryUsage > 80 ? '#ff4444' : this.metrics.memoryUsage > 60 ? '#ffaa44' : '#44ff44';
+        ctx.fillText(`Memory: ${this.metrics.memoryUsage}%`, x, y);
+        
+        // Dropped frames
+        y += lineHeight;
+        ctx.fillStyle = '#ffffff';
         ctx.fillText(`Dropped: ${stats.droppedFrames}`, x, y);
-        y += 15;
+        
+        // Quality level
+        y += lineHeight;
+        ctx.fillStyle = stats.qualityLevel === 'low' ? '#ff4444' : stats.qualityLevel === 'medium' ? '#ffaa44' : '#44ff44';
         ctx.fillText(`Quality: ${stats.qualityLevel}`, x, y);
         
+        // Draw CPU/GPU usage bars
+        this.drawUsageBars(ctx, x + 180, 70);
+        
         ctx.restore();
+    }
+    
+    /**
+     * Draw visual CPU/GPU usage bars
+     */
+    drawUsageBars(ctx, x, y) {
+        const barWidth = 50;
+        const barHeight = 8;
+        const spacing = 12;
+        
+        // CPU bar
+        ctx.fillStyle = 'rgba(255, 255, 255, 0.3)';
+        ctx.fillRect(x, y, barWidth, barHeight);
+        
+        const cpuColor = this.metrics.cpuUsage > 80 ? '#ff4444' : this.metrics.cpuUsage > 60 ? '#ffaa44' : '#44ff44';
+        ctx.fillStyle = cpuColor;
+        ctx.fillRect(x, y, (this.metrics.cpuUsage / 100) * barWidth, barHeight);
+        
+        // GPU bar
+        y += spacing;
+        ctx.fillStyle = 'rgba(255, 255, 255, 0.3)';
+        ctx.fillRect(x, y, barWidth, barHeight);
+        
+        const gpuColor = this.metrics.gpuTime > 80 ? '#ff4444' : this.metrics.gpuTime > 60 ? '#ffaa44' : '#44ff44';
+        ctx.fillStyle = gpuColor;
+        ctx.fillRect(x, y, (this.metrics.gpuTime / 100) * barWidth, barHeight);
     }
 }
 

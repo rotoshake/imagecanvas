@@ -7,6 +7,7 @@ class ImageUploadManager {
         this.uploadQueue = new Map(); // hash -> upload promise
         this.pendingUploads = []; // Queue of uploads waiting to start
         this.activeUploads = new Set(); // Currently uploading
+        this.activeXHRs = new Map(); // hash -> XMLHttpRequest for cancellation
         
         // Adaptive concurrent upload limits
         this.baseConcurrentUploads = 4;
@@ -33,6 +34,37 @@ class ImageUploadManager {
         
         // Monitor performance and adjust concurrency
         this.startPerformanceMonitoring();
+    }
+
+    /**
+     * Cancel an upload by hash
+     */
+    cancelUpload(hash) {
+        console.log(`🚫 Cancelling upload for hash: ${hash}`);
+        
+        // Cancel active XHR if exists
+        const xhr = this.activeXHRs.get(hash);
+        if (xhr) {
+            xhr.abort();
+            this.activeXHRs.delete(hash);
+        }
+        
+        // Remove from pending uploads
+        this.pendingUploads = this.pendingUploads.filter(upload => upload.hash !== hash);
+        
+        // Remove from active uploads
+        this.activeUploads.delete(hash);
+        
+        // Reject the upload promise
+        const uploadPromise = this.uploadQueue.get(hash);
+        if (uploadPromise) {
+            this.uploadQueue.delete(hash);
+        }
+        
+        // Update progress tracking
+        if (window.imageProcessingProgress) {
+            window.imageProcessingProgress.markFailed(hash, 'upload', 'Cancelled by user');
+        }
     }
 
     /**
@@ -134,6 +166,8 @@ class ImageUploadManager {
                 window.imageProcessingProgress.updateUploadProgress(hash, 1);
             }
 
+            // Don't show notification here - drag-drop already handles video notifications
+            
             return {
                 url: result.url,
                 hash: hash,
@@ -161,6 +195,9 @@ class ImageUploadManager {
     async _uploadWithProgress(formData, filename, hash) {
         return new Promise((resolve, reject) => {
             const xhr = new XMLHttpRequest();
+            
+            // Store XHR for potential cancellation
+            this.activeXHRs.set(hash, xhr);
 
             // Track upload progress
             xhr.upload.addEventListener('progress', (e) => {
@@ -171,6 +208,7 @@ class ImageUploadManager {
             });
 
             xhr.addEventListener('load', () => {
+                this.activeXHRs.delete(hash);
                 if (xhr.status >= 200 && xhr.status < 300) {
                     resolve({
                         ok: true,
@@ -184,14 +222,26 @@ class ImageUploadManager {
             });
 
             xhr.addEventListener('error', () => {
+                this.activeXHRs.delete(hash);
                 reject(new Error('Network error during upload'));
             });
 
             xhr.addEventListener('abort', () => {
+                this.activeXHRs.delete(hash);
                 reject(new Error('Upload aborted'));
             });
 
             xhr.open('POST', this.uploadUrl);
+            
+            // Set timeout for large files (5 minutes for videos)
+            const isVideo = formData.get('file')?.type?.startsWith('video/');
+            xhr.timeout = isVideo ? 300000 : 120000; // 5 min for videos, 2 min for images
+            
+            xhr.addEventListener('timeout', () => {
+                this.activeXHRs.delete(hash);
+                reject(new Error(`Upload timed out after ${xhr.timeout / 1000} seconds`));
+            });
+            
             xhr.send(formData);
         });
     }

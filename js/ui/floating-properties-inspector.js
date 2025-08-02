@@ -75,8 +75,8 @@ class FloatingPropertiesInspector {
                 font-family: ${FONT_CONFIG.APP_FONT};
                 font-size: 12px;
                 color: #e0e0e0;
-                min-width: 100px;
-                max-width: 200px;
+                min-width: 250px;
+                max-width: 250px;
                 min-height: 100px;
                 max-height: 600px;
                 display: flex;
@@ -1134,6 +1134,9 @@ class FloatingPropertiesInspector {
         // Add source resolution for video nodes too
         if (firstNode.type === 'video' || firstNode.type === 'media/video') {
             allProperties.sourceResolution = 'readonly';
+            allProperties.originalFormat = 'readonly';
+            allProperties.transcodedFormat = 'readonly';
+            allProperties.currentFormat = 'readonly';
         }
 
         for (const [prop, type] of Object.entries(allProperties)) {
@@ -1201,6 +1204,69 @@ class FloatingPropertiesInspector {
                 }
                 
                 return 'No thumbnail';
+            case 'originalFormat':
+                // Extract format from original filename
+                if (node.properties?.filename) {
+                    const ext = node.properties.filename.split('.').pop().toUpperCase();
+                    return ext || 'Unknown';
+                }
+                return 'Unknown';
+            case 'transcodedFormat':
+                // Check if video has been transcoded and what format
+                if (node.properties?.availableFormats && node.properties.availableFormats.length > 0) {
+                    return node.properties.availableFormats[0].toUpperCase();
+                } else if (node.properties?.transcodingComplete) {
+                    return 'WEBM'; // Default transcoded format
+                } else if (node.properties?.serverUrl) {
+                    // Extract format from server URL
+                    const ext = node.properties.serverUrl.split('.').pop().toUpperCase();
+                    if (ext !== node.properties?.filename?.split('.').pop().toUpperCase()) {
+                        return ext;
+                    }
+                }
+                return 'Not transcoded';
+            case 'currentFormat':
+                // Determine which format is currently being used
+                if (node.video && node.video.src) {
+                    const videoSrc = node.video.src;
+                    
+                    // Check if using blob URL (original)
+                    if (videoSrc.startsWith('blob:')) {
+                        // Using original format - blob URL
+                        if (node.properties?.filename) {
+                            return node.properties.filename.split('.').pop().toUpperCase() + ' (Original)';
+                        }
+                        return 'Original';
+                    } 
+                    
+                    // Check if using server URL (transcoded or original)
+                    if (videoSrc.includes('/uploads/')) {
+                        // Extract extension from current video source
+                        const currentExt = videoSrc.split('.').pop().split('?')[0].toUpperCase();
+                        
+                        // Check if this matches a transcoded format
+                        if (node.properties?.transcodingComplete && node.properties?.availableFormats?.includes(currentExt.toLowerCase())) {
+                            return currentExt + ' (Transcoded)';
+                        }
+                        
+                        // Check if extension differs from original
+                        const originalExt = node.properties?.filename?.split('.').pop().toUpperCase();
+                        if (currentExt !== originalExt) {
+                            return currentExt + ' (Transcoded)';
+                        }
+                        
+                        // Using server URL but same as original format
+                        return currentExt + ' (Server)';
+                    }
+                }
+                
+                // Fallback based on properties when video element not available
+                if (node.properties?.transcodingComplete && node.properties?.availableFormats?.length > 0) {
+                    return node.properties.availableFormats[0].toUpperCase() + ' (Transcoded)';
+                } else if (node.properties?.filename) {
+                    return node.properties.filename.split('.').pop().toUpperCase() + ' (Original)';
+                }
+                return 'Unknown';
             default: return node[prop];
         }
     }
@@ -1208,7 +1274,7 @@ class FloatingPropertiesInspector {
     renderPropertyGroups(container, properties) {
         const groups = {
             'Transform': ['x', 'y', 'width', 'height', 'rotation'],
-            'Content': ['filename', 'sourceResolution', 'thumbnailResolution', 'title', 'text', 'fontSize', 'fontFamily', 'textAlign', 'padding', 'leadingFactor'],
+            'Content': ['filename', 'sourceResolution', 'thumbnailResolution', 'originalFormat', 'transcodedFormat', 'currentFormat', 'title', 'text', 'fontSize', 'fontFamily', 'textAlign', 'padding', 'leadingFactor'],
             'Appearance': ['textColor', 'bgColor', 'bgAlpha', 'scale'],
             'Playback': ['loop', 'muted', 'autoplay', 'paused']
         };
@@ -1921,6 +1987,9 @@ class FloatingPropertiesInspector {
             filename: 'Source File',
             sourceResolution: 'Source Resolution',
             thumbnailResolution: 'Thumbnail Resolution',
+            originalFormat: 'Original Format',
+            transcodedFormat: 'Transcoded Format',
+            currentFormat: 'Current Format',
             text: 'Text',
             fontSize: 'Font Size',
             fontFamily: 'Font Family',
@@ -2104,8 +2173,34 @@ class FloatingPropertiesInspector {
             commandType = 'node_resize';
             params.sizes = nodes.map(n => {
                 const newSize = [...n.size];
-                if (prop === 'width') newSize[0] = value;
-                else newSize[1] = value;
+                
+                // Check if aspect ratio is locked
+                const isUILocked = this.aspectRatioLockBtn && this.aspectRatioLockBtn.classList.contains('locked');
+                
+                if (isUILocked && n.aspectRatioLocked !== false) {
+                    // Get the current aspect ratio to maintain
+                    const aspectRatio = n.lockedAspectRatio || (n.size[0] / n.size[1]);
+                    
+                    if (prop === 'width') {
+                        newSize[0] = value;
+                        newSize[1] = value / aspectRatio;
+                    } else {
+                        newSize[1] = value;
+                        newSize[0] = value * aspectRatio;
+                    }
+                    
+                    // Ensure both dimensions meet minimum size
+                    if (newSize[0] < 50 || newSize[1] < 50) {
+                        const scale = Math.max(50 / newSize[0], 50 / newSize[1]);
+                        newSize[0] *= scale;
+                        newSize[1] *= scale;
+                    }
+                } else {
+                    // Aspect ratio not locked, just set the single dimension
+                    if (prop === 'width') newSize[0] = value;
+                    else newSize[1] = value;
+                }
+                
                 return newSize;
             });
         } else if (prop === 'rotation') {

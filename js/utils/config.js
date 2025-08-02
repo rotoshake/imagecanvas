@@ -59,16 +59,17 @@ const CONFIG = {
     ALIGNMENT: {
         DEFAULT_MARGIN: 20,
         SPRING_K: 1550,  // Spring constant (stiffness) - frame-rate independent
-        SPRING_D: 44.0,   // Damping coefficient - frame-rate independent  
+        SPRING_D: 38.0,   // Damping coefficient - frame-rate independent  
         TOLERANCE: 10,
         ANIMATION_THRESHOLD: 2.0,  // Higher = tighter/faster finish, lower = smoother/longer tail
-        ANIMATION_DURATION: 150,   // Duration in milliseconds for ease animations
+        TIME_SCALE: 1.0,  // Time scale multiplier for animation speed (1.0 = normal, 2.0 = 2x speed)
+        // ANIMATION_DURATION: 150,   // Duration in milliseconds for ease animations
         
         // Performance optimizations for large node counts
         LARGE_SCALE_THRESHOLD: 100,  // Switch to optimized mode above this many nodes
-        LARGE_SCALE_SPRING_K: 2500,  // Higher stiffness for faster convergence with many nodes
-        LARGE_SCALE_SPRING_D: 70.0,  // Higher damping to prevent oscillation
-        LARGE_SCALE_THRESHOLD_MULTIPLIER: 5.0,  // Looser threshold for large scales
+        LARGE_SCALE_SPRING_K: 1550,  // Higher stiffness for faster convergence with many nodes
+        LARGE_SCALE_SPRING_D: 38.0,  // Higher damping to prevent oscillation
+        // LARGE_SCALE_THRESHOLD_MULTIPLIER: 5.0,  // Looser threshold for large scales
         MAX_ANIMATION_BATCH_SIZE: 100,  // Process this many nodes per frame maximum
         FRAME_BUDGET_MS: 4  // Maximum milliseconds to spend on alignment animation per frame
     },
@@ -147,14 +148,19 @@ CONFIG.LOGGING = {
 
 // API endpoint helpers
 CONFIG.ENDPOINTS = {
-    // Projects
-    PROJECTS: `${CONFIG.SERVER.API_BASE}/projects`,
-    PROJECT: (id) => `${CONFIG.SERVER.API_BASE}/projects/${id}`,
-    PROJECT_CANVAS: (id) => `${CONFIG.SERVER.API_BASE}/projects/${id}/canvas`,
-    USER_PROJECTS: (userId) => `${CONFIG.SERVER.API_BASE}/projects/user/${userId}`,
+    // Canvases
+    PROJECTS: `${CONFIG.SERVER.API_BASE}/canvases`, // Keep PROJECTS key for backward compatibility
+    CANVASES: `${CONFIG.SERVER.API_BASE}/canvases`,
+    CANVAS: (id) => `${CONFIG.SERVER.API_BASE}/canvases/${id}`,
+    CANVAS_STATE: (id) => `${CONFIG.SERVER.API_BASE}/canvases/${id}/state`,
+    USER_CANVASES: (userId) => `${CONFIG.SERVER.API_BASE}/canvases/user/${userId}`,
+    // Legacy aliases for compatibility
+    PROJECT: (id) => `${CONFIG.SERVER.API_BASE}/canvases/${id}`,
+    PROJECT_CANVAS: (id) => `${CONFIG.SERVER.API_BASE}/canvases/${id}/state`,
+    USER_PROJECTS: (userId) => `${CONFIG.SERVER.API_BASE}/canvases/user/${userId}`,
     
     // Media
-    UPLOAD: `${CONFIG.SERVER.API_BASE}/upload`,
+    UPLOAD: `${CONFIG.SERVER.API_BASE}/api/upload`,
     UPLOADS: `${CONFIG.SERVER.API_BASE}/uploads`,
     
     // Health

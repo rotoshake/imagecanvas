@@ -263,13 +263,23 @@ class IndexedDBThumbnailStore {
      * Convert blob back to canvas
      */
     async _blobToCanvas(blob) {
+        // Validate blob before processing
+        if (!blob || blob.size === 0) {
+            throw new Error('Invalid or empty blob');
+        }
+        
         const img = new Image();
         const url = URL.createObjectURL(blob);
         
         try {
             await new Promise((resolve, reject) => {
                 img.onload = resolve;
-                img.onerror = reject;
+                img.onerror = (event) => {
+                    // Provide more detailed error information
+                    const error = new Error(`Failed to load image from blob (size: ${blob.size}, type: ${blob.type})`);
+                    error.event = event;
+                    reject(error);
+                };
                 img.src = url;
             });
             
@@ -301,11 +311,25 @@ class IndexedDBThumbnailStore {
             try {
                 canvasThumbnails[size] = await this._blobToCanvas(blob);
             } catch (error) {
-                console.error(`Failed to convert thumbnail ${size} for ${hash}:`, error);
+                console.warn(`Failed to convert thumbnail ${size} for ${hash.substring(0, 8)}:`, error.message);
+                // Continue processing other sizes instead of failing completely
             }
         }
         
-        return Object.keys(canvasThumbnails).length > 0 ? canvasThumbnails : null;
+        // If we couldn't load any thumbnails, delete the corrupted entry
+        if (Object.keys(canvasThumbnails).length === 0) {
+            console.warn(`All thumbnails corrupted for ${hash.substring(0, 8)}, removing from cache`);
+            try {
+                const transaction = this.db.transaction([this.storeName], 'readwrite');
+                const store = transaction.objectStore(this.storeName);
+                await store.delete(hash);
+            } catch (deleteError) {
+                console.error('Failed to delete corrupted entry:', deleteError);
+            }
+            return null;
+        }
+        
+        return canvasThumbnails;
     }
     
     /**
@@ -356,6 +380,19 @@ class IndexedDBThumbnailStore {
         
         // Run cleanup every 24 hours
         setInterval(() => this._cleanup(), 24 * 60 * 60 * 1000);
+    }
+    
+    /**
+     * Close the database connection
+     * Important: Call this before deleting the database
+     */
+    close() {
+        if (this.db) {
+            console.log('Closing IndexedDB connection for', this.dbName);
+            this.db.close();
+            this.db = null;
+            this.isAvailable = false;
+        }
     }
     
     /**

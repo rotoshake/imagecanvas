@@ -74,6 +74,12 @@ class ImageCanvasApp {
             // Setup FPS testing helpers
             this.setupFPSTestingHelpers();
             
+            // DISABLED: This migration was causing 404 errors by changing filenames to non-existent files
+            // Fix incorrect serverFilename values after a delay to ensure nodes are loaded
+            // setTimeout(() => {
+            //     this.migrateServerFilenames();
+            // }, 1000);
+            
         } catch (error) {
             console.error('Failed to initialize app:', error);
         }
@@ -191,6 +197,29 @@ class ImageCanvasApp {
     }
     
     /**
+     * Create color correction toggle button
+     */
+    createColorCorrectionButton() {
+        // Create button element
+        this.colorCorrectionBtn = document.createElement('button');
+        this.colorCorrectionBtn.className = 'color-correction-toggle';
+        this.colorCorrectionBtn.innerHTML = '<span class="icon">🎨</span>';
+        this.colorCorrectionBtn.title = 'Show/Hide Color Correction (C)';
+        
+        // Add styles
+        this.addColorCorrectionButtonStyles();
+        
+        // Add click handler
+        this.colorCorrectionBtn.addEventListener('click', () => {
+            this.colorCorrectionPanel.toggle();
+            this.colorCorrectionBtn.classList.toggle('active', this.colorCorrectionPanel.isVisible);
+        });
+        
+        // Add to DOM
+        document.body.appendChild(this.colorCorrectionBtn);
+    }
+    
+    /**
      * Add styles for properties button
      */
     addPropertiesButtonStyles() {
@@ -251,6 +280,74 @@ class ImageCanvasApp {
                 }
                 
                 .properties-inspector-toggle .icon {
+                    font-size: 12px;
+                }
+            }
+        `;
+        document.head.appendChild(style);
+    }
+    
+    /**
+     * Add styles for color correction button
+     */
+    addColorCorrectionButtonStyles() {
+        const style = document.createElement('style');
+        style.textContent = `
+            /* Color Correction Toggle Button */
+            .color-correction-toggle {
+                position: fixed;
+                bottom: 20px;
+                right: 60px;
+                background: #1e1e1e;
+                border: 1px solid #333;
+                color: #e0e0e0;
+                padding: 6px;
+                border-radius: 50%;
+                cursor: pointer;
+                font-size: 12px;
+                width: 20px;
+                height: 20px;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                transition: all 0.2s ease;
+                z-index: 999;
+                box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+            }
+            
+            .color-correction-toggle .icon {
+                font-size: 14px;
+                line-height: 1;
+            }
+            
+            .color-correction-toggle:hover {
+                background: #252525;
+                border-color: #444;
+                box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+                transform: translateY(-1px);
+            }
+            
+            .color-correction-toggle.active {
+                background: #333;
+                border-color: #ff6b6b;
+                box-shadow: 0 0 0 2px rgba(255, 107, 107, 0.2);
+            }
+            
+            .color-correction-toggle:active {
+                transform: translateY(0);
+            }
+            
+            /* Responsive adjustments */
+            @media (max-width: 768px) {
+                .color-correction-toggle {
+                    bottom: 15px;
+                    right: 50px;
+                    width: 18px;
+                    height: 18px;
+                    padding: 5px;
+                }
+                
+                .color-correction-toggle .icon {
                     font-size: 12px;
                 }
             }
@@ -642,6 +739,87 @@ class ImageCanvasApp {
         console.log('  testMinimal()  - Test minimal mode (200+ FPS)');
         console.log('  fpsStats()     - Show current stats');
     }
+    
+    /**
+     * Migrate serverFilename values from original filenames to actual server filenames
+     * This fixes issues where drag-drop uploads had incorrect serverFilename values
+     */
+    async migrateServerFilenames() {
+        if (!this.graph?.nodes) return;
+        
+        let migratedCount = 0;
+        
+        for (const node of this.graph.nodes) {
+            // Handle both image and video nodes
+            if ((node.type === 'media/image' || node.type === 'media/video') && node.properties) {
+                const props = node.properties;
+                
+                // Check if serverFilename looks like an original filename (e.g., "IMG_7189.jpeg")
+                // instead of a server filename (e.g., "1752793848045-hvat3b.jpeg")
+                let needsMigration = false;
+                let actualServerFilename = null;
+                
+                // Check serverFilename
+                if (props.serverFilename && !props.serverFilename.match(/^\d{13}-[a-z0-9]+\./)) {
+                    needsMigration = true;
+                }
+                
+                // Also check if serverUrl contains the wrong filename
+                if (props.serverUrl) {
+                    const urlMatch = props.serverUrl.match(/\/uploads\/(.+)$/);
+                    if (urlMatch && urlMatch[1] && !urlMatch[1].match(/^\d{13}-[a-z0-9]+\./)) {
+                        needsMigration = true;
+                        // serverUrl also has wrong filename
+                    }
+                }
+                
+                if (needsMigration) {
+                    // Look for the actual server filename in other properties or generate a placeholder
+                    // First check if we have a properly formatted filename anywhere
+                    if (props.serverUrl) {
+                        const match = props.serverUrl.match(/(\d{13}-[a-z0-9]+\.[^/]+)$/);
+                        if (match) {
+                            actualServerFilename = match[1];
+                        }
+                    }
+                    
+                    // If we found a valid server filename, update both serverFilename and serverUrl
+                    if (actualServerFilename) {
+                        const nodeTypeLabel = node.type === 'media/video' ? '🎬' : '🖼️';
+                        console.log(`🔧 Migrating filenames for ${nodeTypeLabel} ${props.hash?.substring(0, 8)}:`);
+                        console.log(`   serverFilename: "${props.serverFilename}" → "${actualServerFilename}"`);
+                        
+                        props.serverFilename = actualServerFilename;
+                        
+                        // Fix serverUrl too
+                        if (props.serverUrl) {
+                            const oldUrl = props.serverUrl;
+                            props.serverUrl = `/uploads/${actualServerFilename}`;
+                            console.log(`   serverUrl: "${oldUrl}" → "${props.serverUrl}"`);
+                        }
+                        
+                        migratedCount++;
+                    } else {
+                        // Can't determine the actual filename - this node needs to be re-uploaded
+                        console.warn(`⚠️ Cannot migrate ${node.type} node - no valid server filename found:`, {
+                            hash: props.hash?.substring(0, 8),
+                            serverFilename: props.serverFilename,
+                            serverUrl: props.serverUrl,
+                            filename: props.filename
+                        });
+                    }
+                }
+            }
+        }
+        
+        if (migratedCount > 0) {
+            console.log(`✅ Migrated ${migratedCount} media nodes with incorrect serverFilename values`);
+            // Mark canvas as dirty to ensure any visible images update
+            if (this.graphCanvas) {
+                this.graphCanvas.dirty_canvas = true;
+            }
+        }
+    }
 }
 
 // ===================================
@@ -820,6 +998,14 @@ async function initApp() {
             app.propertiesBtn.classList.toggle('active', isVisible);
         });
         
+        // Create Color Correction Toggle Button
+        app.createColorCorrectionButton();
+        
+        // Set up visibility sync between button and panel
+        app.colorCorrectionPanel.setVisibilityCallback((isVisible) => {
+            app.colorCorrectionBtn.classList.toggle('active', isVisible);
+        });
+        
         // Initialize Navigation State Manager
         app.navigationStateManager = new NavigationStateManager(app);
         window.navigationStateManager = app.navigationStateManager;
@@ -911,6 +1097,216 @@ if (document.readyState === 'loading') {
 } else {
     initApp();
 }
+
+// Debug shortcut for database wipe (Ctrl+Shift+Delete)
+document.addEventListener('keydown', async (e) => {
+    if (e.ctrlKey && e.shiftKey && e.key === 'Delete') {
+        e.preventDefault();
+        
+        // Create confirmation dialog
+        const backdrop = document.createElement('div');
+        backdrop.style.cssText = `
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0, 0, 0, 0.8);
+            z-index: 100000;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        `;
+        
+        const dialog = document.createElement('div');
+        dialog.style.cssText = `
+            background: #2a2a2a;
+            border: 2px solid #ff4444;
+            border-radius: 8px;
+            padding: 30px;
+            max-width: 500px;
+            color: #fff;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+        `;
+        
+        dialog.innerHTML = `
+            <h2 style="margin: 0 0 20px 0; color: #ff4444;">⚠️ Complete Database Wipe</h2>
+            <p style="margin: 0 0 20px 0; line-height: 1.5;">
+                This will <strong>permanently delete</strong>:
+            </p>
+            <ul style="margin: 0 0 20px 0; padding-left: 20px; line-height: 1.8;">
+                <li>All projects and canvases</li>
+                <li>All uploaded images and videos</li>
+                <li>All thumbnails and transcoded files</li>
+                <li>All database records</li>
+                <li>Browser cache and IndexedDB</li>
+            </ul>
+            <p style="margin: 0 0 25px 0; color: #ffaa44;">
+                <strong>This action cannot be undone!</strong>
+            </p>
+            <div style="display: flex; gap: 10px; justify-content: flex-end;">
+                <button id="wipe-cancel" style="
+                    padding: 10px 20px;
+                    background: #444;
+                    border: none;
+                    color: #fff;
+                    border-radius: 4px;
+                    cursor: pointer;
+                    font-size: 14px;
+                ">Cancel</button>
+                <button id="wipe-confirm" style="
+                    padding: 10px 20px;
+                    background: #ff4444;
+                    border: none;
+                    color: #fff;
+                    border-radius: 4px;
+                    cursor: pointer;
+                    font-size: 14px;
+                    font-weight: bold;
+                ">Wipe Everything</button>
+            </div>
+        `;
+        
+        backdrop.appendChild(dialog);
+        document.body.appendChild(backdrop);
+        
+        // Handle dialog actions
+        const cancelBtn = document.getElementById('wipe-cancel');
+        const confirmBtn = document.getElementById('wipe-confirm');
+        
+        const closeDialog = () => {
+            backdrop.remove();
+        };
+        
+        cancelBtn.onclick = closeDialog;
+        backdrop.onclick = (e) => {
+            if (e.target === backdrop) closeDialog();
+        };
+        
+        confirmBtn.onclick = async () => {
+            confirmBtn.disabled = true;
+            confirmBtn.textContent = 'Wiping...';
+            
+            try {
+                // 1. Clear client-side storage
+                console.log('🧹 Clearing browser storage...');
+                
+                // Clear IndexedDB
+                const databases = ['ImageCanvasThumbnails', 'ThumbnailStore', 'ImageCanvasDB', 'imageCanvas'];
+                for (const dbName of databases) {
+                    try {
+                        await new Promise((resolve) => {
+                            const deleteReq = indexedDB.deleteDatabase(dbName);
+                            deleteReq.onsuccess = resolve;
+                            deleteReq.onerror = resolve;
+                            deleteReq.onblocked = () => setTimeout(resolve, 100);
+                        });
+                        console.log(`✅ Deleted IndexedDB: ${dbName}`);
+                    } catch (e) {
+                        // Ignore errors
+                    }
+                }
+                
+                // Clear localStorage - but be selective to preserve user preferences
+                const keysToPreserve = ['DEBUG', 'DEBUG_COLLAB', 'username', 'imagecanvas_username'];
+                const preservedValues = {};
+                
+                // Save values we want to keep
+                keysToPreserve.forEach(key => {
+                    const value = localStorage.getItem(key);
+                    if (value !== null) {
+                        preservedValues[key] = value;
+                    }
+                });
+                
+                // Clear everything
+                localStorage.clear();
+                
+                // Restore preserved values
+                Object.entries(preservedValues).forEach(([key, value]) => {
+                    localStorage.setItem(key, value);
+                });
+                
+                console.log('✅ Cleared localStorage (preserved user preferences)');
+                
+                // Clear sessionStorage
+                sessionStorage.clear();
+                console.log('✅ Cleared sessionStorage');
+                
+                // Clear canvas-related localStorage items
+                localStorage.removeItem('lastCanvasId');
+                localStorage.removeItem('currentCanvasId');
+                localStorage.removeItem('activeCanvasId');
+                console.log('✅ Cleared canvas references from localStorage');
+                
+                // Clear caches
+                if (window.imageCache) window.imageCache.clear();
+                if (window.thumbnailCache) window.thumbnailCache.clear();
+                if (window.offscreenRenderCache) window.offscreenRenderCache.clear();
+                console.log('✅ Cleared memory caches');
+                
+                // Clear canvas navigator cache if it exists
+                if (window.app?.canvasNavigator) {
+                    window.app.canvasNavigator.canvases = [];
+                    window.app.canvasNavigator.currentCanvasId = null;
+                    console.log('✅ Cleared canvas navigator cache');
+                }
+                
+                // 2. Call server endpoint to wipe database
+                console.log('🗄️ Wiping server database...');
+                const response = await fetch(`${CONFIG.SERVER.API_BASE}/debug/wipe-database`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        confirm: true,
+                        includeFiles: true
+                    })
+                });
+                
+                if (!response.ok) {
+                    throw new Error(`Server wipe failed: ${response.status}`);
+                }
+                
+                const result = await response.json();
+                console.log('✅ Server wipe complete:', result);
+                
+                // 3. Show success and reload
+                confirmBtn.textContent = 'Complete! Reloading...';
+                confirmBtn.style.background = '#44ff44';
+                
+                // Wait a bit longer to ensure database operations complete
+                setTimeout(() => {
+                    // Force hard reload to bypass any caches
+                    // Use location.href to ensure complete reload
+                    window.location.href = window.location.href.split('?')[0] + '?t=' + Date.now();
+                }, 2000);
+                
+            } catch (error) {
+                console.error('❌ Wipe failed:', error);
+                confirmBtn.textContent = 'Failed!';
+                confirmBtn.style.background = '#ff0000';
+                
+                // Show error
+                const errorMsg = document.createElement('p');
+                errorMsg.style.cssText = 'color: #ff6666; margin-top: 15px;';
+                errorMsg.textContent = `Error: ${error.message}`;
+                dialog.appendChild(errorMsg);
+                
+                // Re-enable button after delay
+                setTimeout(() => {
+                    confirmBtn.disabled = false;
+                    confirmBtn.textContent = 'Wipe Everything';
+                    confirmBtn.style.background = '#ff4444';
+                }, 3000);
+            }
+        };
+        
+        // Focus on cancel button by default (safety)
+        cancelBtn.focus();
+    }
+});
 
 // Handle errors gracefully
 window.addEventListener('error', (event) => {

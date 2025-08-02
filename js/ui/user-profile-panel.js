@@ -313,7 +313,7 @@ class UserProfilePanel {
             const enableAnimationsCheckbox = this.panel.querySelector('#enable-animations');
             
             showGridCheckbox.checked = this.userProfileSystem.getPreference('showGrid', true);
-            showTitlesCheckbox.checked = this.userProfileSystem.getPreference('showTitles', false);
+            showTitlesCheckbox.checked = this.userProfileSystem.getPreference('showTitles', true);
             showPerformanceCheckbox.checked = this.userProfileSystem.getPreference('showPerformance', false);
             enableAnimationsCheckbox.checked = this.userProfileSystem.getPreference('enableAnimations', true);
             

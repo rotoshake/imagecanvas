@@ -11,6 +11,13 @@ class AutoAlignmentManager {
         // Animation timing
         this.lastUpdateTime = 0;
         
+        // Fixed timestep simulation for stable spring physics
+        this.fixedTimestep = 1/60;  // 60Hz physics (16.67ms)
+        this.accumulator = 0;
+        this.maxSubsteps = 4;  // Prevent spiral of death on very slow frames
+        this.timeScale = CONFIG.ALIGNMENT.TIME_SCALE || 1.0;  // Time scaling factor from config
+        this.skipInterpolation = false;  // Option to disable interpolation for debugging
+        
         // Performance tracking for large-scale animations
         this.animationFrameStartTime = 0;
         this.animationNodeIndex = 0;  // For batched processing
@@ -224,6 +231,12 @@ class AutoAlignmentManager {
         this.autoAlignCommittedAxis = null;
         this.autoAlignCommittedTargets = null;
         this.autoAlignCommittedDirection = null;
+        // Don't clear animation state - let the animation complete naturally
+        // The animation needs these to continue running
+        // They will be cleared by completeAnimation() when finished
+        // this.autoAlignAnimating = false;
+        // this.autoAlignAnimNodes = null;
+        // this.autoAlignAnimTargets = null;
         this.canvas.dirty_canvas = true;
     }
     
@@ -231,6 +244,9 @@ class AutoAlignmentManager {
         if (this.selection.size() < 2) {
             return;
         }
+        
+        // Reset accumulator when starting new animation for consistent timing
+        this.accumulator = 0;
 
         // Store original positions if not already set
         if (!this.autoAlignOriginals) {
@@ -425,6 +441,9 @@ class AutoAlignmentManager {
     
     startGridAlign(startPos) {
         if (this.selection.size() === 0) return false;
+        
+        // Reset accumulator when starting new animation for consistent timing
+        this.accumulator = 0;
 
         this.gridAlignMode = true;
         this.gridAlignDragging = true;
@@ -598,42 +617,147 @@ class AutoAlignmentManager {
     updateAnimations() {
         let needsRedraw = false;
         
-        // Calculate delta time for frame-rate independence
+        // Calculate real frame delta time
         const currentTime = performance.now() / 1000; // Convert to seconds
-        const deltaTime = this.lastUpdateTime ? Math.min(currentTime - this.lastUpdateTime, 0.033) : 0.016; // Cap at ~30fps min
+        const frameDeltaTime = this.lastUpdateTime ? Math.min(currentTime - this.lastUpdateTime, 0.1) : 0.016; // Cap at 100ms
         this.lastUpdateTime = currentTime;
         
         // Clean up any stale animation properties on nodes
         this.cleanupStaleAnimationProperties();
         
-        // Update auto-align animations
-        if (this.autoAlignAnimating && this.autoAlignAnimNodes && this.autoAlignAnimTargets) {
-            needsRedraw = true;
-            const nodeCount = this.autoAlignAnimNodes.length;
-            
-            // Use optimized approach for large node counts
-            if (nodeCount >= CONFIG.ALIGNMENT.LARGE_SCALE_THRESHOLD) {
-                needsRedraw = this.updateLargeScaleAnimation(deltaTime, this.autoAlignAnimNodes, this.autoAlignAnimTargets, false) || needsRedraw;
-            } else {
-                needsRedraw = this.updateStandardAnimation(deltaTime, this.autoAlignAnimNodes, this.autoAlignAnimTargets, false) || needsRedraw;
-            }
+        // Accumulate time for fixed timestep simulation with time scaling
+        this.accumulator += frameDeltaTime * this.timeScale;
+        
+        // Clamp accumulator to prevent spiral of death
+        const maxAccumulator = this.fixedTimestep * this.maxSubsteps;
+        if (this.accumulator > maxAccumulator) {
+            this.accumulator = maxAccumulator;
         }
         
-        // Update grid-align animations
-        if (this.gridAlignAnimating && this.gridAlignAnimNodes && this.gridAlignAnimTargets) {
-            needsRedraw = true;
-            const nodeCount = this.gridAlignAnimNodes.length;
+        // Store interpolation alpha for smooth visuals
+        let interpolationAlpha = 0;
+        
+        // Run physics simulation with fixed timestep
+        let substeps = 0;
+        while (this.accumulator >= this.fixedTimestep && substeps < this.maxSubsteps) {
+            // Update auto-align animations with fixed timestep
+            if (this.autoAlignAnimating && this.autoAlignAnimNodes && this.autoAlignAnimTargets) {
+                const nodeCount = this.autoAlignAnimNodes.length;
+                
+                // Use optimized approach for large node counts
+                if (nodeCount >= CONFIG.ALIGNMENT.LARGE_SCALE_THRESHOLD) {
+                    this.updateLargeScaleAnimation(this.fixedTimestep, this.autoAlignAnimNodes, this.autoAlignAnimTargets, false);
+                } else {
+                    this.updateStandardAnimation(this.fixedTimestep, this.autoAlignAnimNodes, this.autoAlignAnimTargets, false);
+                }
+            }
             
-            // Use optimized approach for large node counts
-            if (nodeCount >= CONFIG.ALIGNMENT.LARGE_SCALE_THRESHOLD) {
-                needsRedraw = this.updateLargeScaleAnimation(deltaTime, this.gridAlignAnimNodes, this.gridAlignAnimTargets, true) || needsRedraw;
-            } else {
-                needsRedraw = this.updateStandardAnimation(deltaTime, this.gridAlignAnimNodes, this.gridAlignAnimTargets, true) || needsRedraw;
+            // Update grid-align animations with fixed timestep
+            if (this.gridAlignAnimating && this.gridAlignAnimNodes && this.gridAlignAnimTargets) {
+                const nodeCount = this.gridAlignAnimNodes.length;
+                
+                // Use optimized approach for large node counts
+                if (nodeCount >= CONFIG.ALIGNMENT.LARGE_SCALE_THRESHOLD) {
+                    this.updateLargeScaleAnimation(this.fixedTimestep, this.gridAlignAnimNodes, this.gridAlignAnimTargets, true);
+                } else {
+                    this.updateStandardAnimation(this.fixedTimestep, this.gridAlignAnimNodes, this.gridAlignAnimTargets, true);
+                }
+            }
+            
+            this.accumulator -= this.fixedTimestep;
+            substeps++;
+            needsRedraw = true;
+        }
+        
+        // Calculate interpolation alpha for remaining time
+        if (!this.skipInterpolation && this.accumulator > 0 && this.fixedTimestep > 0) {
+            interpolationAlpha = this.accumulator / this.fixedTimestep;
+            
+            // Apply interpolation for smooth visuals
+            if (this.autoAlignAnimating && this.autoAlignAnimNodes) {
+                this.interpolateNodePositions(this.autoAlignAnimNodes, interpolationAlpha, false);
+                needsRedraw = true;
+            }
+            
+            if (this.gridAlignAnimating && this.gridAlignAnimNodes) {
+                this.interpolateNodePositions(this.gridAlignAnimNodes, interpolationAlpha, true);
+                needsRedraw = true;
             }
         }
         
         if (needsRedraw) {
             this.canvas.dirty_canvas = true;
+            
+            // Restore physics positions after interpolation
+            // This needs to happen after the draw but before the next physics update
+            if (!this.skipInterpolation) {
+                requestAnimationFrame(() => this.restorePhysicsPositions());
+            }
+        }
+    }
+    
+    restorePhysicsPositions() {
+        // Restore physics positions that were temporarily overwritten by interpolation
+        if (this.autoAlignAnimNodes) {
+            for (const node of this.autoAlignAnimNodes) {
+                if (node._needsPhysicsRestore && node._physicsPos && node._animPos) {
+                    node._animPos[0] = node._physicsPos[0];
+                    node._animPos[1] = node._physicsPos[1];
+                    node._needsPhysicsRestore = false;
+                    delete node._physicsPos;
+                }
+            }
+        }
+        
+        if (this.gridAlignAnimNodes) {
+            for (const node of this.gridAlignAnimNodes) {
+                if (node._needsPhysicsRestore && node._physicsPos && node._gridAnimPos) {
+                    node._gridAnimPos[0] = node._physicsPos[0];
+                    node._gridAnimPos[1] = node._physicsPos[1];
+                    node._needsPhysicsRestore = false;
+                    delete node._physicsPos;
+                }
+            }
+        }
+    }
+    
+    // ===================================
+    // INTERPOLATION FOR SMOOTH VISUALS
+    // ===================================
+    
+    interpolateNodePositions(animNodes, alpha, isGridAlign) {
+        const posKey = isGridAlign ? '_gridAnimPos' : '_animPos';
+        const prevPosKey = isGridAlign ? '_gridPrevPos' : '_prevPos';
+        
+        // Don't modify the actual physics position!
+        // The issue was that we were overwriting the physics state with interpolated values
+        // Instead, we should only interpolate for display purposes
+        // Since the canvas draws from _animPos/_gridAnimPos, we'll temporarily store
+        // the interpolated value, but restore it after drawing
+        
+        for (const node of animNodes) {
+            if (node[posKey] && node[prevPosKey]) {
+                // Store the current physics position
+                if (!node._physicsPos) {
+                    node._physicsPos = [...node[posKey]];
+                } else {
+                    node._physicsPos[0] = node[posKey][0];
+                    node._physicsPos[1] = node[posKey][1];
+                }
+                
+                // Linear interpolation between previous and current physics position
+                const prevX = node[prevPosKey][0];
+                const prevY = node[prevPosKey][1];
+                const currX = node._physicsPos[0];
+                const currY = node._physicsPos[1];
+                
+                // Temporarily update display position with interpolation
+                node[posKey][0] = prevX + (currX - prevX) * alpha;
+                node[posKey][1] = prevY + (currY - prevY) * alpha;
+                
+                // Mark that we need to restore physics position after drawing
+                node._needsPhysicsRestore = true;
+            }
         }
     }
     
@@ -646,6 +770,7 @@ class AutoAlignmentManager {
         let allDone = true;
         const posKey = isGridAlign ? '_gridAnimPos' : '_animPos';
         const velKey = isGridAlign ? '_gridAnimVel' : '_animVel';
+        const prevPosKey = isGridAlign ? '_gridPrevPos' : '_prevPos';
         
         for (const node of animNodes) {
             const target = animTargets[node.id];
@@ -653,6 +778,13 @@ class AutoAlignmentManager {
             
             if (!node[posKey]) node[posKey] = [...node.pos];
             if (!node[velKey]) node[velKey] = [0, 0];
+            
+            // Store previous position for interpolation
+            if (!node[prevPosKey]) node[prevPosKey] = [...node[posKey]];
+            else {
+                node[prevPosKey][0] = node[posKey][0];
+                node[prevPosKey][1] = node[posKey][1];
+            }
             
             let done = true;
             for (let i = 0; i < 2; i++) {
@@ -696,13 +828,14 @@ class AutoAlignmentManager {
         
         const posKey = isGridAlign ? '_gridAnimPos' : '_animPos';
         const velKey = isGridAlign ? '_gridAnimVel' : '_animVel';
+        const prevPosKey = isGridAlign ? '_gridPrevPos' : '_prevPos';
         const maxBatchSize = CONFIG.ALIGNMENT.MAX_ANIMATION_BATCH_SIZE;
         const frameBudget = CONFIG.ALIGNMENT.FRAME_BUDGET_MS;
         
         // Use adaptive spring constants for large scale
         const k = CONFIG.ALIGNMENT.LARGE_SCALE_SPRING_K;
         const d = CONFIG.ALIGNMENT.LARGE_SCALE_SPRING_D;
-        const threshold = CONFIG.ALIGNMENT.ANIMATION_THRESHOLD * CONFIG.ALIGNMENT.LARGE_SCALE_THRESHOLD_MULTIPLIER;
+        const threshold = CONFIG.ALIGNMENT.ANIMATION_THRESHOLD * (CONFIG.ALIGNMENT.LARGE_SCALE_THRESHOLD_MULTIPLIER || 5.0);
         
         // Reset node index if we're starting a new cycle
         if (this.animationNodeIndex >= animNodes.length) {
@@ -724,6 +857,13 @@ class AutoAlignmentManager {
             if (target) {
                 if (!node[posKey]) node[posKey] = [...node.pos];
                 if (!node[velKey]) node[velKey] = [0, 0];
+                
+                // Store previous position for interpolation
+                if (!node[prevPosKey]) node[prevPosKey] = [...node[posKey]];
+                else {
+                    node[prevPosKey][0] = node[posKey][0];
+                    node[prevPosKey][1] = node[posKey][1];
+                }
                 
                 let done = true;
                 for (let i = 0; i < 2; i++) {
@@ -794,19 +934,43 @@ class AutoAlignmentManager {
         const posKey = isGridAlign ? '_gridAnimPos' : '_animPos';
         const velKey = isGridAlign ? '_gridAnimVel' : '_animVel';
         
+        // First update all positions and mark nodes as completing
         for (const node of animNodes) {
             if (node[posKey]) {
                 // Update the actual node position to match the animation position
                 node.pos[0] = node[posKey][0];
                 node.pos[1] = node[posKey][1];
                 
+                // Keep animation position in sync until we clean it up
+                node[posKey][0] = node.pos[0];
+                node[posKey][1] = node.pos[1];
+                
                 nodeIds.push(node.id);
                 finalPositions.push([...node.pos]);
-                
+            }
+        }
+        
+        // Schedule cleanup for next frame to avoid visual glitch
+        requestAnimationFrame(() => {
+            // Clear animation properties
+            for (const node of animNodes) {
                 delete node[posKey];
                 delete node[velKey];
             }
-        }
+            
+            // Clear WebGL cache
+            if (this.canvas.webglRenderer && this.canvas.webglRenderer.renderedNodes) {
+                for (const node of animNodes) {
+                    const nodeId = node.id || (node.properties?.hash ? 
+                        `${node.properties.hash}_${node.pos[0]}_${node.pos[1]}` : 
+                        `${node.type}_${node.pos[0]}_${node.pos[1]}`);
+                    this.canvas.webglRenderer.renderedNodes.delete(nodeId);
+                }
+            }
+            
+            // Force redraw after cleanup
+            this.canvas.dirty_canvas = true;
+        });
         
         // Mark nodes as having completed animation to prevent server updates from interfering
         if (isGridAlign && animNodes.length > 0) {
@@ -874,14 +1038,18 @@ class AutoAlignmentManager {
             
             for (const node of allNodes) {
                 let hadAnimProps = false;
-                if (node._animPos || node._animVel) {
+                if (node._animPos || node._animVel || node._prevPos || node._physicsPos) {
                     delete node._animPos;
                     delete node._animVel;
+                    delete node._prevPos;
+                    delete node._physicsPos;
+                    delete node._needsPhysicsRestore;
                     hadAnimProps = true;
                 }
-                if (node._gridAnimPos || node._gridAnimVel) {
+                if (node._gridAnimPos || node._gridAnimVel || node._gridPrevPos) {
                     delete node._gridAnimPos;
                     delete node._gridAnimVel;
+                    delete node._gridPrevPos;
                     hadAnimProps = true;
                 }
                 // Also clean up the alignment completion flag if it's old
@@ -950,10 +1118,32 @@ class AutoAlignmentManager {
                 if (target) {
                     node.pos[0] = target[0];
                     node.pos[1] = target[1];
+                    // Keep animation position in sync
+                    if (node._animPos) {
+                        node._animPos[0] = node.pos[0];
+                        node._animPos[1] = node.pos[1];
+                    }
                 }
-                delete node._animPos;
-                delete node._animVel;
             }
+            
+            // Schedule cleanup for next frame
+            const nodesToClean = [...this.autoAlignAnimNodes];
+            requestAnimationFrame(() => {
+                for (const node of nodesToClean) {
+                    delete node._animPos;
+                    delete node._animVel;
+                }
+                // Clear WebGL cache
+                if (this.canvas.webglRenderer && this.canvas.webglRenderer.renderedNodes) {
+                    for (const node of nodesToClean) {
+                        const nodeId = node.id || (node.properties?.hash ? 
+                            `${node.properties.hash}_${node.pos[0]}_${node.pos[1]}` : 
+                            `${node.type}_${node.pos[0]}_${node.pos[1]}`);
+                        this.canvas.webglRenderer.renderedNodes.delete(nodeId);
+                    }
+                }
+                this.canvas.dirty_canvas = true;
+            });
         }
         
         if (this.gridAlignAnimating && this.gridAlignAnimNodes && this.gridAlignAnimTargets) {
@@ -963,10 +1153,32 @@ class AutoAlignmentManager {
                 if (target) {
                     node.pos[0] = target[0];
                     node.pos[1] = target[1];
+                    // Keep animation position in sync
+                    if (node._gridAnimPos) {
+                        node._gridAnimPos[0] = node.pos[0];
+                        node._gridAnimPos[1] = node.pos[1];
+                    }
                 }
-                delete node._gridAnimPos;
-                delete node._gridAnimVel;
             }
+            
+            // Schedule cleanup for next frame
+            const nodesToClean = [...this.gridAlignAnimNodes];
+            requestAnimationFrame(() => {
+                for (const node of nodesToClean) {
+                    delete node._gridAnimPos;
+                    delete node._gridAnimVel;
+                }
+                // Clear WebGL cache
+                if (this.canvas.webglRenderer && this.canvas.webglRenderer.renderedNodes) {
+                    for (const node of nodesToClean) {
+                        const nodeId = node.id || (node.properties?.hash ? 
+                            `${node.properties.hash}_${node.pos[0]}_${node.pos[1]}` : 
+                            `${node.type}_${node.pos[0]}_${node.pos[1]}`);
+                        this.canvas.webglRenderer.renderedNodes.delete(nodeId);
+                    }
+                }
+                this.canvas.dirty_canvas = true;
+            });
         }
         
         // Reset all state

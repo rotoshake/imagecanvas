@@ -116,6 +116,7 @@ class ViewportManager {
         }
     }
     
+    
     pan(deltaX, deltaY) {
         this.offset[0] += deltaX;
         this.offset[1] += deltaY;

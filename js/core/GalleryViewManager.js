@@ -102,6 +102,15 @@ class GalleryViewManager {
         // Start darkening fade out animation
         this.startDarkeningAnimation('out');
         
+        // Add fade-out class to UI elements
+        if (this.closeButton) {
+            this.closeButton.classList.add('fade-out');
+        }
+        const counter = document.getElementById('gallery-node-counter');
+        if (counter) {
+            counter.classList.add('fade-out');
+        }
+        
         // Remove keyboard listener
         document.removeEventListener('keydown', this.handleKeyDown, true);
         
@@ -158,10 +167,15 @@ class GalleryViewManager {
      * Enable gallery mode interactions (mouse zoom, panning with limits)
      */
     enableGalleryInteractions() {
-        // Hook into viewport pan to apply rubber band effect
-        if (this.canvas.viewport && !this.canvas.viewport._galleryPanHooked) {
-            this.originalViewportPan = this.canvas.viewport.pan.bind(this.canvas.viewport);
-            this.canvas.viewport.pan = (deltaX, deltaY) => {
+        // Always store the original pan method and re-apply our hook
+        if (this.canvas.viewport) {
+            // Store original if not already stored or if it's been replaced
+            if (!this.originalViewportPan || this.canvas.viewport.pan !== this.galleryPanWrapper) {
+                this.originalViewportPan = this.canvas.viewport.pan.bind(this.canvas.viewport);
+            }
+            
+            // Create wrapper function
+            this.galleryPanWrapper = (deltaX, deltaY) => {
                 if (this.active) {
                     // Apply rubber band resistance
                     const [resistedDX, resistedDY] = this.applyRubberBandResistance(deltaX, deltaY);
@@ -170,11 +184,16 @@ class GalleryViewManager {
                     this.originalViewportPan(deltaX, deltaY);
                 }
             };
-            this.canvas.viewport._galleryPanHooked = true;
+            
+            // Apply the wrapper
+            this.canvas.viewport.pan = this.galleryPanWrapper;
             
             // Also hook into zoom to check bounds after zooming
-            this.originalViewportZoom = this.canvas.viewport.zoom.bind(this.canvas.viewport);
-            this.canvas.viewport.zoom = (delta, centerX, centerY) => {
+            if (!this.originalViewportZoom || this.canvas.viewport.zoom !== this.galleryZoomWrapper) {
+                this.originalViewportZoom = this.canvas.viewport.zoom.bind(this.canvas.viewport);
+            }
+            
+            this.galleryZoomWrapper = (delta, centerX, centerY) => {
                 this.originalViewportZoom(delta, centerX, centerY);
                 if (this.active && !this.canvas.mouseState.down) {
                     // Only spring back if we're not actively interacting
@@ -186,8 +205,9 @@ class GalleryViewManager {
                     }, 150); // Small delay to let zoom settle
                 }
             };
+            
+            this.canvas.viewport.zoom = this.galleryZoomWrapper;
         }
-        
     }
     
     /**
@@ -202,9 +222,7 @@ class GalleryViewManager {
             if (this.originalViewportZoom) {
                 this.canvas.viewport.zoom = this.originalViewportZoom;
             }
-            this.canvas.viewport._galleryPanHooked = false;
         }
-        
     }
     
     /**
@@ -626,6 +644,14 @@ class GalleryViewManager {
                 }
                 break;
                 
+            case 'c': // Toggle color correction panel
+                e.preventDefault();
+                e.stopPropagation();
+                if (window.colorCorrectionPanel) {
+                    window.colorCorrectionPanel.toggle();
+                }
+                break;
+                
             case 'f': // Reset zoom and pan to gallery default
                 e.preventDefault();
                 e.stopPropagation();
@@ -674,7 +700,7 @@ class GalleryViewManager {
         this.closeButton = document.createElement('div');
         this.closeButton.className = 'gallery-close';
         this.closeButton.innerHTML = `
-            <svg width="30" height="30" viewBox="0 0 30 30" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <svg width="15" height="15" viewBox="0 0 30 30" fill="none" xmlns="http://www.w3.org/2000/svg">
                 <path d="M22.5 7.5L7.5 22.5M7.5 7.5L22.5 22.5" stroke="white" stroke-width="3" stroke-linecap="round"/>
             </svg>
         `;
@@ -692,8 +718,8 @@ class GalleryViewManager {
                 position: fixed;
                 top: 20px;
                 right: 20px;
-                width: 40px;
-                height: 40px;
+                width: 25px;
+                height: 25px;
                 cursor: pointer;
                 pointer-events: auto;
                 background: rgba(0, 0, 0, 0.5);
@@ -701,25 +727,38 @@ class GalleryViewManager {
                 display: flex;
                 align-items: center;
                 justify-content: center;
-                transition: background 0.2s;
+                transition: background 0.2s, opacity 0.3s ease-out;
+                z-index: 10000;
+                animation: fadeIn 0.3s ease-out;
             }
             
             .gallery-close:hover {
                 background: rgba(0, 0, 0, 0.7);
             }
             
+            .gallery-close.fade-out {
+                opacity: 0;
+            }
+            
             .gallery-counter {
                 position: fixed;
-                bottom: 20px;
+                bottom: 5px;
                 left: 50%;
                 transform: translateX(-50%);
-                color: white;
+                color: #777777;
                 font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
                 font-size: 14px;
-                padding: 8px 16px;
+                padding: 6px 12px;
                 background: rgba(0, 0, 0, 0.5);
-                border-radius: 20px;
+                border-radius: 10px;
                 pointer-events: none;
+                z-index: 10000;
+                transition: opacity 0.3s ease-out;
+                animation: fadeIn 0.3s ease-out;
+            }
+            
+            .gallery-counter.fade-out {
+                opacity: 0;
             }
             
             @keyframes fadeIn {
@@ -754,7 +793,7 @@ class GalleryViewManager {
         // Remove styles
         const styles = document.querySelectorAll('style');
         styles.forEach(style => {
-            if (style.textContent.includes('.gallery-overlay')) {
+            if (style.textContent.includes('.gallery-close') || style.textContent.includes('.gallery-counter')) {
                 style.remove();
             }
         });

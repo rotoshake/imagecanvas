@@ -45,7 +45,7 @@ const COLORS = {
         primary: '#4af',           // Main accent color used throughout app
         selection_border: '#CCC',
         selection_highlight: '#4af',
-        navigator_accent: '#4CAF50',
+        navigator_accent: '#8D50AD',
         drag_highlight: 'rgba(68, 170, 255, 0.1)'
     },
 
@@ -75,6 +75,18 @@ const COLORS = {
         connected: '#4CAF50',
         disconnected: '#F44336',
         connection_error: '#E91E63'
+    },
+
+    // Button colors
+    buttons: {
+        primary: 'rgba(114, 114, 114, 1.0)',
+        secondary: 'rgba(36, 36, 36, 0.8)',
+        hover: 'rgb(162, 162, 162)',
+        hover_secondary: 'rgb(50, 50, 50)',
+        active: 'rgb(129, 129, 129)',
+        active_secondary: 'rgb(85, 85, 85)',
+        hover_warning: 'rgb(176, 87, 87)',
+        hover_confirm: 'rgb(83, 166, 112)',
     },
 
     // Border colors

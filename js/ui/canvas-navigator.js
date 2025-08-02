@@ -1,5 +1,5 @@
 // Canvas Navigator UI Component
-// Provides a panel for managing canvases/projects
+// Provides a panel for managing canvases
 
 class CanvasNavigator {
     constructor(app) {
@@ -60,11 +60,13 @@ class CanvasNavigator {
             <div class="navigator-toolbar">
                 <button class="new-canvas-btn">
                     <span class="icon">+</span>
-                    New Canvas
                 </button>
-                <button class="refresh-btn" title="Refresh">
+                <!-- <button class="refresh-btn" title="Refresh">
                     <span class="icon">↻</span>
-                </button>
+                </button> -->
+                <!-- <h2 class="shared-canvases-title">
+                    Shared Canvases
+                </h2> -->
             </div>
             <div class="canvas-list-container">
                 <div class="canvas-list loading">
@@ -77,7 +79,7 @@ class CanvasNavigator {
                 </div>
                 <button class="cleanup-btn" title="Clean up orphaned data and unused media">
                     <span class="icon">🧹</span>
-                    Clean Up
+                    <!-- Clean Up -->
                 </button>
             </div>
         `;
@@ -106,7 +108,8 @@ class CanvasNavigator {
                 left: -240px;
                 width: 240px;
                 height: 100vh;
-                background: rgba(30, 30, 30, 0.75);
+                background: rgba(30, 30, 30, 0.85);
+                backdrop-filter: blur(10px);
                 color: #e0e0e0;
                 box-shadow: 2px 0 10px rgba(0,0,0,0.3);
                 transition: left 0.3s ease;
@@ -135,6 +138,7 @@ class CanvasNavigator {
                 font-size: 14px;
                 font-weight: 700;
                 font-style: bold;
+                color: ${COLORS.text.emphasized};
             }
             
             .header-controls {
@@ -174,7 +178,7 @@ class CanvasNavigator {
             .close-btn {
                 background: none;
                 border: none;
-                color: #999;
+                color:  ${COLORS.text.muted};
                 font-size: 20px;
                 cursor: pointer;
                 padding: 0;
@@ -188,37 +192,49 @@ class CanvasNavigator {
             }
             
             .close-btn:hover {
-                background: #333;
-                color: #fff;
+                /*background: ${COLORS.buttons.hover_secondary};*/
+                color: ${COLORS.text.emphasized};
             }
             
             /* Toolbar */
             .navigator-toolbar {
-                padding: 12px;
-                border-bottom: 1px solid #333;
+                padding: 4px 12px;
+                /*border-bottom: 1px solid #333;*/
                 display: flex;
                 gap: 8px;
             }
             
-            .new-canvas-btn {
+            .shared-canvases-title {
+                font-size: 12px;
+                font-weight: bold;
+                margin: 4px !important;
+                padding: 8px 0px;
+                color: ${COLORS.text.base};
+                word-break: break-word;
                 flex: 1;
-                background: #4CAF50;
+                min-width: 0;
+                line-height: 1.2;
+                display: flex;
+                align-items: center;
+            }
+            
+            .new-canvas-btn {
+                background: none;
                 border: none;
-                color: white;
-                padding: 8px 12px;
+                color: ${COLORS.text.muted};
+                padding: 0;
                 border-radius: 4px;
                 cursor: pointer;
-                font-size: 12px;
-                font-weight: 500;
+                width: 32px;
+                height: 32px;
                 display: flex;
                 align-items: center;
                 justify-content: center;
-                gap: 6px;
                 transition: background 0.2s;
             }
-            
             .new-canvas-btn:hover {
-                background: #45a049;
+                /*background: ${COLORS.buttons.hover_secondary};*/
+                color: ${COLORS.text.emphasized};
             }
             
             .new-canvas-btn .icon {
@@ -227,7 +243,7 @@ class CanvasNavigator {
             }
             
             .refresh-btn {
-                background: #333;
+                background: ${COLORS.buttons.secondary};
                 border: none;
                 color: #999;
                 padding: 8px;
@@ -242,7 +258,7 @@ class CanvasNavigator {
             }
             
             .refresh-btn:hover {
-                background: #444;
+                background: ${COLORS.buttons.hover_secondary};
                 color: #fff;
             }
             
@@ -250,7 +266,7 @@ class CanvasNavigator {
             .canvas-list-container {
                 flex: 1;
                 overflow-y: auto;
-                padding: 12px;
+                padding: 0px 12px   ;
             }
             
             .canvas-list {
@@ -273,8 +289,8 @@ class CanvasNavigator {
             
             /* Canvas Item */
             .canvas-item {
-                background: #2a2a2a;
-                border: 1px solid #333;
+                background: ${COLORS.buttons.secondary};
+                /*border: 1px solid #333;*/
                 border-radius: 4px;
                 padding: 4px 8px;
                 cursor: pointer;
@@ -283,16 +299,14 @@ class CanvasNavigator {
             }
             
             .canvas-item:hover {
-                background: #333;
+                background: ${COLORS.buttons.hover_secondary};
                 border-color: #444;
-                transform: translateX(2px);
+                /*transform: translateX(2px);*/
             }
             
             .canvas-item.active {
-                background: #3a3a3a;
-                border-color: #4CAF50;
-                border-width: 2px;
-                padding: 1px 7px;
+                background:${COLORS.buttons.active_secondary};
+                padding: 4px 7px;
             }
             
             .canvas-item-header {
@@ -308,7 +322,7 @@ class CanvasNavigator {
                 font-weight: 300;
                 margin: 4px !important;
                 padding: 0;
-                color: #fff;
+                color: ${COLORS.text.base};
                 word-break: break-word;
                 flex: 1;
                 min-width: 0;
@@ -317,7 +331,8 @@ class CanvasNavigator {
             }
             
             .canvas-item.active .canvas-title {
-                color: #4CAF50;
+                color: ${COLORS.text.emphasized};
+                font-weight: bold;
             }
             
             .canvas-actions {
@@ -360,12 +375,12 @@ class CanvasNavigator {
             }
             
             .canvas-action-btn:hover {
-                background: #444;
+                background: ${COLORS.buttons.hover_confirm};
                 color: #fff;
             }
             
             .canvas-action-btn.delete:hover {
-                background: #d32f2f;
+                background: ${COLORS.buttons.hover_warning};
                 color: #fff;
             }
             
@@ -381,7 +396,7 @@ class CanvasNavigator {
             }
             
             .collaborator-count {
-                font-size: 9px;
+                font-size: 9    px;
                 margin-left: 8px;
             }
             
@@ -457,22 +472,22 @@ class CanvasNavigator {
             }
             
             .cleanup-btn {
-                background: #333;
+                background: none;
                 border: none;
                 color: #999;
-                padding: 6px 12px;
+                padding: 0;
                 border-radius: 4px;
                 cursor: pointer;
-                font-size: 11px;
-                font-weight: 500;
+                width: 32px;
+                height: 32px;
                 display: flex;
                 align-items: center;
-                gap: 4px;
+                justify-content: center;
                 transition: all 0.2s;
             }
             
             .cleanup-btn:hover {
-                background: #444;
+                background: ${COLORS.buttons.hover_secondary};
                 color: #fff;
             }
             
@@ -516,7 +531,10 @@ class CanvasNavigator {
         this.panel.querySelector('.new-canvas-btn').addEventListener('click', () => this.createNewCanvas());
         
         // Refresh button
-        this.panel.querySelector('.refresh-btn').addEventListener('click', () => this.loadCanvases());
+        const refreshBtn = this.panel.querySelector('.refresh-btn');
+        if (refreshBtn) {
+            refreshBtn.addEventListener('click', () => this.loadCanvases());
+        }
         
         // Cleanup button
         const cleanupBtn = this.panel.querySelector('.cleanup-btn');
@@ -555,6 +573,15 @@ class CanvasNavigator {
         this.isOpen = true;
         this.panel.classList.add('open');
         this.toggleBtn.classList.add('active');
+        
+        // Set current canvas ID from localStorage if not already set
+        if (!this.currentCanvasId) {
+            const lastCanvasId = localStorage.getItem('lastCanvasId');
+            if (lastCanvasId) {
+                this.currentCanvasId = parseInt(lastCanvasId);
+            }
+        }
+        
         this.loadCanvases();
         this.updateDatabaseSize();
     }
@@ -586,14 +613,51 @@ class CanvasNavigator {
         listContainer.classList.add('loading');
         
         try {
-            // Use general projects endpoint to show all canvases
-            const response = await fetch(CONFIG.ENDPOINTS.PROJECTS);
+            // Use general canvases endpoint to show all canvases
+            // Add cache-busting timestamp to ensure fresh data
+            const response = await fetch(`${CONFIG.ENDPOINTS.PROJECTS}?t=${Date.now()}`);
             if (!response.ok) throw new Error('Failed to load canvases');
             
             this.canvases = await response.json();
+            console.log('Loaded canvases:', this.canvases.length);
+            
+            // Ensure there's always at least one canvas
+            if (this.canvases.length === 0) {
+                console.log('🎨 No canvases found - creating default "Untitled Canvas"');
+                
+                try {
+                    const createResponse = await fetch(CONFIG.ENDPOINTS.PROJECTS, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            name: 'Untitled Canvas',
+                            ownerId: this.userId,
+                            description: ''
+                        })
+                    });
+                    
+                    if (createResponse.ok) {
+                        const newCanvas = await createResponse.json();
+                        this.canvases = [newCanvas];
+                        
+                        // Update localStorage
+                        localStorage.setItem('lastCanvasId', newCanvas.id);
+                        localStorage.setItem('currentCanvasId', newCanvas.id);
+                        localStorage.setItem('activeCanvasId', newCanvas.id);
+                        
+                        console.log('✅ Created default canvas:', newCanvas);
+                        
+                        // Actually load the canvas to join it
+                        await this.loadCanvas(newCanvas.id);
+                    }
+                } catch (createError) {
+                    console.error('Failed to create default canvas:', createError);
+                }
+            }
+            
             this.renderCanvasList();
         } catch (error) {
-            
+            console.error('Failed to load canvases:', error);
             listContainer.innerHTML = '<div class="error">Failed to load canvases</div>';
         }
     }
@@ -655,6 +719,9 @@ class CanvasNavigator {
     
     renderCanvasItem(canvas) {
         const isActive = canvas.id === this.currentCanvasId;
+        if (isActive) {
+            console.log(`Rendering canvas ${canvas.id} as active`);
+        }
         const lastModified = new Date(canvas.last_modified).toLocaleDateString();
         const collaboratorCount = canvas.collaborator_count || 0;
         
@@ -664,10 +731,10 @@ class CanvasNavigator {
                     <h4 class="canvas-title" data-canvas-id="${canvas.id}" data-original-name="${this.escapeHtml(canvas.name || 'Untitled Canvas')}">${this.escapeHtml(canvas.name || 'Untitled Canvas')}</h4>
                     <div class="canvas-actions"><button class="canvas-action-btn duplicate" title="Duplicate">📋</button><button class="canvas-action-btn delete" title="Delete">🗑️</button></div>
                 </div>
-                <div class="canvas-meta">
+                <!-- <div class="canvas-meta">
                     <span>Modified: ${lastModified}</span>
                     ${collaboratorCount > 0 ? `<span class="collaborator-count">👥 ${collaboratorCount}</span>` : ''}
-                </div>
+                </div> -->
             </div>
         `;
     }
@@ -701,7 +768,7 @@ class CanvasNavigator {
             this.app.graph.clear();
             this.currentCanvasId = newCanvas.id;
             
-            // Join the project if collaborative
+            // Join the canvas if collaborative
             // Join using the new NetworkLayer if available
             if (this.app.networkLayer) {
                 await this.joinProjectWithRetry(newCanvas.id);
@@ -728,6 +795,20 @@ class CanvasNavigator {
                 return;
             }
             
+            // Update UI immediately to show active state
+            const previousCanvasId = this.currentCanvasId;
+            this.currentCanvasId = canvasId;
+            this.renderCanvasList(); // Update UI immediately
+            
+            // Show loading notification
+            if (this.app.showNotification) {
+                this.app.showNotification({
+                    type: 'info',
+                    message: 'Loading canvas...',
+                    duration: 1000
+                });
+            }
+            
             // Check if network layer is connected
             if (this.networkLayer && !this.networkLayer.isConnected) {
                 // Wait for connection
@@ -741,14 +822,14 @@ class CanvasNavigator {
                 }
             }
             
-            // Disconnect from current project first
+            // Disconnect from current canvas first
             if (this.networkLayer && this.networkLayer.isConnected && this.networkLayer.currentProject) {
                 
                 // NetworkLayer handles its own cleanup
                 
-                // Leave the current project room and wait for confirmation
+                // Leave the current canvas room and wait for confirmation
                 if (this.networkLayer.currentProject.id) {
-                    await this.leaveProjectAndWait(this.networkLayer.currentProject.id);
+                    await this.leaveCanvasAndWait(this.networkLayer.currentCanvas.id);
                 }
                 
                 // NetworkLayer manages its own state
@@ -791,6 +872,7 @@ class CanvasNavigator {
             // Update current canvas ID
             this.currentCanvasId = canvasId;
             localStorage.setItem('lastCanvasId', canvasId.toString());
+            console.log(`Canvas loaded: ID ${canvasId} now active`);
             
             // Reset collaborative manager state
             if (this.networkLayer) {
@@ -809,7 +891,7 @@ class CanvasNavigator {
                     // With state sync, we don't load from the REST endpoint
                     // The state will come from the WebSocket after joining
                     
-                    // NOW join the new project if collaborative
+                    // NOW join the new canvas if collaborative
                     
                     // Join using the new NetworkLayer with retry logic
                     if (this.app.networkLayer) {
@@ -819,15 +901,15 @@ class CanvasNavigator {
                     }
                     
                     // Show success
-                    if (this.app.showNotification) {
-                        this.app.showNotification({
-                            type: 'success',
-                            message: 'Canvas loaded'
-                        });
-                    }
+                    // if (this.app.showNotification) {
+                    //     this.app.showNotification({
+                    //         type: 'success',
+                    //         message: 'Canvas loaded'
+                    //     });
+                    // }
                 } else {
                     
-                    // Still need to join the project for collaboration
+                    // Still need to join the canvas for collaboration
                     
                     // Join using the new NetworkLayer with retry logic
                     if (this.app.networkLayer) {
@@ -838,15 +920,12 @@ class CanvasNavigator {
                 }
             } catch (error) {
                 
-                // Continue with empty canvas but still join project
+                // Continue with empty canvas but still join it
                 // Join using the new NetworkLayer with retry logic
                 if (this.app.networkLayer) {
                     await this.joinProjectWithRetry(canvasId);
                 }
             }
-            
-            // Update UI
-            this.renderCanvasList();
             
             // Start auto-save for this canvas
             this.startAutoSave();
@@ -855,6 +934,11 @@ class CanvasNavigator {
             // this.close();
             
         } catch (error) {
+            console.error('Failed to load canvas:', error);
+            
+            // Revert to previous canvas on failure
+            this.currentCanvasId = previousCanvasId;
+            this.renderCanvasList();
             
             alert('Failed to load canvas: ' + error.message);
         }
@@ -971,33 +1055,33 @@ class CanvasNavigator {
         }
     }
     
-    async leaveProjectAndWait(projectId) {
+    async leaveCanvasAndWait(canvasId) {
         return new Promise((resolve) => {
             
             // Set up one-time listener for leave confirmation
             const leaveHandler = (data) => {
-                if (data && parseInt(data.projectId) === parseInt(projectId)) {
-                    this.networkLayer.socket.off('project_left', leaveHandler);
+                if (data && parseInt(data.canvasId) === parseInt(canvasId)) {
+                    this.networkLayer.socket.off('canvas_left', leaveHandler);
                     resolve();
                 }
             };
             
             // Set up timeout in case server doesn't respond
             const timeout = setTimeout(() => {
-                this.networkLayer.socket.off('project_left', leaveHandler);
+                this.networkLayer.socket.off('canvas_left', leaveHandler);
                 resolve();
             }, 2000); // 2 second timeout
             
             // Listen for confirmation
-            this.networkLayer.socket.on('project_left', leaveHandler);
+            this.networkLayer.socket.on('canvas_left', leaveHandler);
             
             // Emit leave request
-            this.networkLayer.socket.emit('leave_project', { 
-                projectId: projectId 
+            this.networkLayer.socket.emit('leave_canvas', { 
+                canvasId: canvasId 
             });
             
             // Clear timeout on confirmation
-            this.networkLayer.socket.once('project_left', () => {
+            this.networkLayer.socket.once('canvas_left', () => {
                 clearTimeout(timeout);
             });
         });
@@ -1030,14 +1114,14 @@ class CanvasNavigator {
                     }
                 }
                 
-                // Now try to join the project
-                this.app.networkLayer.joinProject(canvasId);
+                // Now try to join the canvas
+                this.app.networkLayer.joinCanvas(canvasId);
                 
                 // Wait a moment to see if join was successful
                 await new Promise(resolve => setTimeout(resolve, 1000));
                 
-                // Check if the undo manager has the project ID set (indicates successful join)
-                if (this.app.undoManager && this.app.undoManager.projectId === canvasId) {
+                // Check if the undo manager has the canvas ID set (indicates successful join)
+                if (this.app.undoManager && this.app.undoManager.canvasId === canvasId) {
                     return true;
                 }
                 
@@ -1212,7 +1296,7 @@ class CanvasNavigator {
                 })
             });
             
-            // Join the project if collaborative
+            // Join the canvas if collaborative
             // Join using the new NetworkLayer if available
             if (this.app.networkLayer) {
                 await this.joinProjectWithRetry(newCanvas.id);
@@ -1236,6 +1320,10 @@ class CanvasNavigator {
     async loadStartupCanvas() {
         
         try {
+            // Clear any cached data first
+            this.canvases = [];
+            this.currentCanvasId = null;
+            
             // Wait for network layer to be ready if it exists
             if (this.app.networkLayer) {
                 let networkAttempts = 0;
@@ -1298,7 +1386,7 @@ class CanvasNavigator {
             const lastCanvasId = localStorage.getItem('lastCanvasId');
             
             if (lastCanvasId) {
-                // Try to load the last canvas by checking if it exists in all projects
+                // Try to load the last canvas by checking if it exists in all canvases
                 const response = await fetch(CONFIG.ENDPOINTS.PROJECTS);
                 if (response.ok) {
                     const canvases = await response.json();
@@ -1306,23 +1394,30 @@ class CanvasNavigator {
                     if (lastCanvas) {
                         await this.loadCanvas(parseInt(lastCanvasId));
                         return;
+                    } else {
+                        // Canvas no longer exists, clear the reference
+                        localStorage.removeItem('lastCanvasId');
+                        console.log('Last canvas no longer exists, cleared reference');
                     }
                 }
             }
             
             // No last canvas or it doesn't exist, check if user has any canvases
-            const response = await fetch(CONFIG.ENDPOINTS.PROJECTS);
+            const response = await fetch(`${CONFIG.ENDPOINTS.PROJECTS}?t=${Date.now()}`);
             if (response.ok) {
                 const canvases = await response.json();
+                console.log(`Startup: Found ${canvases.length} canvases in database`);
                 
                 if (canvases.length > 0) {
                     // Load the most recent canvas
                     await this.loadCanvas(canvases[0].id);
                 } else {
+                    console.log('No canvases found, will create default canvas');
                     // No canvases exist, create a default one
                     const newCanvas = await this.createDefaultCanvas();
                     if (newCanvas) {
-                        this.currentCanvasId = newCanvas.id;
+                        // Load the newly created canvas
+                        await this.loadCanvas(newCanvas.id);
                     }
                 }
             }
@@ -1338,9 +1433,9 @@ class CanvasNavigator {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
-                    name: 'My First Canvas',
+                    name: 'Untitled Canvas',
                     ownerId: this.userId,
-                    description: 'Welcome to ImageCanvas!'
+                    description: ''
                 })
             });
             
@@ -1348,7 +1443,11 @@ class CanvasNavigator {
             
             const newCanvas = await response.json();
             
-            // Join the project if collaborative
+            // Set as current canvas and save to localStorage
+            this.currentCanvasId = newCanvas.id;
+            localStorage.setItem('lastCanvasId', newCanvas.id.toString());
+            
+            // Join the canvas if collaborative
             // Join using the new NetworkLayer if available
             if (this.app.networkLayer) {
                 await this.joinProjectWithRetry(newCanvas.id);
@@ -1493,57 +1592,53 @@ class CanvasNavigator {
             top: 50%;
             left: 50%;
             transform: translate(-50%, -50%);
-            background: #2a2a2a;
-            border: 1px solid #444;
+            background: rgba(30, 30, 30, 0.95);
+            border: 1px solid #333;
             border-radius: 8px;
             padding: 20px;
             z-index: 10000;
             box-shadow: 0 4px 12px rgba(0,0,0,0.5);
-            max-width: 500px;
-            color: #eee;
+            max-width: 360px;
+            color: #e0e0e0;
+            font-family: ${FONT_CONFIG.APP_FONT};
         `;
         
         dialog.innerHTML = `
-            <h3 style="margin-top: 0; color: #fff;">Database Cleanup</h3>
-            <p style="color: #ccc; margin-bottom: 15px;">This will scan for and remove orphaned files using a safe mark-and-sweep approach.</p>
+            <h3 style="margin: 0 0 16px 0; font-size: 16px; font-weight: 500; color: #fff;">Clean Up</h3>
             
-            <div style="background: #1a1a1a; border-radius: 4px; padding: 10px; margin-bottom: 15px;">
-                <strong style="color: #4a9eff;">What will be cleaned:</strong>
-                <ul style="margin: 5px 0; padding-left: 20px; color: #aaa;">
-                    <li>Orphaned media files not referenced in any canvas</li>
-                    <li>Old operations with embedded image data</li>
-                    <li>Client-side caches (images, thumbnails)</li>
-                    <li>Undo/redo history</li>
-                </ul>
-            </div>
-            
-            <div style="background: #1a1a1a; border-radius: 4px; padding: 10px; margin-bottom: 20px;">
-                <strong style="color: #4eff4a;">Protected files:</strong>
-                <ul style="margin: 5px 0; padding-left: 20px; color: #aaa;">
-                    <li>All files referenced in saved canvases</li>
-                    <li>Files in recent operations (last 24 hours)</li>
-                </ul>
-            </div>
-            
-            <div style="margin-bottom: 20px;">
-                <label style="display: flex; align-items: center; cursor: pointer; margin-bottom: 10px;">
-                    <input type="checkbox" id="cleanup-dry-run" style="margin-right: 8px;">
-                    <span>Dry run (preview what would be deleted without actually deleting)</span>
-                </label>
-                <label style="display: flex; align-items: center; cursor: pointer;">
-                    <input type="checkbox" id="cleanup-all-thumbnails" style="margin-right: 8px;">
-                    <span>Delete ALL thumbnails (including those with active images)</span>
-                </label>
-                <div style="font-size: 11px; color: #888; margin-left: 24px; margin-top: 4px;">
-                    ⚠️ This will clear the entire thumbnail cache. Thumbnails will be regenerated when needed.
+            <div id="cleanup-stats" style="margin: 0 0 16px 0; padding: 12px; background: rgba(255,255,255,0.05); border-radius: 6px; font-size: 12px; line-height: 1.6;">
+                <div style="display: flex; align-items: center; justify-content: center; color: #666;">
+                    <span style="animation: spin 1s linear infinite; display: inline-block; margin-right: 8px;">⟳</span>
+                    Calculating...
                 </div>
             </div>
+            
+            <div style="margin-bottom: 16px;">
+                <label style="display: flex; align-items: center; cursor: pointer; margin-bottom: 8px;">
+                    <input type="checkbox" id="cleanup-all-thumbnails" style="margin-right: 8px;">
+                    <span style="font-size: 13px;">Clear all thumbnails</span>
+                </label>
+                <label style="display: flex; align-items: center; cursor: pointer;">
+                    <input type="checkbox" id="cleanup-indexeddb" style="margin-right: 8px;">
+                    <span style="font-size: 13px;">Clear browser cache</span>
+                </label>
+            </div>
 
-            <div style="display: flex; gap: 10px; justify-content: flex-end;">
-                <button id="cleanup-cancel" style="padding: 8px 16px; background: #444; border: none; border-radius: 4px; color: #fff; cursor: pointer;">Cancel</button>
-                <button id="cleanup-proceed" style="padding: 8px 16px; background: #4a9eff; border: none; border-radius: 4px; color: #fff; cursor: pointer; font-weight: bold;">Proceed</button>
+            <div style="display: flex; gap: 8px; justify-content: flex-end;">
+                <button id="cleanup-cancel" style="padding: 6px 16px; background: #333; border: none; border-radius: 4px; color: #999; cursor: pointer; font-size: 12px; font-weight: 500; transition: all 0.2s;">Cancel</button>
+                <button id="cleanup-proceed" style="padding: 6px 16px; background: #4CAF50; border: none; border-radius: 4px; color: #fff; cursor: pointer; font-size: 12px; font-weight: 500; transition: all 0.2s;">Clean Up</button>
             </div>
         `;
+        
+        // Add spinning animation style
+        const style = document.createElement('style');
+        style.textContent = `
+            @keyframes spin {
+                from { transform: rotate(0deg); }
+                to { transform: rotate(360deg); }
+            }
+        `;
+        document.head.appendChild(style);
         
         // Add backdrop
         const backdrop = document.createElement('div');
@@ -1560,35 +1655,236 @@ class CanvasNavigator {
         document.body.appendChild(backdrop);
         document.body.appendChild(dialog);
         
+        // Function to update stats display
+        const updateStats = async (deleteAllThumbnails = false) => {
+            const statsDiv = document.getElementById('cleanup-stats');
+            statsDiv.innerHTML = `
+                <div style="display: flex; align-items: center; justify-content: center; color: #666;">
+                    <span style="animation: spin 1s linear infinite; display: inline-block; margin-right: 8px;">⟳</span>
+                    Calculating...
+                </div>
+            `;
+            
+            try {
+                // Run dry run to get stats
+                const params = new URLSearchParams();
+                params.append('dryRun', 'true');
+                if (deleteAllThumbnails) params.append('deleteAllThumbnails', 'true');
+                
+                const response = await fetch(`${CONFIG.ENDPOINTS.DATABASE_CLEANUP}?${params}`, {
+                    method: 'POST'
+                });
+                const result = await response.json();
+                
+                // Calculate totals
+                let orphanedFiles = 0;
+                let thumbnailCount = 0;
+                let operationCount = 0;
+                
+                if (result.fileCleanup) {
+                    orphanedFiles = result.fileCleanup.orphanedFiles || 0;
+                }
+                
+                if (result.operationsDeleted !== undefined) {
+                    operationCount = result.operationsDeleted;
+                }
+                
+                // Estimate thumbnails (if checkbox is checked)
+                if (deleteAllThumbnails) {
+                    // Rough estimate: 6 sizes per image
+                    thumbnailCount = orphanedFiles * 6;
+                }
+                
+                // Get IndexedDB size estimate
+                let indexedDBSize = 0;
+                let thumbnailDBSize = 0;
+                
+                if (navigator.storage && navigator.storage.estimate) {
+                    const estimate = await navigator.storage.estimate();
+                    indexedDBSize = estimate.usage || 0;
+                }
+                
+                // Try to get more specific info about thumbnail DB
+                try {
+                    // Check if the thumbnail database exists
+                    const dbExists = await new Promise((resolve) => {
+                        const openReq = indexedDB.open('ImageCanvasThumbnails');
+                        openReq.onsuccess = (e) => {
+                            e.target.result.close(); // Close immediately
+                            resolve(true);
+                        };
+                        openReq.onerror = () => resolve(false);
+                    });
+                    
+                    if (dbExists && window.thumbnailStore && window.thumbnailStore.getStats) {
+                        const stats = window.thumbnailStore.getStats();
+                        // Estimate based on number of entries (rough estimate: 50KB per thumbnail)
+                        thumbnailDBSize = (stats.writes || 0) * 50 * 1024;
+                    }
+                } catch (e) {
+                    // Ignore errors
+                }
+                
+                // Update display
+                statsDiv.innerHTML = `
+                    <div style="color: #e0e0e0;">
+                        <div style="margin-bottom: 6px;">
+                            <strong>Orphaned files:</strong> ${orphanedFiles}
+                        </div>
+                        <div style="margin-bottom: 6px;">
+                            <strong>Operations/Undo history:</strong> ${operationCount}
+                        </div>
+                        ${deleteAllThumbnails ? `
+                        <div style="margin-bottom: 6px;">
+                            <strong>Thumbnails:</strong> ~${thumbnailCount}
+                        </div>
+                        ` : ''}
+                        <div style="margin-bottom: 6px;">
+                            <strong>Browser cache:</strong> ${(indexedDBSize / (1024 * 1024)).toFixed(1)} MB
+                        </div>
+                        ${orphanedFiles === 0 && operationCount === 0 && !deleteAllThumbnails ? `
+                        <div style="margin-top: 8px; color: #4CAF50; font-size: 11px;">
+                            ✓ Nothing to clean up
+                        </div>
+                        ` : ''}
+                    </div>
+                `;
+            } catch (error) {
+                statsDiv.innerHTML = `
+                    <div style="color: #f44336;">
+                        Failed to calculate cleanup stats
+                    </div>
+                `;
+            }
+        };
+        
+        // Initial stats load
+        updateStats();
+        
+        // Update stats when thumbnail checkbox changes
+        const thumbnailCheckbox = document.getElementById('cleanup-all-thumbnails');
+        thumbnailCheckbox.addEventListener('change', () => {
+            updateStats(thumbnailCheckbox.checked);
+        });
+        
         // Handle dialog actions
-        const cleanup = async (dryRun, gracePeriod, deleteAllThumbnails) => {
-            backdrop.remove();
-            dialog.remove();
-            
-            // Proceed with cleanup
-            await this.executeCleanup(dryRun, gracePeriod, deleteAllThumbnails);
-        };
-        
-        document.getElementById('cleanup-cancel').onclick = () => {
-            backdrop.remove();
-            dialog.remove();
-            
-        };
-        
-        document.getElementById('cleanup-proceed').onclick = () => {
-            const dryRun = document.getElementById('cleanup-dry-run').checked;
-            const gracePeriod = 0; // Always use 0 grace period
+        const cleanup = async () => {
+            // Get checkbox values before removing dialog
             const deleteAllThumbnails = document.getElementById('cleanup-all-thumbnails').checked;
-            cleanup(dryRun, gracePeriod, deleteAllThumbnails);
+            const clearIndexedDB = document.getElementById('cleanup-indexeddb').checked;
+            
+            // Now remove dialog elements
+            backdrop.remove();
+            dialog.remove();
+            style.remove();
+            
+            // Clear IndexedDB if requested
+            if (clearIndexedDB) {
+                let indexedDBCleared = false;
+                try {
+                    // First, close any open connections
+                    if (window.indexedDBThumbnailStore && window.indexedDBThumbnailStore.close) {
+                        window.indexedDBThumbnailStore.close();
+                        console.log('Closed IndexedDB connection');
+                    }
+                    
+                    // Also try closing window.thumbnailStore if it exists
+                    if (window.thumbnailStore && window.thumbnailStore !== window.indexedDBThumbnailStore) {
+                        if (window.thumbnailStore.close) {
+                            window.thumbnailStore.close();
+                        }
+                        window.thumbnailStore.isAvailable = false;
+                        window.thumbnailStore.db = null;
+                    }
+                    
+                    // Wait a bit for connections to close
+                    await new Promise(resolve => setTimeout(resolve, 100));
+                    
+                    // Delete the known thumbnail database
+                    await new Promise((resolve, reject) => {
+                        const deleteReq = indexedDB.deleteDatabase('ImageCanvasThumbnails');
+                        deleteReq.onsuccess = () => {
+                            console.log('✅ Deleted ImageCanvasThumbnails database');
+                            indexedDBCleared = true;
+                            resolve();
+                        };
+                        deleteReq.onerror = () => {
+                            console.error('Failed to delete ImageCanvasThumbnails database');
+                            reject(deleteReq.error);
+                        };
+                        deleteReq.onblocked = () => {
+                            console.warn('Database deletion blocked - will force reload after cleanup');
+                            // Mark that we need to reload
+                            window._needsReloadAfterCleanup = true;
+                            // Still resolve after a timeout
+                            setTimeout(resolve, 1000);
+                        };
+                    });
+                    
+                    // Try to delete other potential databases
+                    const otherDBs = ['ThumbnailStore', 'ImageCanvasDB', 'imageCanvas'];
+                    for (const dbName of otherDBs) {
+                        try {
+                            await new Promise((resolve) => {
+                                const deleteReq = indexedDB.deleteDatabase(dbName);
+                                deleteReq.onsuccess = () => {
+                                    console.log(`✅ Deleted ${dbName} database`);
+                                    indexedDBCleared = true;
+                                    resolve();
+                                };
+                                deleteReq.onerror = () => resolve();
+                                deleteReq.onblocked = () => setTimeout(resolve, 100);
+                            });
+                        } catch (e) {
+                            // Ignore errors for non-existent databases
+                        }
+                    }
+                    
+                    // Also clear any cached thumbnail references
+                    if (window.thumbnailCache) {
+                        window.thumbnailCache.clear();
+                    }
+                    
+                    // Force reload of thumbnail store
+                    if (window.thumbnailStore) {
+                        window.thumbnailStore.isAvailable = false;
+                        window.thumbnailStore.db = null;
+                    }
+                    
+                } catch (error) {
+                    console.error('Failed to clear IndexedDB:', error);
+                }
+            }
+            
+            // Proceed with server cleanup (never dry run now)
+            await this.executeCleanup(false, 0, deleteAllThumbnails, clearIndexedDB);
         };
+        
+        // Add button hover effects
+        const cancelBtn = document.getElementById('cleanup-cancel');
+        const proceedBtn = document.getElementById('cleanup-proceed');
+        
+        cancelBtn.onmouseenter = () => { cancelBtn.style.background = '#444'; cancelBtn.style.color = '#fff'; };
+        cancelBtn.onmouseleave = () => { cancelBtn.style.background = '#333'; cancelBtn.style.color = '#999'; };
+        
+        proceedBtn.onmouseenter = () => { proceedBtn.style.background = '#45a049'; };
+        proceedBtn.onmouseleave = () => { proceedBtn.style.background = '#4CAF50'; };
+        
+        cancelBtn.onclick = () => {
+            backdrop.remove();
+            dialog.remove();
+            style.remove();
+        };
+        
+        proceedBtn.onclick = cleanup;
         
         // Focus on proceed button
-        document.getElementById('cleanup-proceed').focus();
+        proceedBtn.focus();
         
         return;  // Exit here, actual cleanup happens in executeCleanup
     }
     
-    async executeCleanup(dryRun = false, gracePeriod = 0, deleteAllThumbnails = false) {
+    async executeCleanup(dryRun = false, gracePeriod = 0, deleteAllThumbnails = false, clearIndexedDB = false) {
         const cleanupBtn = this.panel.querySelector('.cleanup-btn');
         if (!cleanupBtn) {
             
@@ -1630,10 +1926,10 @@ class CanvasNavigator {
                         nextRedo: null
                     };
                     
-                    // Request server to clear undo history for this project
+                    // Request server to clear undo history for this canvas
                     if (this.currentCanvasId && this.networkLayer && this.networkLayer.socket) {
                         this.networkLayer.socket.emit('clear_undo_history', {
-                            projectId: this.currentCanvasId
+                            canvasId: this.currentCanvasId
                         });
                     }
                 }
@@ -1674,59 +1970,44 @@ class CanvasNavigator {
             
             // Show success notification
             if (this.app.showNotification) {
-                let message = dryRun ? 'Dry run completed:\n' : 'Cleanup completed:\n';
-                const parts = [];
+                let message = '';
                 
-                // Handle new cleanup response format
-                if (result.fileCleanup) {
-                    if (dryRun) {
-                        parts.push(`• Found ${result.fileCleanup.referencedFiles} referenced files`);
-                        parts.push(`• Would delete ${result.fileCleanup.deletedFiles} orphaned files`);
+                if (dryRun) {
+                    // For dry run, show what would be deleted
+                    let fileCount = 0;
+                    if (result.fileCleanup) {
+                        fileCount = result.fileCleanup.deletedFiles;
+                    } else if (result.deleted) {
+                        fileCount = (result.deleted.files || 0) + (result.deleted.orphanedDiskFiles || 0);
+                    }
+                    
+                    if (fileCount > 0) {
+                        message = `Preview: ${fileCount} orphaned files found`;
                     } else {
-                        parts.push(`• Deleted ${result.fileCleanup.deletedFiles} orphaned files`);
+                        message = 'Preview: No orphaned files found';
+                    }
+                } else {
+                    // For actual cleanup, show what was deleted
+                    let fileCount = 0;
+                    if (result.fileCleanup) {
+                        fileCount = result.fileCleanup.deletedFiles;
+                    } else if (result.deleted) {
+                        fileCount = (result.deleted.files || 0) + (result.deleted.orphanedDiskFiles || 0);
+                    }
+                    
+                    if (fileCount > 0 || clearIndexedDB) {
+                        const parts = [];
+                        if (fileCount > 0) parts.push(`${fileCount} files removed`);
+                        if (clearIndexedDB) parts.push('browser cache cleared');
+                        message = `Cleanup complete: ${parts.join(', ')}`;
+                    } else {
+                        message = 'Cleanup complete: No orphaned files';
                     }
                 }
-                
-                if (result.operationsDeleted > 0) {
-                    parts.push(`• ${dryRun ? 'Would delete' : 'Deleted'} ${result.operationsDeleted} old operations`);
-                }
-                
-                // Legacy format support
-                if (result.deleted) {
-                    if (result.deleted.files > 0) {
-                        parts.push(`• Removed ${result.deleted.files} orphaned database files`);
-                    }
-                    if (result.deleted.orphanedDiskFiles > 0) {
-                        parts.push(`• Removed ${result.deleted.orphanedDiskFiles} orphaned disk files`);
-                    }
-                    if (result.deleted.largeOperations > 0) {
-                        parts.push(`• Removed ${result.deleted.largeOperations} operations with embedded images`);
-                    }
-                    if (result.deleted.operations > 0) {
-                        parts.push(`• Cleared ${result.deleted.operations} old operations`);
-                    }
-                    if (result.deleted.users > 0) {
-                        parts.push(`• Removed ${result.deleted.users} orphaned users`);
-                    }
-                }
-                
-                // Show size reduction if available
-                if (result.previousSize && result.newSize) {
-                    parts.push(`• Database size: ${result.previousSize.formatted} → ${result.newSize.formatted}`);
-                }
-                
-                // Client cleanup results (only if not dry run)
-                if (!dryRun) {
-                    parts.push('• Cleared all client-side caches');
-                    parts.push('• Reset undo/redo history');
-                }
-                
-                message = parts.length > 0 ? `${dryRun ? 'Dry run' : 'Cleanup'} completed:\n${parts.join('\n')}` : (dryRun ? 'Dry run completed' : 'Cleanup completed');
                 
                 this.app.showNotification({
                     type: 'success',
-                    message: message,
-                    duration: 5000 // Show for longer since it's multi-line
+                    message: message
                 });
             }
 
@@ -1742,6 +2023,24 @@ class CanvasNavigator {
             cleanupBtn.classList.remove('loading');
             cleanupBtn.disabled = false;
             cleanupBtn.innerHTML = originalContent;
+            
+            // If IndexedDB deletion was blocked and we need to reload
+            if (window._needsReloadAfterCleanup) {
+                delete window._needsReloadAfterCleanup;
+                
+                // Show reload notification
+                if (this.app.showNotification) {
+                    this.app.showNotification({
+                        type: 'info',
+                        message: 'Reloading page to complete cleanup...'
+                    });
+                }
+                
+                // Reload after a short delay
+                setTimeout(() => {
+                    window.location.reload();
+                }, 1500);
+            }
         }
     }
 }

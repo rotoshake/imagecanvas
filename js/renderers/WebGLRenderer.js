@@ -86,9 +86,10 @@ class WebGLRenderer {
                 // Check if classes are available
                 if (typeof TextureLODManager !== 'undefined') {
                     this.lodManager = new TextureLODManager(this.gl, {
-                        maxMemory: 512 * 1024 * 1024, // 512MB
+                        maxMemory: 1536 * 1024 * 1024, // 1.5GB - more reasonable for modern GPUs
                         maxTextures: 500,
-                        uploadBudget: 16 // 16ms per frame to upload more textures quickly
+                        uploadBudget: 16, // 16ms per frame to upload more textures quickly
+                        canvas: this.canvas // Pass canvas reference for viewport checks
                     });
                 } else {
                     console.warn('TextureLODManager not available');
@@ -120,15 +121,20 @@ class WebGLRenderer {
         // Pending texture requests
         this.textureRequests = new Map(); // nodeId -> { hash, priority, screenSize }
         this.pendingServerRequests = new Set(); // Track pending server thumbnail requests
+        this.thumbnailSubscriptions = new Map(); // hash -> callback, for thumbnail update notifications
+        this.failedRequests = new Map(); // requestKey -> { timestamp, retryCount }
+        this.failedRequestTTL = 5 * 60 * 1000; // 5 minutes TTL for failed requests
         
         // LOD calculation cache to prevent repeated calculations
         this.lodCache = new Map(); // nodeId -> { screenSize, optimalLOD, lastUpdate }
         
         // Texture request throttling to prevent spam
         this.lastTextureRequest = new Map(); // nodeId -> { hash, lodSize, timestamp }
+        this.textureRequestCooldown = 2000; // 2 seconds between requests for the same node
         
         // Track rendered nodes to avoid unnecessary reprocessing
         this.renderedNodes = new Map(); // nodeId -> { hash, scale, position, textureKey }
+        this.framesSinceInit = 0; // Force texture requests on first few frames
         
         // Stats for debugging
         this.stats = {
@@ -261,19 +267,55 @@ class WebGLRenderer {
         return program;
     }
 
-    _ensureTexture(image) {
-        let tex = this.textureCache.get(image);
-        if (tex) return tex;
-        tex = this.gl.createTexture();
-        this.gl.bindTexture(this.gl.TEXTURE_2D, tex);
-        this.gl.texParameteri(this.gl.TEXTURE_2D, this.gl.TEXTURE_WRAP_S, this.gl.CLAMP_TO_EDGE);
-        this.gl.texParameteri(this.gl.TEXTURE_2D, this.gl.TEXTURE_WRAP_T, this.gl.CLAMP_TO_EDGE);
-        this.gl.texParameteri(this.gl.TEXTURE_2D, this.gl.TEXTURE_MIN_FILTER, this.gl.LINEAR);
-        this.gl.texParameteri(this.gl.TEXTURE_2D, this.gl.TEXTURE_MAG_FILTER, this.gl.LINEAR);
-        this.gl.pixelStorei(this.gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, true);
-        this.gl.texImage2D(this.gl.TEXTURE_2D, 0, this.gl.RGBA, this.gl.RGBA, this.gl.UNSIGNED_BYTE, image);
-
-        this.textureCache.set(image, tex);
+    _ensureTexture(imageOrVideo) {
+        const isVideo = imageOrVideo instanceof HTMLVideoElement;
+        let tex = this.textureCache.get(imageOrVideo);
+        
+        if (!tex) {
+            // Create new texture
+            tex = this.gl.createTexture();
+            this.gl.bindTexture(this.gl.TEXTURE_2D, tex);
+            this.gl.texParameteri(this.gl.TEXTURE_2D, this.gl.TEXTURE_WRAP_S, this.gl.CLAMP_TO_EDGE);
+            this.gl.texParameteri(this.gl.TEXTURE_2D, this.gl.TEXTURE_WRAP_T, this.gl.CLAMP_TO_EDGE);
+            this.gl.texParameteri(this.gl.TEXTURE_2D, this.gl.TEXTURE_MIN_FILTER, this.gl.LINEAR);
+            this.gl.texParameteri(this.gl.TEXTURE_2D, this.gl.TEXTURE_MAG_FILTER, this.gl.LINEAR);
+            this.gl.pixelStorei(this.gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, true);
+            this.textureCache.set(imageOrVideo, tex);
+            
+            // Always upload the first frame
+            this.gl.texImage2D(this.gl.TEXTURE_2D, 0, this.gl.RGBA, this.gl.RGBA, this.gl.UNSIGNED_BYTE, imageOrVideo);
+            
+            // For videos, track the last update time
+            if (isVideo) {
+                if (!this.videoUpdateTracking) {
+                    this.videoUpdateTracking = new WeakMap();
+                }
+                this.videoUpdateTracking.set(imageOrVideo, {
+                    lastUpdateTime: imageOrVideo.currentTime,
+                    frameCount: 0
+                });
+            }
+        } else {
+            // Texture exists, check if we need to update it
+            this.gl.bindTexture(this.gl.TEXTURE_2D, tex);
+            
+            if (isVideo) {
+                // Only update video texture if the frame has changed
+                const tracking = this.videoUpdateTracking?.get(imageOrVideo);
+                if (!tracking || Math.abs(imageOrVideo.currentTime - tracking.lastUpdateTime) > 0.016) { // ~60fps threshold
+                    this.gl.texImage2D(this.gl.TEXTURE_2D, 0, this.gl.RGBA, this.gl.RGBA, this.gl.UNSIGNED_BYTE, imageOrVideo);
+                    
+                    if (tracking) {
+                        tracking.lastUpdateTime = imageOrVideo.currentTime;
+                        tracking.frameCount++;
+                    }
+                }
+            } else {
+                // For images, only upload if not already uploaded
+                // The texture already has the image data from creation
+            }
+        }
+        
         return tex;
     }
 
@@ -330,6 +372,14 @@ class WebGLRenderer {
     beginFrame() {
         if (!this.gl) return;
         
+        // Clear actively rendered textures tracking for this frame
+        if (this.lodManager) {
+            this.lodManager.clearActivelyRendered();
+        }
+        
+        // Increment frame counter for initial texture loading
+        this.framesSinceInit++;
+        
         // Track frame timing
         this.frameBudget.startTime = performance.now();
         
@@ -353,7 +403,8 @@ class WebGLRenderer {
                 this.stats.texturesUploaded = uploaded;
                 this._processingUploads = false;
                 // Request redraw if textures were uploaded
-                if (uploaded > 0 && this.canvas) {
+                // But only if we're not already in a render loop
+                if (uploaded > 0 && this.canvas && !this.canvas.dirty_canvas) {
                     this.canvas.dirty_canvas = true;
                 }
             }).catch(error => {
@@ -472,17 +523,22 @@ class WebGLRenderer {
         this.gl.activeTexture(this.gl.TEXTURE0);
         this.gl.bindTexture(this.gl.TEXTURE_2D, texture);
 
-        // Send adjustment uniforms with validation
-        const adj = node.adjustments || {brightness:0,contrast:0,saturation:0,hue:0};
-        const brightness = isNaN(adj.brightness) ? 0 : (adj.brightness || 0);
-        const contrast = isNaN(adj.contrast) ? 0 : (adj.contrast || 0);
-        const saturation = isNaN(adj.saturation) ? 0 : (adj.saturation || 0);
-        const hue = isNaN(adj.hue) ? 0 : (adj.hue || 0);
+        // Send adjustment uniforms with validation (check bypass flag)
+        const bypassed = node.colorAdjustmentsBypassed;
+        const adj = (!bypassed && node.adjustments) ? node.adjustments : {brightness:0,contrast:0,saturation:0,hue:0};
+        const brightness = bypassed ? 0 : (isNaN(adj.brightness) ? 0 : (adj.brightness || 0));
+        const contrast = bypassed ? 0 : (isNaN(adj.contrast) ? 0 : (adj.contrast || 0));
+        const saturation = bypassed ? 0 : (isNaN(adj.saturation) ? 0 : (adj.saturation || 0));
+        const hue = bypassed ? 0 : (isNaN(adj.hue) ? 0 : (adj.hue || 0));
         
         this.gl.uniform1f(this.uBrightness, brightness);
         this.gl.uniform1f(this.uContrast, contrast);
         this.gl.uniform1f(this.uSaturation, saturation);
         this.gl.uniform1f(this.uHue, hue);
+        
+        if (window.DEBUG_LOD_STATUS && node.type === 'media/video' && (brightness !== 0 || contrast !== 0 || saturation !== 0 || hue !== 0)) {
+            console.log(`🎨 Video color adjustments - B:${brightness} C:${contrast} S:${saturation} H:${hue}`);
+        }
         
         // Get opacity from gallery view manager if in gallery mode
         let opacity = 1.0;
@@ -522,7 +578,8 @@ class WebGLRenderer {
         this.gl.activeTexture(this.gl.TEXTURE0);
         this.gl.bindTexture(this.gl.TEXTURE_2D, null);
 
-        return true;
+        // Return false to allow canvas to continue drawing other elements (title, selection, etc.)
+        return false;
     }
     
     /**
@@ -570,6 +627,38 @@ class WebGLRenderer {
         this.gl.activeTexture(this.gl.TEXTURE0);
         this.gl.bindTexture(this.gl.TEXTURE_2D, null);
         
+        // Periodically clean up textures for non-visible nodes (every 60 frames)
+        if (this.framesSinceInit % 60 === 0 && this.lodManager && this.canvas) {
+            // Get visible nodes from viewport
+            const visibleNodes = this.canvas.viewport.getVisibleNodes(
+                this.canvas.graph.nodes,
+                200 // margin
+            );
+            
+            // Build set of visible hashes
+            const visibleHashes = new Set();
+            for (const node of visibleNodes) {
+                if (node.properties?.hash) {
+                    visibleHashes.add(node.properties.hash);
+                }
+            }
+            
+            // Unload high-res textures for non-visible nodes
+            // Use aggressive mode if memory is getting high
+            const memoryPressure = this.lodManager.totalMemory > 350 * 1024 * 1024; // > 350MB
+            this.lodManager.unloadNonVisibleHighRes(visibleHashes, 256, memoryPressure);
+            
+            // Debug: Log cache contents when memory is high
+            if (this.lodManager.totalMemory > 300 * 1024 * 1024) { // > 300MB
+                this.lodManager.logCacheContents();
+            }
+        }
+        
+        // Smart preloading: Preload nearby nodes at the same LOD as visible ones
+        if (this.framesSinceInit % 30 === 0 && this.lodManager && this.canvas) {
+            this._preloadNearbyNodes();
+        }
+        
         // Flush any pending GL commands
         this.gl.flush();
     }
@@ -580,8 +669,8 @@ class WebGLRenderer {
             return false; // No GL support.
         }
 
-        // Only handle image nodes for now
-        if (node.type !== 'media/image') {
+        // Handle image and video nodes
+        if (node.type !== 'media/image' && node.type !== 'media/video') {
             return false;
         }
         
@@ -593,13 +682,22 @@ class WebGLRenderer {
                 node.adjustments.saturation !== 0 || 
                 node.adjustments.hue !== 0
             );
-            console.log(`WebGL processing node - Adjustments: ${hasAdjustments}, ToneCurve: ${!!node.toneCurve?.lut}, needsGLUpdate: ${node.needsGLUpdate}`);
+            // console.log(`WebGL processing node - Adjustments: ${hasAdjustments}, ToneCurve: ${!!node.toneCurve?.lut}, needsGLUpdate: ${node.needsGLUpdate}`);
         }
         
-        // Need at least a hash to work with
-        if (!node.properties?.hash) {
-            if (window.DEBUG_LOD_STATUS) console.log('❌ No hash for node');
-            return false;
+        // For video nodes, we can render without a hash if they have a valid video element
+        if (node.type === 'media/video') {
+            if (!node.video || node.video.readyState < 2) {
+                if (window.DEBUG_LOD_STATUS) console.log('❌ Video not ready for WebGL rendering');
+                return false;
+            }
+            if (window.DEBUG_LOD_STATUS) console.log('✅ Video node ready for WebGL rendering');
+        } else {
+            // Image nodes need a hash to work with
+            if (!node.properties?.hash) {
+                if (window.DEBUG_LOD_STATUS) console.log('❌ No hash for image node');
+                return false;
+            }
         }
 
         // Skip early exit optimization if node has active adjustments
@@ -610,17 +708,19 @@ class WebGLRenderer {
             node.adjustments.hue !== 0
         );
         
-        const nodeId = node.id || `${node.properties.hash}_${node.pos[0]}_${node.pos[1]}`;
+        const nodeId = node.id || (node.properties?.hash ? 
+            `${node.properties.hash}_${node.pos[0]}_${node.pos[1]}` : 
+            `${node.type}_${node.pos[0]}_${node.pos[1]}`);
         const vp = this.canvas.viewport;
         const currentState = {
-            hash: node.properties.hash,
+            hash: node.properties?.hash || node.type,
             scale: vp.scale,
             position: `${node.pos[0]},${node.pos[1]}`,
             rotation: node.rotation || 0
         };
         
-        if (!hasActiveAdjustments) {
-            // Early exit if nothing has changed for this node
+        if (!hasActiveAdjustments && !node.needsGLUpdate && this.framesSinceInit > 5) {
+            // Early exit if nothing has changed for this node (skip first 5 frames to ensure textures load)
             const lastState = this.renderedNodes.get(nodeId);
             if (lastState && 
                 lastState.hash === currentState.hash &&
@@ -633,15 +733,90 @@ class WebGLRenderer {
                 
                 // Nothing has changed, check if we have a valid texture and just render it
                 if (this.lodManager) {
+                    const screenWidth = node.size[0] * vp.scale * vp.dpr;
+                    const screenHeight = node.size[1] * vp.scale * vp.dpr;
                     const texture = this.lodManager.getBestTexture(
                         node.properties.hash, 
-                        node.size[0] * vp.scale * vp.dpr,
-                        node.size[1] * vp.scale * vp.dpr
+                        screenWidth,
+                        screenHeight
                     );
                     
                     if (texture) {
+                        // Check if we should request a better texture even though nothing else changed
+                        // Check LOD cache first
+                        const cachedLODInfo = this.lodCache.get(nodeId);
+                        const screenSize = Math.max(screenWidth, screenHeight);
+                        const now = Date.now();
+                        
+                        let optimalLOD;
+                        if (cachedLODInfo && Math.abs(cachedLODInfo.screenSize - screenSize) < screenSize * 0.05 && 
+                            now - cachedLODInfo.lastUpdate < 5000) {
+                            optimalLOD = cachedLODInfo.optimalLOD;
+                        } else {
+                            optimalLOD = this.lodManager.getOptimalLOD(screenWidth, screenHeight);
+                            // Update cache
+                            this.lodCache.set(nodeId, {
+                                screenSize,
+                                optimalLOD,
+                                lastUpdate: now
+                            });
+                        }
+                        
+                        // Find current texture's LOD
+                        let currentLOD = null;
+                        const nodeCache = this.lodManager.textureCache.get(node.properties.hash);
+                        if (nodeCache) {
+                            for (const [lodSize, textureData] of nodeCache) {
+                                if (textureData.texture === texture) {
+                                    currentLOD = lodSize;
+                                    break;
+                                }
+                            }
+                        }
+                        
+                        // Request better texture if needed
+                        if (currentLOD !== null && optimalLOD !== null && currentLOD < optimalLOD) {
+                            const now = Date.now();
+                            const lastRequest = this.lastTextureRequest.get(nodeId);
+                            
+                            if (!lastRequest || 
+                                lastRequest.hash !== node.properties.hash ||
+                                lastRequest.lodSize !== optimalLOD ||
+                                now - lastRequest.timestamp > this.textureRequestCooldown) {
+                                
+                                // console.log(`📈 Early exit: Requesting better texture: current=${currentLOD}px, optimal=${optimalLOD}px`);
+                                
+                                this.lastTextureRequest.set(nodeId, {
+                                    hash: node.properties.hash,
+                                    lodSize: optimalLOD,
+                                    timestamp: now
+                                });
+                                
+                                this._requestTexture(node, screenWidth, screenHeight);
+                            }
+                        }
+                        
                         // Just render with existing texture, skip all LOD calculations
                         return this._renderWithTexture(ctx2d, node, texture);
+                    } else {
+                        // No texture available yet - need to request one!
+                        const now = Date.now();
+                        const lastRequest = this.lastTextureRequest.get(nodeId);
+                        const optimalLOD = this.lodManager.getOptimalLOD(screenWidth, screenHeight);
+                        
+                        if (!lastRequest || 
+                            lastRequest.hash !== node.properties.hash ||
+                            lastRequest.lodSize !== optimalLOD ||
+                            now - lastRequest.timestamp > this.textureRequestCooldown) {
+                            
+                            this.lastTextureRequest.set(nodeId, {
+                                hash: node.properties.hash,
+                                lodSize: optimalLOD,
+                                timestamp: now
+                            });
+                            
+                            this._requestTexture(node, screenWidth, screenHeight);
+                        }
                     }
                 }
                 
@@ -681,13 +856,13 @@ class WebGLRenderer {
         const cachedLOD = this.lodCache.get(nodeId);
         const now = Date.now();
         
-        // Use cached LOD if screen size hasn't changed significantly (within 10%)
+        // Use cached LOD if screen size hasn't changed significantly (within 5%)
         let optimalLOD = null;
-        if (cachedLOD && Math.abs(cachedLOD.screenSize - screenSize) < screenSize * 0.1 && 
-            now - cachedLOD.lastUpdate < 1000) { // Cache valid for 1 second
+        if (cachedLOD && Math.abs(cachedLOD.screenSize - screenSize) < screenSize * 0.05 && 
+            now - cachedLOD.lastUpdate < 5000) { // Cache valid for 5 seconds
             optimalLOD = cachedLOD.optimalLOD;
         } else {
-            // Calculate new optimal LOD
+            // Calculate new optimal LOD only once
             optimalLOD = this.lodManager.getOptimalLOD(screenWidth, screenHeight);
             
             // Cache the result
@@ -703,19 +878,33 @@ class WebGLRenderer {
             }
         }
         
-        // Get best available texture from LOD manager
+        // Get best available texture from LOD manager or video element
         let texture = null;
         let currentLOD = null;
-        if (this.lodManager) {
+        
+        // For video nodes, use the video element directly
+        if (node.type === 'media/video' && node.video && node.video.readyState >= 2) {
+            texture = this._ensureTexture(node.video);
+            currentLOD = 'video';
+            if (window.DEBUG_LOD_STATUS) console.log(`🎥 Rendering video node ${node.id} with WebGL`);
+        } else if (this.lodManager && node.type === 'media/image') {
+            // For image nodes, use LOD manager
+            // First try to get the best texture for the current size
             texture = this.lodManager.getBestTexture(
                 node.properties.hash, 
                 screenWidth, 
                 screenHeight
             );
             
-            // Track what's actually being rendered for debugging
-            if (texture) {
-                // Try to determine the texture size from the LOD manager
+            // If no texture at all, try to get ANY available texture to maintain framerate
+            if (!texture) {
+                texture = this.lodManager.getAnyAvailableTexture(node.properties.hash);
+            }
+        
+            
+        // Track what's actually being rendered for debugging
+        if (texture && node.type === 'media/image') {
+            // Try to determine the texture size from the LOD manager
                 const nodeCache = this.lodManager.textureCache.get(node.properties.hash);
                 let actualLOD = null;
                 let textureSource = null;
@@ -767,12 +956,12 @@ class WebGLRenderer {
                     if (!lastRequest || 
                         lastRequest.hash !== node.properties.hash ||
                         lastRequest.lodSize !== optimalLOD ||
-                        now - lastRequest.timestamp > 500) {
+                        now - lastRequest.timestamp > this.textureRequestCooldown) {
                         
                         if (currentLOD < optimalLOD) {
-                            console.log(`📈 Requesting higher quality texture: current=${currentLOD}px, optimal=${optimalLOD}px, screen=${Math.round(screenWidth)}px`);
+                            // console.log(`📈 Requesting higher quality texture: current=${currentLOD}px, optimal=${optimalLOD}px, screen=${Math.round(screenWidth)}px`);
                         } else {
-                            console.log(`🔍 Requesting better texture for zoomed view: current=${currentLOD}px, screen=${Math.round(screenWidth)}px`);
+                            // console.log(`🔍 Requesting better texture for zoomed view: current=${currentLOD}px, screen=${Math.round(screenWidth)}px`);
                         }
                         
                         // Update throttling cache
@@ -807,7 +996,7 @@ class WebGLRenderer {
             if (!lastRequest || 
                 lastRequest.hash !== node.properties.hash ||
                 lastRequest.lodSize !== optimalLOD ||
-                now - lastRequest.timestamp > 500) {
+                now - lastRequest.timestamp > this.textureRequestCooldown) {
                 
                 // Update throttling cache
                 this.lastTextureRequest.set(nodeId, {
@@ -825,15 +1014,12 @@ class WebGLRenderer {
                 (node.adjustments && (node.adjustments.brightness !== 0 || node.adjustments.contrast !== 0 || 
                  node.adjustments.saturation !== 0 || node.adjustments.hue !== 0))) {
                 if (node.img && node.img.complete) {
-                    console.log('Using fallback image texture for adjusted node');
                     texture = this._ensureTexture(node.img);
                 }
             }
             
             // Fall back to Canvas2D only if we have no other options
             if (!texture) {
-                console.warn(`⚠️ WebGL: No texture available for node with adjustments, falling back to Canvas2D`);
-                if (window.DEBUG_LOD_STATUS) console.log(`⏳ No texture available for ${node.properties.hash.substring(0, 8)}, falling back to Canvas2D`);
                 return false;
             }
         }
@@ -901,17 +1087,22 @@ class WebGLRenderer {
         this.gl.activeTexture(this.gl.TEXTURE0);
         this.gl.bindTexture(this.gl.TEXTURE_2D, texture);
 
-        // Send adjustment uniforms with validation
-        const adj = node.adjustments || {brightness:0,contrast:0,saturation:0,hue:0};
-        const brightness = isNaN(adj.brightness) ? 0 : (adj.brightness || 0);
-        const contrast = isNaN(adj.contrast) ? 0 : (adj.contrast || 0);
-        const saturation = isNaN(adj.saturation) ? 0 : (adj.saturation || 0);
-        const hue = isNaN(adj.hue) ? 0 : (adj.hue || 0);
+        // Send adjustment uniforms with validation (check bypass flag)
+        const bypassed = node.colorAdjustmentsBypassed;
+        const adj = (!bypassed && node.adjustments) ? node.adjustments : {brightness:0,contrast:0,saturation:0,hue:0};
+        const brightness = bypassed ? 0 : (isNaN(adj.brightness) ? 0 : (adj.brightness || 0));
+        const contrast = bypassed ? 0 : (isNaN(adj.contrast) ? 0 : (adj.contrast || 0));
+        const saturation = bypassed ? 0 : (isNaN(adj.saturation) ? 0 : (adj.saturation || 0));
+        const hue = bypassed ? 0 : (isNaN(adj.hue) ? 0 : (adj.hue || 0));
         
         this.gl.uniform1f(this.uBrightness, brightness);
         this.gl.uniform1f(this.uContrast, contrast);
         this.gl.uniform1f(this.uSaturation, saturation);
         this.gl.uniform1f(this.uHue, hue);
+        
+        if (window.DEBUG_LOD_STATUS && node.type === 'media/video' && (brightness !== 0 || contrast !== 0 || saturation !== 0 || hue !== 0)) {
+            console.log(`🎨 Video color adjustments - B:${brightness} C:${contrast} S:${saturation} H:${hue}`);
+        }
         
         // Get opacity from gallery view manager if in gallery mode
         let opacity = 1.0;
@@ -957,14 +1148,18 @@ class WebGLRenderer {
             // Store LOD info on node for Canvas2D overlay
             node._webglLOD = {
                 current: currentLOD,
-                optimal: this.lodManager.getOptimalLOD(screenWidth, screenHeight),
+                optimal: optimalLOD, // Use the already calculated value
                 screenSize: Math.max(screenWidth, screenHeight),
                 loading: this.textureRequests.has(node.id)
             };
         }
 
-        // Only reset needsGLUpdate flag if we successfully handled the node
-        // This flag will be reset when LUT texture is successfully created
+        // Reset needsGLUpdate flag since we've now processed the node
+        if (node.needsGLUpdate && !node.toneCurve?.lut) {
+            // Only reset if we don't have a tone curve, as tone curves handle their own flag
+            node.needsGLUpdate = false;
+        }
+        
         return true;
     }
     
@@ -972,8 +1167,13 @@ class WebGLRenderer {
      * Request texture loading for a node - elegant single-path logic
      * @private
      */
-    _requestTexture(node, screenWidth, screenHeight) {
+    _requestTexture(node, screenWidth, screenHeight, overridePriority = null) {
         if (!node.properties?.hash || !this.lodManager) return;
+        
+        // Skip server thumbnail requests for video nodes - they use their own simple thumbnail system
+        if (node.type === 'media/video') {
+            return;
+        }
         
         const hash = node.properties.hash;
         const optimalLOD = this.lodManager.getOptimalLOD(screenWidth, screenHeight);
@@ -981,7 +1181,7 @@ class WebGLRenderer {
         // Single decision tree - no overlapping conditions
         let textureSource = null;
         let lodSize = null;
-        let priority = screenWidth > 512 ? 0 : 2; // High priority for large display
+        let priority = overridePriority !== null ? overridePriority : (screenWidth > 512 ? 0 : 2); // High priority for large display unless overridden
         
         // 1. Try exact optimal size from thumbnails
         if (window.thumbnailCache && optimalLOD !== null) {
@@ -1018,17 +1218,25 @@ class WebGLRenderer {
                 const alreadyWaiting = this.pendingServerRequests.has(requestKey);
                 
                 // Only use existing thumbnail if it's reasonably close to optimal OR we're not waiting for better
-                if (bestSize >= optimalLOD * 0.5) {
+                if (bestSize >= optimalLOD * 0.8) {
+                    // Close enough to optimal, use it
                     textureSource = bestThumbnail;
                     lodSize = bestSize;
-                    console.log(`📎 Using existing ${bestSize}px thumbnail (optimal: ${optimalLOD}px)`);
-                } else if (!alreadyWaiting && bestSize >= optimalLOD * 0.25) {
+                    // console.log(`📎 Using existing ${bestSize}px thumbnail (optimal: ${optimalLOD}px`);
+                } else if (!alreadyWaiting && bestSize > 0) {
                     // Use lower quality temporarily only if we're not already waiting for better
                     textureSource = bestThumbnail;
                     lodSize = bestSize;
-                    console.log(`⏳ Using temporary ${bestSize}px thumbnail while requesting ${optimalLOD}px`);
+                    // console.log(`⏳ Using temporary ${bestSize}px thumbnail while requesting ${optimalLOD}px`);
+                    
+                    // IMPORTANT: Still need to request the optimal size from server
+                    // even though we're using a temporary texture
+                    if (bestSize < optimalLOD && node.properties?.serverFilename) {
+                        this.pendingServerRequests.add(requestKey);
+                        this._requestServerThumbnail(hash, node.properties.serverFilename, optimalLOD, requestKey);
+                    }
                 } else {
-                    console.log(`📉 Existing ${bestSize}px thumbnail too small for optimal ${optimalLOD}px${alreadyWaiting ? ' (already waiting for better)' : ', will request'}`);
+                    // console.log(`📉 Existing ${bestSize}px thumbnail too small for optimal ${optimalLOD}px${alreadyWaiting ? ' (already waiting for better)' : ', will request'}`);
                     // Don't set textureSource - let it fall through to server request
                 }
             }
@@ -1049,7 +1257,7 @@ class WebGLRenderer {
         // 4. Make the request (only one per call)
         if (textureSource) {
             const dpr = this.canvas.viewport.dpr || 1;
-            console.log(`🎯 Requesting ${lodSize || 'FULL'}px texture for ${hash.substring(0, 8)} (optimal: ${optimalLOD || 'FULL'}px, screen: ${Math.round(screenWidth/dpr)}px @ ${dpr}x DPR)`);
+            // console.log(`🎯 Requesting ${lodSize || 'FULL'}px texture for ${hash.substring(0, 8)} (optimal: ${optimalLOD || 'FULL'}px, screen: ${Math.round(screenWidth/dpr)}px @ ${dpr}x DPR)`);
             
             // Track what's actually being rendered for debugging
             node._currentRenderInfo = {
@@ -1066,9 +1274,25 @@ class WebGLRenderer {
             // 5. If nothing available, request server thumbnails for optimal size
             const requestKey = `${hash}_${optimalLOD}`;
             
+            // Check if this request has failed recently
+            const failedInfo = this.failedRequests.get(requestKey);
+            if (failedInfo) {
+                const now = Date.now();
+                if (now - failedInfo.timestamp < this.failedRequestTTL) {
+                    // Skip this request - it failed recently
+                    if (window.DEBUG_LOD_STATUS) {
+                        console.log(`⏭️ Skipping failed request for ${hash.substring(0, 8)} (${optimalLOD}px) - failed ${failedInfo.retryCount} times`);
+                    }
+                    return;
+                } else {
+                    // TTL expired, remove from failed cache
+                    this.failedRequests.delete(requestKey);
+                }
+            }
+            
             // Don't make duplicate requests for the same hash+size combo
             if (!this.pendingServerRequests.has(requestKey)) {
-                console.log(`⏳ No texture available for ${hash.substring(0, 8)}, requesting server thumbnail (optimal: ${optimalLOD || 'FULL'}px)`);
+                // console.log(`⏳ No texture available for ${hash.substring(0, 8)}, requesting server thumbnail (optimal: ${optimalLOD || 'FULL'}px)`);
                 
                 if (node.properties?.serverFilename && optimalLOD) {
                     // Request specific size from server
@@ -1080,10 +1304,10 @@ class WebGLRenderer {
                     
                     // Show what sizes the cache is configured for
                     const availableSizes = window.thumbnailCache.thumbnailSizes;
-                    console.log(`📝 Cache configured for sizes: [${availableSizes.join(', ')}]`);
+                    // console.log(`📝 Cache configured for sizes: [${availableSizes.join(', ')}]`);
                 }
             } else {
-                console.log(`⏸️ Already requesting ${optimalLOD}px for ${hash.substring(0, 8)}, waiting...`);
+                // console.log(`⏸️ Already requesting ${optimalLOD}px for ${hash.substring(0, 8)}, waiting...`);
             }
         }
     }
@@ -1095,10 +1319,47 @@ class WebGLRenderer {
     _requestServerThumbnail(hash, serverFilename, size, requestKey) {
         if (!hash || !serverFilename || !size) return;
         
-        console.log(`🌐 Requesting ${size}px thumbnail from server for ${hash.substring(0, 8)} (${serverFilename})`);
+        // console.log(`🌐 Requesting ${size}px thumbnail from server for ${hash.substring(0, 8)} (${serverFilename}`)`;
         
-        // Use thumbnail cache's server loading capability
-        if (window.thumbnailCache && window.thumbnailCache.loadServerThumbnails) {
+        // Subscribe to thumbnail updates for this hash if not already subscribed
+        if (window.thumbnailCache && !this.thumbnailSubscriptions.has(hash)) {
+            const callback = this._onThumbnailUpdate.bind(this);
+            window.thumbnailCache.subscribe(hash, callback);
+            this.thumbnailSubscriptions.set(hash, callback);
+        }
+        
+        // Use coordinator if available, otherwise fall back to direct request
+        if (window.thumbnailRequestCoordinator) {
+            window.thumbnailRequestCoordinator.requestThumbnail(hash, serverFilename, size, 'webgl-renderer')
+                .then((success) => {
+                    // Clean up pending request tracking
+                    if (requestKey) {
+                        this.pendingServerRequests.delete(requestKey);
+                    }
+                    
+                    if (success) {
+                        // console.log(`✅ Server thumbnail ${size}px loaded for ${hash.substring(0, 8)}`);
+                        // Force a redraw to show the new texture
+                        if (this.canvas) {
+                            this.canvas.dirty_canvas = true;
+                        }
+                    } else {
+                        // console.warn(`⚠️ Server thumbnail ${size}px not available for ${hash.substring(0, 8)}`);
+                        // Mark as failed request
+                        this._markFailedRequest(requestKey);
+                    }
+                })
+                .catch(error => {
+                    // Clean up pending request tracking on error too
+                    if (requestKey) {
+                        this.pendingServerRequests.delete(requestKey);
+                    }
+                    // console.warn(`❌ Failed to load server thumbnail ${size}px for ${hash.substring(0, 8)}:`, error);
+                    // Mark as failed request
+                    this._markFailedRequest(requestKey);
+                });
+        } else if (window.thumbnailCache && window.thumbnailCache.loadServerThumbnails) {
+            // Fallback to direct request
             window.thumbnailCache.loadServerThumbnails(hash, serverFilename, [size])
                 .then((success) => {
                     // Clean up pending request tracking
@@ -1107,13 +1368,15 @@ class WebGLRenderer {
                     }
                     
                     if (success) {
-                        console.log(`✅ Server thumbnail ${size}px loaded for ${hash.substring(0, 8)}`);
+                        // console.log(`✅ Server thumbnail ${size}px loaded for ${hash.substring(0, 8)}`);
                         // Force a redraw to show the new texture
                         if (this.canvas) {
                             this.canvas.dirty_canvas = true;
                         }
                     } else {
-                        console.warn(`⚠️ Server thumbnail ${size}px not available for ${hash.substring(0, 8)}`);
+                        // console.warn(`⚠️ Server thumbnail ${size}px not available for ${hash.substring(0, 8)}`);
+                        // Mark as failed request
+                        this._markFailedRequest(requestKey);
                     }
                 })
                 .catch(error => {
@@ -1121,7 +1384,9 @@ class WebGLRenderer {
                     if (requestKey) {
                         this.pendingServerRequests.delete(requestKey);
                     }
-                    console.warn(`❌ Failed to load server thumbnail ${size}px for ${hash.substring(0, 8)}:`, error);
+                    // console.warn(`❌ Failed to load server thumbnail ${size}px for ${hash.substring(0, 8)}:`, error);
+                    // Mark as failed request
+                    this._markFailedRequest(requestKey);
                 });
         }
     }
@@ -1165,13 +1430,153 @@ class WebGLRenderer {
         };
     }
     
+    /**
+     * Intelligently preload nearby nodes at the same LOD as currently visible ones
+     * @private
+     */
+    _preloadNearbyNodes() {
+        if (!this.canvas || !this.lodManager) return;
+        
+        const vp = this.canvas.viewport;
+        const scale = vp.scale;
+        
+        // FIRST PRIORITY: Ensure preview textures (256px) are loaded for a WIDE area
+        // This ensures smooth zoom-out animations
+        this._ensurePreviewTextures();
+        
+        // Get visible nodes with a small margin
+        const visibleNodes = vp.getVisibleNodes(
+            this.canvas.graph.nodes,
+            50 // Small margin for currently visible
+        );
+        
+        // Calculate the average screen size of visible nodes to determine LOD
+        let totalScreenSize = 0;
+        let visibleImageCount = 0;
+        
+        for (const node of visibleNodes) {
+            if (node.type === 'media/image' && node.properties?.hash) {
+                const screenWidth = node.size[0] * scale;
+                const screenHeight = node.size[1] * scale;
+                const screenSize = Math.max(screenWidth, screenHeight);
+                totalScreenSize += screenSize;
+                visibleImageCount++;
+            }
+        }
+        
+        if (visibleImageCount === 0) return;
+        
+        // Determine the optimal LOD for this zoom level
+        const avgScreenSize = totalScreenSize / visibleImageCount;
+        const optimalLOD = this.lodManager.getOptimalLOD(avgScreenSize, avgScreenSize);
+        
+        // Only log preloading for large operations
+        if (visibleImageCount > 50) {
+            console.log(`🔮 Preloading: ${visibleImageCount} visible, avg screen size ${Math.round(avgScreenSize)}px → optimal LOD: ${optimalLOD || 'FULL'}`);
+        }
+        
+        // Check if we're zoomed out on many small images
+        if (visibleImageCount > 20 && avgScreenSize < 100) {
+            console.warn(`⚠️ Many small images visible: ${visibleImageCount} at ~${Math.round(avgScreenSize)}px each`);
+        }
+        
+        // Get nodes in a wider area for preloading
+        const nearbyNodes = vp.getVisibleNodes(
+            this.canvas.graph.nodes,
+            Math.max(400, avgScreenSize * 2) // Preload area based on zoom level
+        );
+        
+        // Preload textures for nearby nodes that aren't visible yet
+        let preloadCount = 0;
+        const maxPreloads = 5; // Limit to prevent overwhelming the system
+        
+        for (const node of nearbyNodes) {
+            if (node.type !== 'media/image' || !node.properties?.hash) continue;
+            
+            // Skip if already visible
+            if (visibleNodes.includes(node)) continue;
+            
+            // Check if we already have this texture at the desired LOD
+            const hash = node.properties.hash;
+            const nodeCache = this.lodManager.textureCache.get(hash);
+            
+            if (nodeCache && nodeCache.has(optimalLOD)) {
+                // Already have this LOD, skip
+                continue;
+            }
+            
+            // Don't preload full resolution unless we're really zoomed in
+            if (optimalLOD === null && avgScreenSize < 1500) {
+                continue;
+            }
+            
+            // Request the texture at the optimal LOD for current zoom
+            const screenWidth = node.size[0] * scale;
+            const screenHeight = node.size[1] * scale;
+            
+            // Low priority for preloading
+            this._requestTexture(node, screenWidth, screenHeight, 5);
+            
+            preloadCount++;
+            if (preloadCount >= maxPreloads) break;
+        }
+        
+        // Only log significant preload operations
+        if (preloadCount > 10 && optimalLOD > 256) {
+            console.log(`📥 Preloaded ${preloadCount} textures at ${optimalLOD || 'FULL'}px`);
+        }
+    }
+    
+    /**
+     * Ensure preview textures (256px) are loaded for a wide area
+     * This is critical for smooth zoom-out animations
+     * @private
+     */
+    _ensurePreviewTextures() {
+        if (!this.canvas || !this.lodManager) return;
+        
+        const vp = this.canvas.viewport;
+        
+        // Get nodes in a VERY wide area (enough to cover typical zoom-out)
+        const wideAreaNodes = vp.getVisibleNodes(
+            this.canvas.graph.nodes,
+            2000 // Very wide margin to ensure smooth animations
+        );
+        
+        let previewRequestCount = 0;
+        const maxPreviewRequests = 20; // Allow more preview requests since they're small
+        
+        for (const node of wideAreaNodes) {
+            if (node.type !== 'media/image' || !node.properties?.hash) continue;
+            
+            const hash = node.properties.hash;
+            const nodeCache = this.lodManager.textureCache.get(hash);
+            
+            // Check if we have at least a 256px preview
+            const hasPreview = nodeCache && (nodeCache.has(256) || nodeCache.has(128) || nodeCache.has(64));
+            
+            if (!hasPreview) {
+                // Request a 256px preview with medium priority
+                this._requestTexture(node, 256, 256, 3);
+                previewRequestCount++;
+                
+                if (previewRequestCount >= maxPreviewRequests) break;
+            }
+        }
+        
+        // Only log significant preview operations
+        if (previewRequestCount > 20) {
+            console.log(`🖼️ Ensuring ${previewRequestCount} preview textures are loaded`);
+        }
+    }
+    
     _ensureLUTTexture(node) {
         // Check cache first
         let lutTexture = this.lutTextureCache.get(node);
         
         // If texture exists but curve has changed, delete old texture
         if (lutTexture && node.needsGLUpdate) {
-            console.log('Invalidating LUT texture due to curve update');
+            // Silently invalidate LUT texture
             this.gl.deleteTexture(lutTexture);
             lutTexture = null;
             this.lutTextureCache.delete(node);
@@ -1198,10 +1603,10 @@ class WebGLRenderer {
                 }
             }
             
-            if (isIdentityCurve) {
-                console.log('Identity curve detected, skipping LUT texture creation');
-                return null;
-            }
+            // if (isIdentityCurve) {
+            //     console.log('Identity curve detected, skipping LUT texture creation');
+            //     return null;
+            // }
             
             // Create new LUT texture
             lutTexture = this.gl.createTexture();
@@ -1245,8 +1650,10 @@ class WebGLRenderer {
             // Reset the GL update flag only when LUT texture is successfully created
             node.needsGLUpdate = false;
             
-            // Debug logging
-            console.log(`Created LUT texture: ${size} samples, range [${Math.min(...lut).toFixed(3)}, ${Math.max(...lut).toFixed(3)}]`);
+            // Only log LUT creation when debugging
+            if (window.DEBUG_LOD_STATUS) {
+                console.log(`Created LUT texture: ${size} samples, range [${Math.min(...lut).toFixed(3)}, ${Math.max(...lut).toFixed(3)}]`);
+            }
         }
         
         return lutTexture;
@@ -1256,6 +1663,14 @@ class WebGLRenderer {
      * Clean up resources
      */
     destroy() {
+        // Clean up thumbnail subscriptions
+        if (window.thumbnailCache) {
+            for (const [hash, callback] of this.thumbnailSubscriptions) {
+                window.thumbnailCache.unsubscribe(hash, callback);
+            }
+        }
+        this.thumbnailSubscriptions.clear();
+        
         // Clean up ResizeObserver
         if (this._resizeObserver) {
             this._resizeObserver.disconnect();
@@ -1277,6 +1692,88 @@ class WebGLRenderer {
             // Clean up atlas manager
             if (this.atlasManager) {
                 this.atlasManager.clear();
+            }
+        }
+    }
+    
+    /**
+     * Handle thumbnail update notification
+     * @private
+     */
+    _onThumbnailUpdate(hash) {
+        // Only log when debugging is enabled
+        if (window.DEBUG_LOD_STATUS) {
+            console.log(`🔄 Thumbnail updated for ${hash.substring(0, 8)}, invalidating renderer cache`);
+        }
+        
+        // Clear the LOD manager's cache for this hash to force re-evaluation
+        if (this.lodManager) {
+            this.lodManager.invalidateHash(hash);
+        }
+        
+        // Clear any failed requests for this hash since new thumbnails are available
+        for (const [requestKey, ] of this.failedRequests) {
+            if (requestKey.startsWith(hash)) {
+                this.failedRequests.delete(requestKey);
+            }
+        }
+        
+        // Find all nodes using this hash and mark them as needing update
+        if (window.app?.graph?.nodes) {
+            for (const node of window.app.graph.nodes) {
+                if (node.properties?.hash === hash) {
+                    // Clear the node from our rendered nodes cache to force re-render
+                    const nodeId = node.id || (node.properties?.hash ? 
+            `${node.properties.hash}_${node.pos[0]}_${node.pos[1]}` : 
+            `${node.type}_${node.pos[0]}_${node.pos[1]}`);
+                    this.renderedNodes.delete(nodeId);
+                    
+                    // Mark the node as needing GL update
+                    node.needsGLUpdate = true;
+                }
+            }
+        }
+        
+        // Request a redraw
+        if (this.canvas) {
+            this.canvas.dirty_canvas = true;
+            this.canvas.dirty_bgcanvas = true;
+        }
+    }
+    
+    /**
+     * Mark a request as failed
+     * @private
+     */
+    _markFailedRequest(requestKey) {
+        if (!requestKey) return;
+        
+        const existing = this.failedRequests.get(requestKey);
+        if (existing) {
+            existing.retryCount++;
+            existing.timestamp = Date.now();
+        } else {
+            this.failedRequests.set(requestKey, {
+                timestamp: Date.now(),
+                retryCount: 1
+            });
+        }
+        
+        // Periodically clean up old failed requests
+        if (this.failedRequests.size > 100) {
+            this._cleanupFailedRequests();
+        }
+    }
+    
+    /**
+     * Clean up expired failed requests
+     * @private
+     */
+    _cleanupFailedRequests() {
+        const now = Date.now();
+        for (const [key, info] of this.failedRequests) {
+            if (now - info.timestamp > this.failedRequestTTL) {
+                this.failedRequests.delete(key);
             }
         }
     }

@@ -123,6 +123,20 @@ class DragDropManager {
         }
         const startTime = Date.now();
         
+        // Separate images and videos
+        const imageFiles = [];
+        const videoFiles = [];
+        
+        files.forEach(file => {
+            if (file.type.startsWith('video/') || file.type === 'image/gif') {
+                videoFiles.push(file);
+            } else {
+                imageFiles.push(file);
+            }
+        });
+        
+        console.log(`📁 Processing ${imageFiles.length} images and ${videoFiles.length} videos`);
+        
         // Set bulk operation flag to prevent aggressive memory cleanup
         if (files.length > 10) {
             if (window.app) window.app.bulkOperationInProgress = true;
@@ -138,24 +152,32 @@ class DragDropManager {
             
             const nodes = await this.createNodesWithPreviews(files, previewDataMap, dropPos);
             
-            // Clear preview data URLs after nodes are created to free memory
+            // Defer preview cleanup to ensure nodes have time to use the URLs
+            // This prevents the blob URL ERR_FILE_NOT_FOUND error
+            setTimeout(() => {
+                previewDataMap.forEach(data => {
+                    if (data.url && data.url.startsWith('blob:')) {
+                        URL.revokeObjectURL(data.url);
+                    }
+                });
+                previewDataMap.clear();
+            }, 5000); // Wait 5 seconds before cleanup
             
-            previewDataMap.forEach(data => {
-                if (data.url && data.url.startsWith('blob:')) {
-                    URL.revokeObjectURL(data.url);
-                }
-            });
-            previewDataMap.clear();
-            
-            // Show success - users see actual images immediately
-            window.unifiedNotifications?.info(
-                `Added ${files.length} ${files.length === 1 ? 'image' : 'images'} to canvas`,
-                { detail: 'Processing in background...', duration: 2000 }
-            );
+            // Show success only for images (videos have their own purple notification)
+            if (imageFiles.length > 0) {
+                const message = `Added ${imageFiles.length} ${imageFiles.length === 1 ? 'image' : 'images'} to canvas`;
+                window.unifiedNotifications?.info(message, { detail: 'Processing in background...', duration: 2000 });
+            }
             
             // PHASE 3: Start background processing pipeline
+            // Process images and videos separately
+            if (imageFiles.length > 0) {
+                this.startBackgroundPipeline(imageFiles, nodes.filter(n => n.type === 'media/image'));
+            }
             
-            this.startBackgroundPipeline(files, nodes);
+            if (videoFiles.length > 0) {
+                this.startVideoProcessingPipeline(videoFiles, nodes.filter(n => n.type === 'media/video'));
+            }
             
             return nodes;
             
@@ -174,12 +196,13 @@ class DragDropManager {
         const previewSize = 64; // Tiny previews for minimal memory usage
         const maxConcurrent = 4; // Process in small batches
         
-        // Show progress
+        // Show progress only for images
         let progressId = null;
-        if (window.unifiedNotifications) {
+        const imageCount = files.filter(f => !f.type.startsWith('video/') && f.type !== 'image/gif').length;
+        if (window.unifiedNotifications && imageCount > 0) {
             progressId = window.unifiedNotifications.show({
                 type: 'info',
-                message: `Generating previews for ${files.length} files...`,
+                message: `Generating previews for ${imageCount} ${imageCount === 1 ? 'image' : 'images'}...`,
                 duration: 0,
                 persistent: true,
                 progress: {
@@ -242,14 +265,33 @@ class DragDropManager {
                             img.src = blobUrl;
                         });
                     } else {
-                        // Video files - just store dimensions
-                        previewMap.set(file, {
-                            url: null,
-                            width: 640,
-                            height: 480,
-                            aspectRatio: 640/480,
-                            isVideo: true
-                        });
+                        // Video files - extract first frame preview
+                        try {
+                            const preview = await this.extractVideoPreview(file, previewSize);
+                            const dims = await this.getVideoDimensions(file);
+                            
+                            previewMap.set(file, {
+                                url: preview,
+                                width: dims.width,
+                                height: dims.height,
+                                aspectRatio: dims.width / dims.height,
+                                isVideo: true
+                            });
+                            
+                            if (preview) {
+                                console.log(`🎬 Extracted preview for video: ${file.name}`);
+                            }
+                        } catch (error) {
+                            console.warn(`Failed to extract video preview for ${file.name}:`, error);
+                            // Fallback dimensions
+                            previewMap.set(file, {
+                                url: null,
+                                width: 640,
+                                height: 480,
+                                aspectRatio: 640/480,
+                                isVideo: true
+                            });
+                        }
                     }
                     
                     // Update progress
@@ -340,6 +382,17 @@ class DragDropManager {
                     isPreview: true // Mark as preview to prevent heavy processing
                 };
                 
+                // For video nodes, create a blob URL for immediate playback
+                if (nodeType === 'media/video') {
+                    const blobUrl = URL.createObjectURL(fileInfo.file);
+                    node._tempBlobUrl = blobUrl;
+                    node.properties.tempVideoUrl = blobUrl;
+                    
+                    // Don't set the video yet - wait for hash calculation
+                    // This prevents the "No video source available" error
+                    node.properties.pendingVideoInit = true;
+                }
+                
                 // Add to graph immediately
                 this.graph.add(node);
                 
@@ -349,10 +402,15 @@ class DragDropManager {
                 // Don't sync to server yet - wait until we have a hash
                 
                 // Set preview image if available
-                if (fileInfo.previewUrl && !fileInfo.isVideo) {
+                if (fileInfo.previewUrl) {
                     // Store preview temporarily
                     node._previewUrl = fileInfo.previewUrl;
                     node.loadingState = 'preview';
+                    
+                    // For videos, store the preview to be used later when we have a hash
+                    if (fileInfo.isVideo) {
+                        node._pendingVideoPreview = fileInfo.previewUrl;
+                    }
                     
                     // Trigger visual update
                     if (this.graph.canvas) {
@@ -402,7 +460,7 @@ class DragDropManager {
             total: files.length * 4 // 4 stages per file
         };
         
-        // Show overall progress
+        // Show overall progress for images only
         const progressId = window.unifiedNotifications?.show({
             type: 'info',
             message: 'Processing images...',
@@ -440,6 +498,27 @@ class DragDropManager {
                     // Calculate hash
                     const hash = await window.fileHashCalculator.calculateHash(file);
                     hashResults.set(file, hash);
+                    
+                    // Cache the file data immediately for upload coordinator
+                    // This prevents "No cached data URL found" errors
+                    if (window.app?.imageResourceCache && !file.type.startsWith('video/')) {
+                        const reader = new FileReader();
+                        const dataUrl = await new Promise((resolve, reject) => {
+                            reader.onload = () => resolve(reader.result);
+                            reader.onerror = reject;
+                            reader.readAsDataURL(file);
+                        });
+                        
+                        window.app.imageResourceCache.set(hash, {
+                            url: dataUrl,
+                            originalFilename: file.name,
+                            isLocal: true
+                        });
+                        
+                        if (window.imageCache) {
+                            window.imageCache.set(hash, dataUrl);
+                        }
+                    }
                     
                     // Update node with real hash
                     const node = fileNodeMap.get(file);
@@ -784,11 +863,21 @@ class DragDropManager {
                         height = analysis.height;
                         preview = analysis.previews[64];
                     } else {
-                        // Video files - get basic dimensions
+                        // Video files - get dimensions and extract preview frame
                         const dims = await this.getVideoDimensions(file);
                         width = dims.width;
                         height = dims.height;
-                        preview = null; // Videos don't need previews for now
+                        
+                        // Extract preview frame from video
+                        try {
+                            preview = await this.extractVideoPreview(file, 64);
+                            if (preview) {
+                                console.log(`🎬 Extracted video preview for ${file.name}`);
+                            }
+                        } catch (error) {
+                            console.error(`Failed to extract video preview for ${file.name}:`, error);
+                            preview = null;
+                        }
                     }
                     
                     return {
@@ -964,7 +1053,7 @@ class DragDropManager {
                         nodes.forEach(node => {
                             if (node.properties) {
                                 node.properties.serverUrl = uploadResult.url;
-                                node.properties.serverFilename = uploadResult.serverFilename || uploadResult.filename;
+                                node.properties.serverFilename = uploadResult.serverFilename;
                             }
                         });
                     }
@@ -1207,6 +1296,408 @@ class DragDropManager {
                 resolve({ width: 640, height: 480 }); // Fallback
             };
             
+            video.src = objectURL;
+        });
+    }
+    
+    /**
+     * Start video processing pipeline with purple notifications
+     */
+    async startVideoProcessingPipeline(videoFiles, videoNodes) {
+        console.log(`🎬 Starting video processing pipeline for ${videoFiles.length} videos`);
+        
+        // Create file-to-node mapping
+        const fileNodeMap = new Map();
+        videoFiles.forEach((file, index) => {
+            if (videoNodes[index]) {
+                fileNodeMap.set(file, videoNodes[index]);
+            }
+        });
+        
+        // Track individual video notifications
+        const videoNotifications = new Map(); // file -> notificationId
+        const videoCancelled = new Map(); // file -> boolean
+        
+        // Create a single notification for each video
+        videoFiles.forEach(file => {
+            const notificationId = window.unifiedNotifications?.showVideoProcessing(
+                file.name,
+                {
+                    detail: 'Preparing...',
+                    progress: {
+                        current: 0,
+                        total: 100,
+                        showBar: true
+                    },
+                    onCancel: () => {
+                        // Mark as cancelled so we can handle it when we have the hash
+                        videoCancelled.set(file, true);
+                        console.log(`🚫 Cancel requested for ${file.name}`);
+                        
+                        // Try to find and remove the node
+                        const node = fileNodeMap.get(file);
+                        if (node && window.app?.graph) {
+                            window.app.graph.remove(node);
+                            console.log(`🗑️ Removed video node for cancelled ${file.name}`);
+                        }
+                    }
+                }
+            );
+            videoNotifications.set(file, notificationId);
+        });
+        
+        // Calculate hashes for videos
+        const hashResults = new Map();
+        
+        for (let i = 0; i < videoFiles.length; i++) {
+            const file = videoFiles[i];
+            const node = fileNodeMap.get(file);
+            
+            try {
+                // Check if cancelled
+                if (videoCancelled.get(file)) {
+                    console.log(`⏭️ Skipping cancelled video: ${file.name}`);
+                    continue;
+                }
+                
+                // Calculate hash
+                const hash = await window.fileHashCalculator.calculateHash(file);
+                hashResults.set(file, hash);
+                
+                // Update cancel handler now that we have the hash
+                if (window.unifiedNotifications && hash) {
+                    const notificationData = window.unifiedNotifications.notifications.get(`video-${file.name}`);
+                    if (notificationData) {
+                        notificationData.onCancel = () => {
+                            console.log(`🚫 Cancelling upload for ${file.name} (${hash})`);
+                            
+                            // Cancel the upload
+                            if (window.imageUploadManager) {
+                                window.imageUploadManager.cancelUpload(hash);
+                            }
+                            
+                            // Remove the node
+                            const node = fileNodeMap.get(file);
+                            if (node && window.app?.graph) {
+                                window.app.graph.remove(node);
+                            }
+                            
+                            // Clean up blob URL
+                            if (node?._tempBlobUrl) {
+                                URL.revokeObjectURL(node._tempBlobUrl);
+                            }
+                            
+                            // Also try to remove via VideoProcessingListener
+                            // in case the node was already registered
+                            if (window.videoProcessingListener) {
+                                window.videoProcessingListener.removeVideoNode(file.name);
+                            }
+                        };
+                    }
+                }
+                
+                if (node) {
+                    node.properties.hash = hash;
+                    delete node.properties.tempId;
+                    
+                    // Now sync to server
+                    if (node._pendingServerSync && window.app?.operationPipeline) {
+                        delete node._pendingServerSync;
+                        
+                        const nodeData = {
+                            type: node.type,
+                            pos: node.pos,
+                            size: node.size,
+                            properties: {
+                                ...node.properties,
+                                hash: hash,
+                                tempId: null
+                            },
+                            id: node.id
+                        };
+                        
+                        await window.app.operationPipeline.execute('node_create', nodeData);
+                        console.log(`✅ Video node ${node.id} synced to server with hash ${hash.substring(0, 8)}...`);
+                    }
+                    
+                    // Create blob URL from file for video playback
+                    const blobUrl = URL.createObjectURL(file);
+                    
+                    // Store blob URL in cache for immediate playback
+                    if (window.imageCache) {
+                        window.imageCache.set(hash, blobUrl);
+                    }
+                    
+                    // Clear the pending init flag
+                    delete node.properties.pendingVideoInit;
+                    
+                    // Set video immediately with blob URL for instant playback
+                    await node.setVideo(blobUrl, file.name, hash);
+                    
+                    // Mark that we need to update to server URL after upload
+                    node.properties.pendingServerUrlUpdate = true;
+                    node._tempBlobUrl = blobUrl;
+                    
+                    // Store the video preview as thumbnail now that we have a hash
+                    if (node._pendingVideoPreview && window.thumbnailCache) {
+                        const img = new Image();
+                        img.onload = () => {
+                            const canvas = document.createElement('canvas');
+                            canvas.width = 64;
+                            canvas.height = 64;
+                            const ctx = canvas.getContext('2d');
+                            ctx.drawImage(img, 0, 0, 64, 64);
+                            
+                            window.thumbnailCache.setThumbnail(hash, 64, canvas);
+                            console.log(`💾 Stored video preview as thumbnail for ${hash.substring(0, 8)}...`);
+                            
+                            // Force redraw to show thumbnail
+                            if (window.app?.graphCanvas) {
+                                window.app.graphCanvas.dirty_canvas = true;
+                            }
+                        };
+                        img.src = node._pendingVideoPreview;
+                        delete node._pendingVideoPreview;
+                    }
+                }
+                
+                // Update progress: 10% after hashing
+                const notificationId = videoNotifications.get(file);
+                if (notificationId) {
+                    window.unifiedNotifications.updateVideoProgress(
+                        file.name,
+                        10,
+                        null,
+                        'Uploading...'
+                    );
+                }
+                
+            } catch (error) {
+                console.error(`Failed to process video ${file.name}:`, error);
+            }
+        }
+        
+        // Start uploads (process up to 2 videos concurrently to prevent overwhelming server)
+        const maxConcurrentVideoUploads = 2;
+        const uploadQueue = Array.from(fileNodeMap.entries());
+        
+        // Process uploads in batches
+        for (let i = 0; i < uploadQueue.length; i += maxConcurrentVideoUploads) {
+            const batch = uploadQueue.slice(i, i + maxConcurrentVideoUploads);
+            
+            // Upload batch concurrently
+            await Promise.all(batch.map(async ([file, node]) => {
+                // Check if cancelled
+                if (videoCancelled.get(file)) {
+                    console.log(`⏭️ Skipping upload for cancelled video: ${file.name}`);
+                    return;
+                }
+                
+                const hash = hashResults.get(file);
+                if (!hash) return;
+                
+                try {
+                    // Track upload progress for this video
+                    const uploadStartTime = Date.now();
+                    let lastProgressUpdate = 0;
+                    
+                    // Listen for upload progress
+                    const progressHandler = (uploadHash, progress) => {
+                        if (uploadHash === hash) {
+                            // Map upload progress from 10% to 30%
+                            const mappedProgress = 10 + (progress * 20);
+                            const now = Date.now();
+                            
+                            // Throttle updates to every 500ms
+                            if (now - lastProgressUpdate > 500) {
+                                window.unifiedNotifications.updateVideoProgress(
+                                    file.name,
+                                    mappedProgress,
+                                    null,
+                                    'Uploading...'
+                                );
+                                lastProgressUpdate = now;
+                            }
+                        }
+                    };
+                
+                    // Register progress handler if available
+                    if (window.imageProcessingProgress) {
+                        window.imageProcessingProgress.on?.('uploadProgress', progressHandler);
+                    }
+                    
+                    // Upload video
+                    const result = await window.imageUploadManager.uploadMedia(
+                        file,
+                        file.name,
+                        hash,
+                        file.type
+                    );
+                    
+                    // Remove progress handler
+                    if (window.imageProcessingProgress) {
+                        window.imageProcessingProgress.off?.('uploadProgress', progressHandler);
+                    }
+                    
+                    // Update progress: 30% after upload (transcoding starts at 30%)
+                    const notificationId = videoNotifications.get(file);
+                    if (notificationId) {
+                        window.unifiedNotifications.updateVideoProgress(
+                            file.name,
+                            30,
+                            null,
+                            'Queued for processing...'
+                        );
+                    }
+                
+                    // Update node with server info
+                    if (node && result) {
+                        node.properties.serverUrl = result.url;
+                        node.properties.serverFilename = result.filename;
+                        
+                        // Don't update video source yet - wait for transcoding to complete
+                        // The blob URL will continue playing during upload and transcoding
+                        console.log(`📤 Upload complete for ${file.name}, continuing with blob URL during transcoding`);
+                        
+                        // Keep the pendingServerUrlUpdate flag true so VideoProcessingListener
+                        // can handle the transition after transcoding is complete
+                        
+                        // Register the node with VideoProcessingListener for tracking
+                        if (window.videoProcessingListener) {
+                            window.videoProcessingListener.registerVideoNode(file.name, node);
+                        }
+                    }
+                    
+                } catch (error) {
+                    console.error(`Failed to upload video ${file.name}:`, error);
+                    
+                    // Video remains playable from blob URL even if upload fails
+                    console.log(`📹 Video ${file.name} will continue playing from local blob URL`);
+                    
+                    // Update notification to show error
+                    window.unifiedNotifications?.updateVideoProgress(
+                        file.name,
+                        0,
+                        null,
+                        'Upload failed - retrying...'
+                    );
+                    
+                    // Retry once for timeout/network errors
+                    if (error.message?.includes('timeout') || error.message?.includes('Network')) {
+                        console.log(`🔄 Retrying upload for ${file.name}...`);
+                        
+                        try {
+                            const result = await window.imageUploadManager.uploadMedia(
+                                file,
+                                file.name,
+                                hash,
+                                file.type
+                            );
+                            
+                            // Update progress after successful retry
+                            window.unifiedNotifications?.updateVideoProgress(
+                                file.name,
+                                30,
+                                null,
+                                'Processing on server...'
+                            );
+                            
+                            // Update node with server info
+                            if (node && result) {
+                                node.properties.serverUrl = result.url;
+                                node.properties.serverFilename = result.filename;
+                                
+                                // Don't update video source yet - wait for transcoding
+                                console.log(`📤 Upload retry successful for ${file.name}, continuing with blob URL during transcoding`);
+                                
+                                // Keep the pendingServerUrlUpdate flag true
+                            }
+                        } catch (retryError) {
+                            console.error(`❌ Retry failed for ${file.name}:`, retryError);
+                            
+                            // Mark as failed
+                            window.unifiedNotifications?.completeVideoProcessing(
+                                file.name,
+                                false
+                            );
+                        }
+                    } else {
+                        // Non-retryable error
+                        window.unifiedNotifications?.completeVideoProcessing(
+                            file.name,
+                            false
+                        );
+                    }
+                }
+            })); // End of batch.map
+        } // End of batch processing loop
+        
+        // Videos continue processing on server - notifications will be updated by VideoProcessingListener
+        
+        // Clear bulk operation flag if needed
+        if (videoFiles.length > 10) {
+            if (window.app) window.app.bulkOperationInProgress = false;
+            if (window.memoryManager) window.memoryManager.bulkOperationInProgress = false;
+        }
+    }
+    
+    /**
+     * Extract a preview frame from video
+     */
+    async extractVideoPreview(file, targetSize = 64) {
+        return new Promise((resolve) => {
+            const video = document.createElement('video');
+            const objectURL = URL.createObjectURL(file);
+            
+            video.onloadeddata = () => {
+                // Seek to 10% of the video duration for a better thumbnail
+                video.currentTime = video.duration * 0.1;
+            };
+            
+            video.onseeked = () => {
+                try {
+                    // Create canvas for preview
+                    const canvas = document.createElement('canvas');
+                    const ctx = canvas.getContext('2d');
+                    
+                    // Calculate dimensions maintaining aspect ratio
+                    const aspectRatio = video.videoWidth / video.videoHeight;
+                    let width = targetSize;
+                    let height = targetSize;
+                    
+                    if (aspectRatio > 1) {
+                        height = targetSize / aspectRatio;
+                    } else {
+                        width = targetSize * aspectRatio;
+                    }
+                    
+                    canvas.width = width;
+                    canvas.height = height;
+                    
+                    // Draw video frame
+                    ctx.drawImage(video, 0, 0, width, height);
+                    
+                    // Convert to data URL
+                    const preview = canvas.toDataURL('image/webp', 0.8);
+                    
+                    URL.revokeObjectURL(objectURL);
+                    resolve(preview);
+                } catch (error) {
+                    console.error('Failed to extract video preview:', error);
+                    URL.revokeObjectURL(objectURL);
+                    resolve(null);
+                }
+            };
+            
+            video.onerror = () => {
+                URL.revokeObjectURL(objectURL);
+                resolve(null);
+            };
+            
+            // Set video properties for loading
+            video.preload = 'metadata';
+            video.muted = true;
+            video.playsInline = true;
             video.src = objectURL;
         });
     }

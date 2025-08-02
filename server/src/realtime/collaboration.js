@@ -1,4 +1,6 @@
 const { v4: uuidv4 } = require('uuid');
+const fs = require('fs').promises;
+const path = require('path');
 const CanvasStateManager = require('./CanvasStateManager');
 const OperationHistory = require('../undo/OperationHistory');
 const UndoStateSync = require('../undo/UndoStateSync');
@@ -32,11 +34,11 @@ class CollaborationManager {
         // Track which sockets belong to which user
         this.userSockets = new Map(); // userId -> Set of socketIds
         
-        // Track project rooms
-        this.projectRooms = new Map(); // projectId -> room info
+        // Track canvas rooms
+        this.canvasRooms = new Map(); // canvasId -> room info
         
         // Track active transactions
-        this.activeTransactions = new Map(); // `${userId}-${projectId}` -> transaction info
+        this.activeTransactions = new Map(); // `${userId}-${canvasId}` -> transaction info
         
         this.setupSocketHandlers();
     }
@@ -44,13 +46,13 @@ class CollaborationManager {
     setupSocketHandlers() {
         this.io.on('connection', (socket) => {
             
-            // Project management
-            socket.on('join_project', async (data) => {
-                await this.handleJoinProject(socket, data);
+            // Canvas management
+            socket.on('join_canvas', async (data) => {
+                await this.handleJoinCanvas(socket, data);
             });
             
-            socket.on('leave_project', async (data) => {
-                await this.handleLeaveProject(socket, data);
+            socket.on('leave_canvas', async (data) => {
+                await this.handleLeaveCanvas(socket, data);
             });
             
             // Canvas operations (legacy)
@@ -111,6 +113,16 @@ class CollaborationManager {
                 this.handlePing(socket, timestamp);
             });
             
+            // Video processing cancellation
+            socket.on('cancel_video_processing', (data) => {
+                this.handleCancelVideoProcessing(socket, data);
+            });
+            
+            // Video processing resume
+            socket.on('resume_video_processing', (data) => {
+                this.handleResumeVideoProcessing(socket, data);
+            });
+            
             // Disconnect
             socket.on('disconnect', () => {
                 this.handleDisconnect(socket);
@@ -118,9 +130,9 @@ class CollaborationManager {
         });
     }
     
-    async handleJoinProject(socket, { projectId, username, displayName, tabId }) {
+    async handleJoinCanvas(socket, { canvasId, username, displayName, tabId }) {
         try {
-            console.log(`📥 Join request from ${username} (tab: ${tabId}) for project ${projectId}`);
+            console.log(`📥 Join request from ${username} (tab: ${tabId}) for canvas ${canvasId}`);
             
             // Find or create user (but allow multiple connections)
             let user = await this.db.getUserByUsername(username);
@@ -132,10 +144,10 @@ class CollaborationManager {
                 console.log(`👤 Found existing user: ${username} (ID: ${user.id})`);
             }
             
-            // Verify project exists
-            const project = await this.getOrCreateProject(projectId, user);
-            if (!project) {
-                socket.emit('error', { message: 'Project not found' });
+            // Verify canvas exists
+            const canvas = await this.getOrCreateCanvas(canvasId, user);
+            if (!canvas) {
+                socket.emit('error', { message: 'Canvas not found' });
                 return;
             }
             
@@ -143,7 +155,7 @@ class CollaborationManager {
             const session = {
                 socketId: socket.id,
                 userId: user.id,
-                projectId: project.id,
+                canvasId: canvas.id,
                 username: user.username,
                 displayName: user.display_name || user.username,
                 tabId: tabId || `tab-${Date.now()}`,
@@ -162,31 +174,31 @@ class CollaborationManager {
             // Register with undo state sync
             this.undoStateSync.registerUserSession(user.id, socket.id);
             
-            // Initialize operation history for this project
-            await this.operationHistory.initializeProject(project.id);
+            // Initialize operation history for this canvas
+            await this.operationHistory.initializeCanvas(canvas.id);
             
             // Join socket room
-            socket.join(`project_${project.id}`);
+            socket.join(`canvas_${canvas.id}`);
             
-            // Initialize project room if needed
-            if (!this.projectRooms.has(project.id)) {
+            // Initialize canvas room if needed
+            if (!this.canvasRooms.has(canvas.id)) {
                 const latestOp = await this.db.get(
-                    'SELECT MAX(sequence_number) as latest FROM operations WHERE project_id = ?',
-                    [project.id]
+                    'SELECT MAX(sequence_number) as latest FROM operations WHERE canvas_id = ?',
+                    [canvas.id]
                 );
                 
-                this.projectRooms.set(project.id, {
+                this.canvasRooms.set(canvas.id, {
                     sockets: new Set(),
                     sequenceNumber: latestOp?.latest || 0
                 });
             }
             
-            const room = this.projectRooms.get(project.id);
+            const room = this.canvasRooms.get(canvas.id);
             room.sockets.add(socket.id);
             
             // Send success response
-            socket.emit('project_joined', {
-                project: project,
+            socket.emit('canvas_joined', {
+                canvas: canvas,
                 session: {
                     userId: user.id,
                     username: user.username,
@@ -197,13 +209,13 @@ class CollaborationManager {
             });
             
             // Get active users (count unique users, not sockets)
-            const activeUsers = await this.getActiveUsersInProject(project.id);
+            const activeUsers = await this.getActiveUsersInCanvas(canvas.id);
             
             // Send to joining socket
             socket.emit('active_users', activeUsers);
             
             // Notify others (including other tabs of same user)
-            socket.to(`project_${project.id}`).emit('user_joined', {
+            socket.to(`canvas_${canvas.id}`).emit('user_joined', {
                 userId: user.id,
                 username: user.username,
                 displayName: session.displayName,
@@ -211,7 +223,7 @@ class CollaborationManager {
             });
             
             // Send updated user list to all
-            socket.to(`project_${project.id}`).emit('active_users', activeUsers);
+            socket.to(`canvas_${canvas.id}`).emit('active_users', activeUsers);
             
             // Request state from another tab (prefer same user's tab if available)
             if (room.sockets.size > 1) {
@@ -222,51 +234,51 @@ class CollaborationManager {
                 });
                 
                 const targetSocket = sameUserSocket || otherSockets[0];
-                this.io.to(targetSocket).emit('request_project_state', {
+                this.io.to(targetSocket).emit('request_canvas_state', {
                     forUser: socket.id,
-                    projectId: project.id
+                    canvasId: canvas.id
                 });
             }
             
-            console.log(`✅ ${username} (${session.tabId}) joined project ${project.name}`);
+            console.log(`✅ ${username} (${session.tabId}) joined canvas ${canvas.name}`);
             
             // Send initial undo state to the user
-            const undoState = this.operationHistory.getUserUndoState(user.id, project.id);
+            const undoState = this.operationHistory.getUserUndoState(user.id, canvas.id);
             socket.emit('undo_state_update', {
                 undoState,
-                projectId: project.id
+                canvasId: canvas.id
             });
             
         } catch (error) {
-            console.error('Error in handleJoinProject:', error);
-            socket.emit('error', { message: 'Failed to join project' });
+            console.error('Error in handleJoinCanvas:', error);
+            socket.emit('error', { message: 'Failed to join canvas' });
         }
     }
     
-    async getOrCreateProject(projectId, user) {
-        if (projectId === 'demo-project' || projectId === 1) {
-            // Handle demo project
-            let project = await this.db.get('SELECT * FROM projects WHERE name = ?', ['Demo Project']);
-            if (!project) {
-                const id = await this.db.createProject('Demo Project', user.id, 'Collaborative demo');
-                project = await this.db.getProject(id);
+    async getOrCreateCanvas(canvasId, user) {
+        if (canvasId === 'demo-canvas' || canvasId === 1) {
+            // Handle demo canvas - check canvases table by name
+            let canvas = await this.db.get('SELECT * FROM canvases WHERE name = ?', ['Demo Canvas']);
+            if (!canvas) {
+                const id = await this.db.createCanvas('Demo Canvas', user.id, 'Collaborative demo canvas');
+                canvas = await this.db.getCanvas(id);
             }
-            return project;
+            return canvas;
         }
         
-        return await this.db.getProject(projectId);
+        return await this.db.getCanvas(canvasId);
     }
     
-    async handleCanvasOperation(socket, { projectId, operation }) {
+    async handleCanvasOperation(socket, { canvasId, operation }) {
         const session = this.socketSessions.get(socket.id);
-        if (!session || session.projectId !== parseInt(projectId)) {
-            socket.emit('error', { message: 'Not authenticated for this project' });
+        if (!session || session.canvasId !== parseInt(canvasId)) {
+            socket.emit('error', { message: 'Not authenticated for this canvas' });
             return;
         }
         
-        const room = this.projectRooms.get(parseInt(projectId));
+        const room = this.canvasRooms.get(parseInt(canvasId));
         if (!room) {
-            socket.emit('error', { message: 'Project room not found' });
+            socket.emit('error', { message: 'Canvas room not found' });
             return;
         }
         
@@ -279,7 +291,7 @@ class CollaborationManager {
         // Commenting out to prevent duplicate operations
         /*
         await this.db.addOperation(
-            projectId,
+            canvasId,
             session.userId,
             operation.type,
             operation.data,
@@ -289,13 +301,13 @@ class CollaborationManager {
         
         // Apply operation to state manager for persistence
         try {
-            await this.applyOperationToState(projectId, operation);
+            await this.applyOperationToState(canvasId, operation);
         } catch (error) {
             console.error('❌ Failed to apply operation to state manager:', error);
         }
         
         // Broadcast to ALL sockets in the room (including sender's other tabs)
-        this.io.to(`project_${projectId}`).emit('canvas_operation', {
+        this.io.to(`canvas_${canvasId}`).emit('canvas_operation', {
             operation: operation,
             fromUserId: session.userId,
             fromTabId: session.tabId,
@@ -308,12 +320,12 @@ class CollaborationManager {
     /**
      * Apply canvas operation to state manager for persistence
      */
-    async applyOperationToState(projectId, operation) {
+    async applyOperationToState(canvasId, operation) {
         // Convert legacy canvas operation to state manager format
         const stateOperation = this.convertToStateOperation(operation);
         
         if (stateOperation) {
-            const result = await this.stateManager.executeOperation(projectId, stateOperation, operation.userId);
+            const result = await this.stateManager.executeOperation(canvasId, stateOperation, operation.userId);
             return result;
         } else {
             
@@ -365,28 +377,28 @@ class CollaborationManager {
         }
     }
     
-    async handleSyncCheck(socket, { projectId, lastSequence }) {
+    async handleSyncCheck(socket, { canvasId, lastSequence }) {
         const session = this.socketSessions.get(socket.id);
-        if (!session || session.projectId !== parseInt(projectId)) {
-            socket.emit('error', { message: 'Not authenticated for this project' });
+        if (!session || session.canvasId !== parseInt(canvasId)) {
+            socket.emit('error', { message: 'Not authenticated for this canvas' });
             return;
         }
         
         // Get missed operations
-        const operations = await this.db.getOperationsSince(projectId, lastSequence);
+        const operations = await this.db.getOperationsSince(canvasId, lastSequence);
         
         socket.emit('sync_response', {
             operations: operations,
-            currentSequence: this.projectRooms.get(parseInt(projectId))?.sequenceNumber || 0
+            currentSequence: this.canvasRooms.get(parseInt(canvasId))?.sequenceNumber || 0
         });
     }
     
-    async getActiveUsersInProject(projectId) {
+    async getActiveUsersInCanvas(canvasId) {
         const users = new Map(); // userId -> user info
         
-        // Collect unique users from all sessions in this project
+        // Collect unique users from all sessions in this canvas
         for (const [socketId, session] of this.socketSessions.entries()) {
-            if (session.projectId === parseInt(projectId)) {
+            if (session.canvasId === parseInt(canvasId)) {
                 if (!users.has(session.userId)) {
                     users.set(session.userId, {
                         userId: session.userId,
@@ -427,8 +439,8 @@ class CollaborationManager {
             }
         }
         
-        // Remove from project room
-        const room = this.projectRooms.get(session.projectId);
+        // Remove from canvas room
+        const room = this.canvasRooms.get(session.canvasId);
         if (room) {
             room.sockets.delete(socket.id);
             
@@ -437,26 +449,26 @@ class CollaborationManager {
             
             if (!userStillConnected) {
                 // User completely left
-                socket.to(`project_${session.projectId}`).emit('user_left', {
+                socket.to(`canvas_${session.canvasId}`).emit('user_left', {
                     userId: session.userId,
                     username: session.username
                 });
             } else {
                 // Just one tab closed
-                socket.to(`project_${session.projectId}`).emit('tab_closed', {
+                socket.to(`canvas_${session.canvasId}`).emit('tab_closed', {
                     userId: session.userId,
                     tabId: session.tabId
                 });
             }
             
             // Update active users
-            this.getActiveUsersInProject(session.projectId).then(users => {
-                this.io.to(`project_${session.projectId}`).emit('active_users', users);
+            this.getActiveUsersInCanvas(session.canvasId).then(users => {
+                this.io.to(`canvas_${session.canvasId}`).emit('active_users', users);
             });
             
             // Clean up empty rooms
             if (room.sockets.size === 0) {
-                this.projectRooms.delete(session.projectId);
+                this.canvasRooms.delete(session.canvasId);
                 
             }
         }
@@ -477,10 +489,157 @@ class CollaborationManager {
         }
     }
     
-    async handleLeaveProject(socket, { projectId }) {
+    async handleLeaveCanvas(socket, { canvasId }) {
         // Similar to disconnect but initiated by user
         this.handleDisconnect(socket);
-        socket.emit('project_left', { projectId });
+        socket.emit('canvas_left', { canvasId });
+    }
+    
+    /**
+     * Handle video processing cancellation
+     */
+    async handleCancelVideoProcessing(socket, { filename }) {
+        console.log(`🚫 Received video processing cancellation request for: ${filename}`);
+        
+        // Get the server instance through the app
+        const server = this.db.server || global.imageCanvasServer;
+        if (server && server.videoProcessor) {
+            const cancelled = await server.videoProcessor.cancelProcessing(filename);
+            
+            if (cancelled) {
+                // Emit cancellation confirmation
+                socket.emit('video_processing_cancelled', { 
+                    filename, 
+                    success: true 
+                });
+                
+                // Also emit to all clients that the video was cancelled
+                this.io.emit('video_processing_complete', {
+                    filename,
+                    success: false,
+                    error: 'Cancelled by user'
+                });
+            } else {
+                socket.emit('video_processing_cancelled', { 
+                    filename, 
+                    success: false,
+                    error: 'Processing not found' 
+                });
+            }
+        } else {
+            console.error('⚠️ VideoProcessor not available');
+            socket.emit('video_processing_cancelled', { 
+                filename, 
+                success: false,
+                error: 'Server video processor not available' 
+            });
+        }
+    }
+    
+    /**
+     * Handle video processing resume request
+     */
+    async handleResumeVideoProcessing(socket, { filename, serverFilename }) {
+        console.log(`🔄 Received video processing resume request for: ${filename}`);
+        
+        const server = this.db.server || global.imageCanvasServer;
+        if (!server || !server.videoProcessor) {
+            console.error('⚠️ VideoProcessor not available');
+            socket.emit('error', { message: 'Video processor not available' });
+            return;
+        }
+        
+        try {
+            // Check if file exists on disk
+            const uploadPath = path.join(server.uploadDir, serverFilename);
+            const fileExists = await fs.access(uploadPath).then(() => true).catch(() => false);
+            
+            if (!fileExists) {
+                console.error(`❌ Video file not found: ${uploadPath}`);
+                socket.emit('video_processing_error', {
+                    filename,
+                    error: 'Source file not found'
+                });
+                return;
+            }
+            
+            // Check processing status in database
+            const fileRecord = await this.db.get(
+                `SELECT processing_status FROM files WHERE filename = ?`,
+                [serverFilename]
+            );
+            
+            if (fileRecord && fileRecord.processing_status === 'completed') {
+                console.log(`✅ Video already processed: ${filename}`);
+                // Emit completion event so the node can update
+                this.io.emit('video_processing_complete', {
+                    filename,
+                    serverFilename,
+                    success: true,
+                    formats: ['webm'] // TODO: Get actual formats from DB
+                });
+                return;
+            }
+            
+            // Update status to pending
+            await this.db.run(
+                `UPDATE files SET processing_status = 'pending' WHERE filename = ?`,
+                [serverFilename]
+            );
+            
+            // Re-queue for processing
+            console.log(`📝 Re-queuing video for processing: ${filename}`);
+            
+            // Emit start event
+            this.io.emit('video_processing_start', {
+                filename,
+                serverFilename
+            });
+            
+            // Process the video
+            const outputDir = path.join(path.dirname(uploadPath), '');
+            const baseFilename = path.parse(serverFilename).name;
+            
+            server.videoProcessor.processVideo(uploadPath, outputDir, baseFilename, filename)
+                .then(results => {
+                    console.log(`✅ Video processing resumed and completed: ${filename}`);
+                    
+                    // Update database
+                    this.db.run(
+                        `UPDATE files SET processing_status = 'completed', processed_formats = ? WHERE filename = ?`,
+                        [Object.keys(results.formats).join(','), serverFilename]
+                    );
+                    
+                    // Emit completion
+                    this.io.emit('video_processing_complete', {
+                        filename,
+                        serverFilename,
+                        success: true,
+                        formats: Object.keys(results.formats)
+                    });
+                })
+                .catch(error => {
+                    console.error(`❌ Video processing resume failed: ${filename}`, error);
+                    
+                    // Update database
+                    this.db.run(
+                        `UPDATE files SET processing_status = 'error', processing_error = ? WHERE filename = ?`,
+                        [error.message, serverFilename]
+                    );
+                    
+                    // Emit error
+                    this.io.emit('video_processing_complete', {
+                        filename,
+                        serverFilename,
+                        success: false,
+                        error: error.message
+                    });
+                });
+            
+        } catch (error) {
+            console.error(`❌ Error resuming video processing:`, error);
+            socket.emit('error', { message: 'Failed to resume video processing' });
+        }
     }
     
     /**
@@ -497,7 +656,7 @@ class CollaborationManager {
             hasUndoData: !!undoData,
             undoDataKeys: undoData ? Object.keys(undoData) : null,
             userId: session?.userId,
-            projectId: session?.projectId,
+            canvasId: session?.canvasId,
             socketId: socket.id
         });
         
@@ -530,12 +689,12 @@ class CollaborationManager {
             return;
         }
         
-        const projectId = session.projectId;
+        const canvasId = session.canvasId;
         
         try {
             // Execute operation on server state
             const result = await this.stateManager.executeOperation(
-                projectId,
+                canvasId,
                 { type, params },
                 session.userId
             );
@@ -553,14 +712,14 @@ class CollaborationManager {
                 
                 // 
                 // Get active transaction if any
-                const transactionKey = `${session.userId}-${projectId}`;
+                const transactionKey = `${session.userId}-${canvasId}`;
                 const activeTransaction = this.activeTransactions.get(transactionKey);
                 const txId = activeTransaction ? activeTransaction.id : transactionId;
 
                 await this.operationHistory.recordOperation(
                     operation,
                     session.userId,
-                    projectId,
+                    canvasId,
                     txId
                 );
 
@@ -570,8 +729,8 @@ class CollaborationManager {
                     stateVersion: result.stateVersion
                 });
                 
-                // Broadcast state update to all clients in project
-                this.io.to(`project_${projectId}`).emit('state_update', {
+                // Broadcast state update to all clients in canvas
+                this.io.to(`canvas_${canvasId}`).emit('state_update', {
                     stateVersion: result.stateVersion,
                     changes: result.changes,
                     operationId,
@@ -580,10 +739,10 @@ class CollaborationManager {
                 });
                 
                 // Send updated undo state to all user's sessions
-                const undoState = this.operationHistory.getUserUndoState(session.userId, projectId);
+                const undoState = this.operationHistory.getUserUndoState(session.userId, canvasId);
                 
                 this.undoStateSync.broadcastToUser(session.userId, 'undo_state_update', {
-                    projectId,
+                    canvasId,
                     undoState
                 });
                 
@@ -617,11 +776,11 @@ class CollaborationManager {
             return;
         }
         
-        const projectId = data.projectId || session.projectId;
+        const canvasId = data.canvasId || session.canvasId;
         
         try {
             // Get full state from state manager
-            const fullState = await this.stateManager.getFullState(projectId);
+            const fullState = await this.stateManager.getFullState(canvasId);
             
             socket.emit('full_state_sync', {
                 state: fullState,
@@ -647,20 +806,20 @@ class CollaborationManager {
         try {
             const result = await this.undoStateSync.handleUndo(
                 session.userId,
-                session.projectId,
+                session.canvasId,
                 socket.id
             );
             
             if (result.success) {
                 socket.emit('undo_success', result);
                 
-                // Broadcast state changes to all clients in the project
+                // Broadcast state changes to all clients in the canvas
                 if (result.stateUpdate) {
                     // Get current state version
-                    const currentVersion = this.stateManager.stateVersions.get(session.projectId) || 0;
+                    const currentVersion = this.stateManager.stateVersions.get(session.canvasId) || 0;
                     
                     // Broadcast state update to all clients
-                    this.io.to(`project_${session.projectId}`).emit('state_update', {
+                    this.io.to(`canvas_${session.canvasId}`).emit('state_update', {
                         stateVersion: currentVersion,
                         operationId: `undo_${Date.now()}`,
                         fromUserId: session.userId,
@@ -691,20 +850,20 @@ class CollaborationManager {
         try {
             const result = await this.undoStateSync.handleRedo(
                 session.userId,
-                session.projectId,
+                session.canvasId,
                 socket.id
             );
             
             if (result.success) {
                 socket.emit('redo_success', result);
                 
-                // Broadcast state changes to all clients in the project
+                // Broadcast state changes to all clients in the canvas
                 if (result.stateUpdate) {
                     // Get current state version
-                    const currentVersion = this.stateManager.stateVersions.get(session.projectId) || 0;
+                    const currentVersion = this.stateManager.stateVersions.get(session.canvasId) || 0;
                     
                     // Broadcast state update to all clients
-                    this.io.to(`project_${session.projectId}`).emit('state_update', {
+                    this.io.to(`canvas_${session.canvasId}`).emit('state_update', {
                         stateVersion: currentVersion,
                         operationId: `redo_${Date.now()}`,
                         fromUserId: session.userId,
@@ -741,14 +900,14 @@ class CollaborationManager {
             
             if (showAllUsers) {
                 // Get operations from all users for debugging
-                undoOperations = this.operationHistory.getAllProjectOperations(
-                    session.projectId,
+                undoOperations = this.operationHistory.getAllCanvasOperations(
+                    session.canvasId,
                     limit,
                     'undo'
                 );
                 
-                redoOperations = this.operationHistory.getAllProjectOperations(
-                    session.projectId,
+                redoOperations = this.operationHistory.getAllCanvasOperations(
+                    session.canvasId,
                     limit,
                     'redo'
                 );
@@ -756,13 +915,13 @@ class CollaborationManager {
                 // Get operations for specific user
                 undoOperations = this.operationHistory.getUndoableOperations(
                     session.userId,
-                    session.projectId,
+                    session.canvasId,
                     limit
                 );
                 
                 redoOperations = this.operationHistory.getRedoableOperations(
                     session.userId,
-                    session.projectId,
+                    session.canvasId,
                     limit
                 );
             }
@@ -849,7 +1008,7 @@ class CollaborationManager {
             const response = {
                 undoOperations: undoDetails,
                 redoOperations: redoDetails,
-                serverStateVersion: this.stateManager.stateVersions.get(session.projectId) || 0,
+                serverStateVersion: this.stateManager.stateVersions.get(session.canvasId) || 0,
                 timestamp: Date.now()
             };
 
@@ -877,11 +1036,11 @@ class CollaborationManager {
         try {
             const undoState = this.operationHistory.getUserUndoState(
                 session.userId,
-                session.projectId
+                session.canvasId
             );
 
             socket.emit('undo_state_update', {
-                projectId: session.projectId,
+                canvasId: session.canvasId,
                 undoState
             });
         } catch (error) {
@@ -891,7 +1050,7 @@ class CollaborationManager {
     }
     
     /**
-     * Handle request to clear undo history for a project
+     * Handle request to clear undo history for a canvas
      */
     async handleClearUndoHistory(socket, data) {
         const session = this.socketSessions.get(socket.id);
@@ -900,30 +1059,30 @@ class CollaborationManager {
             return;
         }
         
-        const { projectId } = data;
+        const { canvasId } = data;
         
-        // Verify user has access to this project
-        if (session.projectId !== projectId) {
-            socket.emit('error', { message: 'Not authorized for this project' });
+        // Verify user has access to this canvas
+        if (session.canvasId !== canvasId) {
+            socket.emit('error', { message: 'Not authorized for this canvas' });
             return;
         }
         
         try {
             
-            // Clear the operation history for this project
+            // Clear the operation history for this canvas
             if (this.operationHistory) {
-                // Clear project's operation history
-                const cleared = await this.operationHistory.clearProjectHistory(projectId);
+                // Clear canvas's operation history
+                const cleared = await this.operationHistory.clearCanvasHistory(canvasId);
                 
             }
             
             // Clear from database
             const deleteResult = await this.db.run(
-                'DELETE FROM operations WHERE project_id = ?',
-                [projectId]
+                'DELETE FROM operations WHERE canvas_id = ?',
+                [canvasId]
             );
             
-            // Notify all users in the project that undo history was cleared
+            // Notify all users in the canvas that undo history was cleared
             const undoState = {
                 canUndo: false,
                 canRedo: false,
@@ -933,14 +1092,14 @@ class CollaborationManager {
                 nextRedo: null
             };
             
-            this.io.to(`project_${projectId}`).emit('undo_state_update', {
-                projectId,
+            this.io.to(`canvas_${canvasId}`).emit('undo_state_update', {
+                canvasId,
                 undoState,
                 cleared: true
             });
             
             socket.emit('undo_history_cleared', {
-                projectId,
+                canvasId,
                 success: true,
                 deletedCount: deleteResult.changes
             });
@@ -962,13 +1121,13 @@ class CollaborationManager {
         }
         
         const { source } = data;
-        const transactionKey = `${session.userId}-${session.projectId}`;
+        const transactionKey = `${session.userId}-${session.canvasId}`;
         
         // Create new transaction
         const transaction = {
             id: `txn_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
             userId: session.userId,
-            projectId: session.projectId,
+            canvasId: session.canvasId,
             source: source,
             startedAt: Date.now(),
             operations: []
@@ -993,7 +1152,7 @@ class CollaborationManager {
             return;
         }
         
-        const transactionKey = `${session.userId}-${session.projectId}`;
+        const transactionKey = `${session.userId}-${session.canvasId}`;
         const transaction = this.activeTransactions.get(transactionKey);
         
         if (!transaction) {
@@ -1022,7 +1181,7 @@ class CollaborationManager {
             return;
         }
         
-        const transactionKey = `${session.userId}-${session.projectId}`;
+        const transactionKey = `${session.userId}-${session.canvasId}`;
         const transaction = this.activeTransactions.get(transactionKey);
         
         if (!transaction) {

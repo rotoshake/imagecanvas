@@ -46,8 +46,12 @@ class CollaborativeArchitecture {
         this.persistenceHandler = new PersistenceHandler(this.app);
         this.app.persistenceHandler = this.persistenceHandler;
         
-        // Finalize initialization
+        // Initialize NetworkLayer first
         this.networkLayer.initialize();
+        
+        // 7. Video Processing Listener - create after network is initialized
+        this.videoProcessingListener = new VideoProcessingListener(this.networkLayer);
+        this.app.videoProcessingListener = this.videoProcessingListener;
         this.initialized = true;
 
         return this.networkLayer; // Return the network layer instance

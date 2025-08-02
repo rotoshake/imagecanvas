@@ -161,9 +161,9 @@ class NavigationStateManager {
             });
         }
 
-        // Also listen for project_joined in case there's no state to sync
+        // Also listen for canvas_joined in case there's no state to sync
         if (this.app.networkLayer) {
-            this.app.networkLayer.on('project_joined', async (data) => {
+            this.app.networkLayer.on('canvas_joined', async (data) => {
                 
                 // Store that we might need to restore navigation
                 this.pendingRestore = this.canvasNavigator?.currentCanvasId;

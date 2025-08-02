@@ -15,7 +15,7 @@ CREATE INDEX IF NOT EXISTS idx_operations_user_state ON operations(user_id, stat
 -- Create table for tracking active transactions
 CREATE TABLE IF NOT EXISTS active_transactions (
     id TEXT PRIMARY KEY,
-    project_id INTEGER NOT NULL REFERENCES projects(id),
+    canvas_id INTEGER NOT NULL REFERENCES canvases(id),
     user_id INTEGER NOT NULL REFERENCES users(id),
     source TEXT,
     started_at DATETIME DEFAULT CURRENT_TIMESTAMP,
@@ -24,4 +24,4 @@ CREATE TABLE IF NOT EXISTS active_transactions (
 );
 
 CREATE INDEX IF NOT EXISTS idx_active_transactions_user ON active_transactions(user_id, state);
-CREATE INDEX IF NOT EXISTS idx_active_transactions_project ON active_transactions(project_id);
+CREATE INDEX IF NOT EXISTS idx_active_transactions_canvas ON active_transactions(canvas_id);

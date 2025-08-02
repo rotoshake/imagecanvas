@@ -7,7 +7,7 @@ class NetworkLayer {
         this.app = app;
         this.socket = null;
         this.isConnected = false;
-        this.currentProject = null;
+        this.currentCanvas = null;
         this.currentUser = null;
         
         // Connection settings
@@ -114,6 +114,9 @@ class NetworkLayer {
                         this.app.updateConnectionStatus('connected');
                     }
                     
+                    // Emit local connect event for other components
+                    this.emitLocal('connect');
+                    
                     // Send session info
                     this.socket.emit('session_init', {
                         sessionId: this.sessionId,
@@ -121,15 +124,12 @@ class NetworkLayer {
                         userId: this.currentUser?.id
                     });
                     
-                    // If we were in a project before disconnection, rejoin it
-                    if (this.currentProject && this.currentUser) {
+                    // If we were in a canvas before disconnection, rejoin it
+                    if (this.currentCanvas && this.currentUser) {
                         
                         setTimeout(() => {
-                            this.joinProject(
-                                this.currentProject.id,
-                                this.currentProject.canvasId || 'default',
-                                this.currentUser.id,
-                                this.currentUser.username
+                            this.joinCanvas(
+                                this.currentCanvas.id
                             );
                         }, 100); // Small delay to ensure session_init is processed first
                     }
@@ -191,12 +191,12 @@ class NetworkLayer {
         // });
         
         // Project events
-        this.socket.on('project_joined', (data) => {
-            // Received project_joined event
-            // Server sends data.project object, not data.projectId
-            if (data.project && data.project.id) {
-                this.currentProject = { id: data.project.id };
-                // Current project set
+        this.socket.on('canvas_joined', (data) => {
+            // Received canvas_joined event
+            // Server sends data.canvas object, not data.canvasId
+            if (data.canvas && data.canvas.id) {
+                this.currentCanvas = { id: data.canvas.id };
+                // Current canvas set
                 
                 // Request full state sync after joining project
                 if (this.app.stateSyncManager) {
@@ -208,12 +208,12 @@ class NetworkLayer {
             }
             
             // Forward to local event handlers (e.g., ClientUndoManager)
-            this.emitLocal('project_joined', data);
+            this.emitLocal('canvas_joined', data);
         });
         
-        this.socket.on('project_left', () => {
-            // Left project
-            this.currentProject = null;
+        this.socket.on('canvas_left', () => {
+            // Left canvas
+            this.currentCanvas = null;
         });
         
         // User events
@@ -340,14 +340,14 @@ class NetworkLayer {
             return;
         }
         
-        if (!this.currentProject) {
+        if (!this.currentCanvas) {
             
             console.log('Full status:', this.getStatus());
             return;
         }
         
         const data = {
-            projectId: this.currentProject.id,
+            canvasId: this.currentCanvas.id,
             operation: {
                 id: command.id,
                 type: command.type,
@@ -412,10 +412,10 @@ class NetworkLayer {
     }
     
     /**
-     * Join a project
+     * Join a canvas
      */
-    joinProject(projectId, canvasId = null) {
-        // NetworkLayer.joinProject called
+    joinCanvas(canvasId) {
+        // NetworkLayer.joinCanvas called
         
         if (!this.isConnected) {
             
@@ -427,8 +427,7 @@ class NetworkLayer {
         const username = userId || `user-${this.tabId.substr(-8)}`;
         
         const data = {
-            projectId,
-            canvasId,
+            canvasId: canvasId,
             tabId: this.tabId,
             userId: userId,
             // Server expects username and displayName
@@ -436,12 +435,12 @@ class NetworkLayer {
             displayName: this.currentUser?.displayName || username
         };
         
-        // Emitting join_project
-        this.socket.emit('join_project', data);
+        // Emitting join_canvas
+        this.socket.emit('join_canvas', data);
         
         // Add a timeout check
         setTimeout(() => {
-            if (!this.currentProject || this.currentProject.id != projectId) {
+            if (!this.currentCanvas || this.currentCanvas.id != canvasId) {
                 
             } else {
                 
@@ -450,32 +449,32 @@ class NetworkLayer {
     }
     
     /**
-     * Leave current project
+     * Leave current canvas
      */
-    leaveProject() {
-        if (!this.isConnected || !this.currentProject) {
+    leaveCanvas() {
+        if (!this.isConnected || !this.currentCanvas) {
             return;
         }
         
-        this.socket.emit('leave_project', {
-            projectId: this.currentProject.id,
+        this.socket.emit('leave_canvas', {
+            canvasId: this.currentCanvas.id,
             tabId: this.tabId
         });
         
-        this.currentProject = null;
+        this.currentCanvas = null;
     }
     
     /**
      * Request state sync
      */
     requestStateSync() {
-        if (!this.isConnected || !this.currentProject) {
+        if (!this.isConnected || !this.currentCanvas) {
             
             return;
         }
         
         this.socket.emit('request_state_sync', {
-            projectId: this.currentProject.id
+            canvasId: this.currentCanvas.id
         });
     }
     
@@ -511,7 +510,7 @@ class NetworkLayer {
         }
         
         this.isConnected = false;
-        this.currentProject = null;
+        this.currentCanvas = null;
     }
     
     /**
@@ -606,15 +605,32 @@ class NetworkLayer {
         const avgLatency = this.pingLatencies.reduce((a, b) => a + b, 0) / this.pingLatencies.length;
         
         // Determine connection quality
+        // Use more lenient thresholds for local development
+        const isLocal = this.serverUrl.includes('localhost') || this.serverUrl.includes('127.0.0.1');
         let newQuality;
-        if (avgLatency < 100) {
-            newQuality = 'excellent';
-        } else if (avgLatency < 300) {
-            newQuality = 'good';
-        } else if (avgLatency < 1000) {
-            newQuality = 'poor';
+        
+        if (isLocal) {
+            // More lenient thresholds for local development
+            if (avgLatency < 200) {
+                newQuality = 'excellent';
+            } else if (avgLatency < 500) {
+                newQuality = 'good';
+            } else if (avgLatency < 2000) {
+                newQuality = 'poor';
+            } else {
+                newQuality = 'critical';
+            }
         } else {
-            newQuality = 'critical';
+            // Production thresholds
+            if (avgLatency < 100) {
+                newQuality = 'excellent';
+            } else if (avgLatency < 300) {
+                newQuality = 'good';
+            } else if (avgLatency < 1000) {
+                newQuality = 'poor';
+            } else {
+                newQuality = 'critical';
+            }
         }
         
         // Only update if quality changed
@@ -822,7 +838,7 @@ class NetworkLayer {
     getStatus() {
         return {
             connected: this.isConnected,
-            project: this.currentProject,
+            canvas: this.currentCanvas,
             user: this.currentUser,
             tabId: this.tabId,
             sessionId: this.sessionId

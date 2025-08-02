@@ -13,7 +13,7 @@ class ClientUndoManager {
         this.app = app;
         this.networkLayer = app.networkLayer;
         this.userId = null;
-        this.projectId = null;
+        this.canvasId = null;
         
         // Local view of undo/redo state from server
         this.undoState = {
@@ -65,24 +65,24 @@ class ClientUndoManager {
             }, 100);
         });
         
-        this.networkLayer.on('project_joined', (data) => {
+        this.networkLayer.on('canvas_joined', (data) => {
             const oldUserId = this.userId;
-            const oldProjectId = this.projectId;
+            const oldCanvasId = this.canvasId;
             
             if (data.session) {
                 this.userId = data.session.userId;
-                this.projectId = data.project?.id || data.projectId;
+                this.canvasId = data.canvas?.id || data.canvasId;
             } else if (data.userId) {
                 this.userId = data.userId;
-                this.projectId = data.project?.id || data.projectId;
+                this.canvasId = data.canvas?.id || data.canvasId;
             }
             
-            // Ensure we have the correct project ID from the server response
-            if (data.project && data.project.id) {
-                this.projectId = data.project.id;
+            // Ensure we have the correct canvas ID from the server response
+            if (data.canvas && data.canvas.id) {
+                this.canvasId = data.canvas.id;
             }
 
-            // Request undo state for the project after a short delay
+            // Request undo state for the canvas after a short delay
             setTimeout(() => {
                 this.requestUndoState();
             }, 100);
@@ -261,7 +261,7 @@ class ClientUndoManager {
         
         this.networkLayer.emit('request_undo_state', {
             userId: this.userId,
-            projectId: this.projectId
+            canvasId: this.canvasId
         });
     }
     

@@ -24,6 +24,8 @@ class TextureLODManager {
         this.maxTextureMemory = options.maxMemory || 512 * 1024 * 1024; // 512MB default
         this.maxTextures = options.maxTextures || 500;
         this.uploadBudgetMs = options.uploadBudget || 2; // 2ms per frame
+        this.canvas = options.canvas; // Canvas reference for viewport state checks
+        this.maxFullResTextures = 10; // Allow more full-res textures since we have 1.5GB limit
         
         // Texture storage
         this.textureCache = new Map(); // hash -> { lodSize -> { texture, lastUsed, memorySize } }
@@ -49,6 +51,21 @@ class TextureLODManager {
         this.anisoExt = gl.getExtension('EXT_texture_filter_anisotropic');
         this.maxAnisotropy = this.anisoExt ? 
             gl.getParameter(this.anisoExt.MAX_TEXTURE_MAX_ANISOTROPY_EXT) : 1;
+            
+        // Check for compressed texture support
+        this.dxtExt = gl.getExtension('WEBGL_compressed_texture_s3tc');
+        this.etcExt = gl.getExtension('WEBGL_compressed_texture_etc');
+        this.astcExt = gl.getExtension('WEBGL_compressed_texture_astc');
+        
+        if (this.dxtExt) {
+            console.log('✅ DXT/S3TC compression supported - could reduce texture memory by 4-6x');
+        }
+        if (this.etcExt) {
+            console.log('✅ ETC2 compression supported');
+        }
+        if (this.astcExt) {
+            console.log('✅ ASTC compression supported');
+        }
     }
     
     /**
@@ -97,6 +114,39 @@ class TextureLODManager {
     }
     
     /**
+     * Get any available texture immediately (for prioritizing framerate)
+     * @param {string} hash - Image hash
+     * @returns {WebGLTexture|null} Any available texture
+     */
+    getAnyAvailableTexture(hash) {
+        const nodeCache = this.textureCache.get(hash);
+        
+        if (!nodeCache || nodeCache.size === 0) {
+            return null;
+        }
+        
+        // Return the first available texture (prioritize smaller sizes for faster loading)
+        let bestTexture = null;
+        let bestSize = Infinity;
+        
+        for (const [lodSize, textureData] of nodeCache) {
+            const size = lodSize || Infinity;
+            if (size < bestSize) {
+                bestTexture = textureData.texture;
+                bestSize = size;
+            }
+        }
+        
+        if (bestTexture) {
+            // Mark as accessed
+            this._markAccessed(hash, bestSize === Infinity ? null : bestSize);
+            this.stats.cacheHits++;
+        }
+        
+        return bestTexture;
+    }
+    
+    /**
      * Request a texture at specific LOD level
      * @param {string} hash - Image hash
      * @param {number|null} lodSize - Target LOD size (null for full res)
@@ -104,6 +154,11 @@ class TextureLODManager {
      * @param {HTMLImageElement|HTMLCanvasElement} source - Image source
      */
     requestTexture(hash, lodSize, priority, source) {
+        // Debug: Log requests for small images (disabled for performance)
+        // if (lodSize && lodSize > 64 && priority >= 0) {
+        //     console.log(`📥 Requesting ${lodSize}px texture for ${hash.substring(0, 8)} (priority: ${priority})`);
+        // }
+        
         // Check if already loaded
         const nodeCache = this.textureCache.get(hash);
         if (nodeCache && nodeCache.has(lodSize)) {
@@ -147,6 +202,13 @@ class TextureLODManager {
      * @returns {Promise<number>} Number of textures uploaded
      */
     async processUploads() {
+        // Defer all uploads if viewport is moving to prevent ImageDecode during panning
+        if (this.canvas?.viewport?.isAnimating || this.canvas?.viewport?.shouldDeferQualityUpdate?.()) {
+            // Retry after movement stops
+            setTimeout(() => this.processUploads(), 100);
+            return 0;
+        }
+        
         // Defer processing to next microtask to avoid blocking current frame
         await Promise.resolve();
         
@@ -213,6 +275,16 @@ class TextureLODManager {
                     return;
                 }
                 
+                // Check if viewport is moving - if so, defer the decode
+                if (this.canvas?.viewport?.isAnimating || this.canvas?.viewport?.shouldDeferQualityUpdate?.()) {
+                    // Put back in queue for later
+                    this.uploadQueue.unshift({ hash, lodSize, source });
+                    this.activeUploads.delete(queueKey);
+                    // Retry after movement stops
+                    setTimeout(() => this.processUploads(), 100);
+                    return;
+                }
+                
                 // ALWAYS use createImageBitmap for guaranteed decoded image
                 // Never fall back to raw image to avoid synchronous decode
                 try {
@@ -253,6 +325,16 @@ class TextureLODManager {
             const height = decodedSource.height || source.height;
             const memorySize = width * height * 4 * 1.33; // 1.33 for mipmaps
             
+            // Log large textures
+            if (memorySize > 50 * 1024 * 1024) { // > 50MB
+                console.log(`⚠️ Large texture: ${width}x${height} = ${(memorySize / 1024 / 1024).toFixed(1)}MB for ${hash.substring(0, 8)}`);
+            }
+            
+            // Check if this is a full-res texture and enforce limit
+            if (lodSize === null) {
+                this._enforceFullResLimit();
+            }
+            
             // Check memory limits and evict if necessary
             this._enforceMemoryLimit(memorySize);
             
@@ -271,6 +353,10 @@ class TextureLODManager {
             
             this.totalMemory += memorySize;
             this.stats.textureLoads++;
+            
+            // if (lodSize === null || lodSize > 1024) {
+            //     console.log(`📤 Uploaded ${lodSize || 'FULL'}px texture for ${hash.substring(0, 8)} - ${width}x${height} = ${(memorySize / 1024 / 1024).toFixed(1)}MB (total: ${(this.totalMemory / 1024 / 1024).toFixed(1)}MB / ${(this.maxTextureMemory / 1024 / 1024).toFixed(1)}MB)`);
+            // }
             
             // Mark as accessed
             this._markAccessed(hash, lodSize);
@@ -323,6 +409,11 @@ class TextureLODManager {
             // Calculate memory usage
             const memorySize = source.width * source.height * 4 * 1.33;
             
+            // Check if this is a full-res texture and enforce limit
+            if (lodSize === null) {
+                this._enforceFullResLimit();
+            }
+            
             // Check memory limits and evict if necessary
             this._enforceMemoryLimit(memorySize);
             
@@ -341,6 +432,10 @@ class TextureLODManager {
             
             this.totalMemory += memorySize;
             this.stats.textureLoads++;
+            
+            // if (lodSize === null || lodSize > 1024) {
+            //     console.log(`📤 Uploaded ${lodSize || 'FULL'}px texture for ${hash.substring(0, 8)} - ${source.width}x${source.height} = ${(memorySize / 1024 / 1024).toFixed(1)}MB (total: ${(this.totalMemory / 1024 / 1024).toFixed(1)}MB / ${(this.maxTextureMemory / 1024 / 1024).toFixed(1)}MB)`);
+            // }
             
             // Mark as accessed
             this._markAccessed(hash, lodSize);
@@ -370,6 +465,88 @@ class TextureLODManager {
         
         // Add to end (most recently used)
         this.accessOrder.push(key);
+        
+        // Update last used timestamp in cache
+        const nodeCache = this.textureCache.get(hash);
+        if (nodeCache && nodeCache.has(lodSize)) {
+            nodeCache.get(lodSize).lastUsed = Date.now();
+        }
+    }
+    
+    /**
+     * Enforce limit on full resolution textures
+     * @private
+     */
+    _enforceFullResLimit() {
+        // Only enforce if we're using more than 50% of memory
+        if (this.totalMemory < this.maxTextureMemory * 0.5) {
+            return; // Plenty of memory available, no need to limit
+        }
+        
+        // Count current full-res textures
+        const fullResTextures = [];
+        for (const [hash, nodeCache] of this.textureCache) {
+            if (nodeCache.has(null)) {
+                const textureData = nodeCache.get(null);
+                fullResTextures.push({ 
+                    hash, 
+                    lastUsed: textureData.lastUsed,
+                    memorySize: textureData.memorySize,
+                    texture: textureData.texture,
+                    nodeCache: nodeCache
+                });
+            }
+        }
+        
+        // Calculate dynamic limit based on average full-res size
+        const avgFullResSize = 62 * 1024 * 1024; // ~62MB average
+        const maxFullResBasedOnMemory = Math.floor((this.maxTextureMemory * 0.7) / avgFullResSize);
+        const dynamicLimit = Math.max(3, Math.min(this.maxFullResTextures, maxFullResBasedOnMemory));
+        
+        // If we're at or over the limit, evict the oldest
+        if (fullResTextures.length >= dynamicLimit) {
+            // Sort by last used time (oldest first)
+            fullResTextures.sort((a, b) => a.lastUsed - b.lastUsed);
+            
+            // Evict the oldest full-res textures
+            const toEvict = fullResTextures.length - this.maxFullResTextures + 1;
+            for (let i = 0; i < toEvict; i++) {
+                const victim = fullResTextures[i];
+                
+                // Check if this texture is actively being rendered
+                const activeKey = `${victim.hash}_null`;
+                if (this.activelyRenderedTextures.has(activeKey)) {
+                    // Silently skip - too noisy during video playback
+                    continue;
+                }
+                
+                // Check if we have a lower resolution available
+                const availableLODs = this.getAvailableLODs(victim.hash);
+                const hasLowerRes = availableLODs.some(lod => lod !== null && lod >= 1024);
+                
+                // Silently evict/downgrade full-res textures
+                
+                // Delete the texture
+                this.gl.deleteTexture(victim.texture);
+                this.totalMemory -= victim.memorySize;
+                
+                // Remove from cache
+                if (victim.nodeCache) {
+                    victim.nodeCache.delete(null);
+                    if (victim.nodeCache.size === 0) {
+                        this.textureCache.delete(victim.hash);
+                    }
+                }
+                
+                // Remove from access order
+                const index = this.accessOrder.findIndex(
+                    item => item.hash === victim.hash && item.lodSize === null
+                );
+                if (index !== -1) {
+                    this.accessOrder.splice(index, 1);
+                }
+            }
+        }
     }
     
     /**
@@ -377,11 +554,57 @@ class TextureLODManager {
      * @private
      */
     _enforceMemoryLimit(requiredMemory) {
+        // First try to free up space by unloading high-res textures for non-visible nodes
+        if (this.canvas && this.totalMemory + requiredMemory > this.maxTextureMemory) {
+            const visibleNodes = this.canvas.viewport?.getVisibleNodes?.(
+                this.canvas.graph?.nodes || [],
+                200 // margin
+            );
+            
+            if (visibleNodes) {
+                const visibleHashes = new Set();
+                for (const node of visibleNodes) {
+                    if (node.properties?.hash) {
+                        visibleHashes.add(node.properties.hash);
+                    }
+                }
+                
+                // Try unloading non-visible high-res textures first
+                const unloaded = this.unloadNonVisibleHighRes(visibleHashes, 512); // Keep up to 512px for off-screen
+                if (unloaded > 0 && this.totalMemory + requiredMemory <= this.maxTextureMemory) {
+                    return; // We freed enough space
+                }
+            }
+        }
+        
+        // If still need space, use regular LRU eviction
+        let skippedCount = 0;
+        const maxSkips = this.accessOrder.length; // Prevent infinite loop
+        
         while (this.totalMemory + requiredMemory > this.maxTextureMemory && 
-               this.accessOrder.length > 0) {
+               this.accessOrder.length > 0 && skippedCount < maxSkips) {
             // Get least recently used
             const lru = this.accessOrder.shift();
             if (!lru) break;
+            
+            // Check if this texture is actively being rendered
+            const activeKey = `${lru.hash}_${lru.lodSize}`;
+            if (this.activelyRenderedTextures.has(activeKey)) {
+                // Put it back at the end and skip
+                this.accessOrder.push(lru);
+                skippedCount++;
+                // Silently skip - too noisy during video playback
+                continue;
+            }
+            
+            // NEVER evict preview textures (256px and below) - they're critical for smooth animations
+            if (lru.lodSize !== null && lru.lodSize <= 256) {
+                // Put it back at the end and skip
+                this.accessOrder.push(lru);
+                skippedCount++;
+                // Silently skip - preview textures are always protected
+                continue;
+            }
             
             const nodeCache = this.textureCache.get(lru.hash);
             if (!nodeCache) continue;
@@ -389,10 +612,24 @@ class TextureLODManager {
             const textureData = nodeCache.get(lru.lodSize);
             if (!textureData) continue;
             
+            // Check if we can downgrade instead of evicting completely
+            if (lru.lodSize === null || lru.lodSize > 256) {
+                // Check if we have a lower resolution available
+                const availableLODs = this.getAvailableLODs(lru.hash);
+                const hasLowerRes = availableLODs.some(lod => lod !== null && lod >= 256);
+                
+                // Silently downgrade without logging
+            }
+            
             // Delete texture
             this.gl.deleteTexture(textureData.texture);
             this.totalMemory -= textureData.memorySize;
             nodeCache.delete(lru.lodSize);
+            
+            // Only log evictions of large textures to reduce spam
+            if (lru.lodSize === null || lru.lodSize > 1024) {
+                console.log(`🗑️ Evicted ${lru.lodSize || 'FULL'}px texture for ${lru.hash.substring(0, 8)} (memory: ${(this.totalMemory / 1024 / 1024).toFixed(1)}MB / ${(this.maxTextureMemory / 1024 / 1024).toFixed(1)}MB)`);
+            }
             
             // Remove hash entry if no more textures
             if (nodeCache.size === 0) {
@@ -400,6 +637,7 @@ class TextureLODManager {
             }
             
             this.stats.textureEvictions++;
+            skippedCount = 0; // Reset skip count on successful eviction
         }
     }
     
@@ -413,21 +651,107 @@ class TextureLODManager {
         const targetSize = Math.max(screenWidth, screenHeight);
         
         // Find the smallest LOD that provides good quality
-        // Use 1.5x the screen size for sharper rendering
-        const desiredSize = targetSize * 1.5;
+        // For very small sizes, don't multiply - just use the smallest available
+        const multiplier = targetSize < 50 ? 1.0 : (targetSize < 100 ? 1.2 : 1.5);
+        const desiredSize = targetSize * multiplier;
         
-        // Debug: Log LOD calculation
-        if (targetSize > 1000) {
-            console.log(`🎯 LOD calc: target=${Math.round(targetSize)}px, desired=${Math.round(desiredSize)}px, available=[${this.lodLevels.map(l => l.size || 'FULL').join(', ')}]`);
+        // Debug: Log LOD calculation (disabled for performance)
+        // if (targetSize < 100 || targetSize > 1500) {
+        //     console.log(`🎯 LOD calc: screen=${Math.round(targetSize)}px, desired=${Math.round(desiredSize)}px → LOD: ${desiredSize <= 3072 ? 'will check sizes' : 'full-res'}`);
+        // }
+        
+        // For very small images, use the smallest available LOD
+        if (targetSize <= 64) {
+            return 64; // Always use 64px for tiny thumbnails
+        } else if (targetSize <= 128) {
+            return 128; // Use 128px for small thumbnails
         }
         
-        for (const lod of this.lodLevels) {
-            if (lod.size === null || lod.size >= desiredSize) {
-                return lod.size;
+        // Be more conservative with full resolution
+        // Only use full res if screen size is truly large and 2048px isn't enough
+        if (targetSize < 2000) {
+            // For normal zoom levels, find the best LOD
+            for (const lod of this.lodLevels) {
+                if (lod.size && lod.size >= desiredSize) {
+                    return lod.size;
+                }
+            }
+            // If we get here, 2048px should be our max
+            return 2048;
+        }
+        
+        // For very large screen sizes, check if 2048px is sufficient
+        if (desiredSize <= 3072) { // 2048 * 1.5
+            return 2048;
+        }
+        
+        // Only request full resolution for extreme zoom levels
+        // where the image takes up most of the screen
+        if (targetSize > 2500) {
+            return null; // Full resolution
+        }
+        
+        return 2048; // Default to 2048px for most cases
+    }
+    
+    /**
+     * Unload high-resolution textures for nodes that are not visible
+     * @param {Set<string>} visibleHashes - Set of hashes for currently visible nodes
+     * @param {number} keepThreshold - Size threshold to keep (e.g., keep 256px and below)
+     * @param {boolean} aggressiveMode - If true, also unload full-res for visible nodes if we have 2048px
+     */
+    unloadNonVisibleHighRes(visibleHashes, keepThreshold = 256, aggressiveMode = false) {
+        const texturesUnloaded = [];
+        
+        for (const [hash, nodeCache] of this.textureCache) {
+            const isVisible = visibleHashes.has(hash);
+            
+            // In aggressive mode, even unload full-res for visible nodes if we have 2048px
+            if (!isVisible || aggressiveMode) {
+                // Check each LOD for this hash
+                for (const [lodSize, textureData] of nodeCache) {
+                    let shouldUnload = false;
+                    
+                    if (!isVisible) {
+                        // Not visible - unload anything larger than threshold
+                        // But ALWAYS keep preview textures (256px and below)
+                        shouldUnload = (lodSize === null || lodSize > keepThreshold) && (lodSize === null || lodSize > 256);
+                    } else if (aggressiveMode && lodSize === null) {
+                        // Visible but in aggressive mode - unload full-res if we have 2048px
+                        shouldUnload = nodeCache.has(2048);
+                    }
+                    
+                    if (shouldUnload) {
+                        // Delete the texture
+                        this.gl.deleteTexture(textureData.texture);
+                        this.totalMemory -= textureData.memorySize;
+                        nodeCache.delete(lodSize);
+                        
+                        // Remove from access order
+                        const index = this.accessOrder.findIndex(
+                            item => item.hash === hash && item.lodSize === lodSize
+                        );
+                        if (index !== -1) {
+                            this.accessOrder.splice(index, 1);
+                        }
+                        
+                        texturesUnloaded.push({ hash, lodSize, memorySize: textureData.memorySize });
+                    }
+                }
+            }
+            
+            // Remove hash entry if no more textures
+            if (nodeCache.size === 0) {
+                this.textureCache.delete(hash);
             }
         }
         
-        return null; // Full resolution
+        if (texturesUnloaded.length > 5) {
+            const freedMemory = texturesUnloaded.reduce((sum, t) => sum + (t.memorySize || 0), 0);
+            // console.log(`🧹 Unloaded ${texturesUnloaded.length} high-res textures for non-visible nodes (freed ${(freedMemory / 1024 / 1024).toFixed(1)}MB)`);
+        }
+        
+        return texturesUnloaded.length;
     }
     
     /**
@@ -472,7 +796,10 @@ class TextureLODManager {
         // Remove the hash entry
         this.textureCache.delete(hash);
         
-        console.log(`🧹 Cleaned up WebGL textures for ${hash.substring(0, 8)}...`);
+        // Only log cleanup when debugging
+        if (window.DEBUG_LOD_STATUS) {
+            console.log(`🧹 Cleaned up WebGL textures for ${hash.substring(0, 8)}...`);
+        }
     }
     
     /**
@@ -486,6 +813,134 @@ class TextureLODManager {
             queueLength: this.uploadQueue.length
         };
     }
+    
+    /**
+     * Debug: Log current cache contents
+     */
+    logCacheContents() {
+        console.log(`\n📊 Texture Cache Contents:`);
+        console.log(`Total memory: ${(this.totalMemory / 1024 / 1024).toFixed(1)}MB / ${(this.maxTextureMemory / 1024 / 1024).toFixed(1)}MB`);
+        console.log(`Total textures: ${this.accessOrder.length}`);
+        
+        const textureSummary = new Map();
+        for (const [hash, nodeCache] of this.textureCache) {
+            for (const [lodSize, textureData] of nodeCache) {
+                const key = `${hash.substring(0, 8)}_${lodSize || 'FULL'}`;
+                textureSummary.set(key, {
+                    size: lodSize,
+                    width: textureData.width,
+                    height: textureData.height,
+                    memory: textureData.memorySize
+                });
+            }
+        }
+        
+        // Sort by memory usage
+        const sorted = Array.from(textureSummary.entries()).sort((a, b) => b[1].memory - a[1].memory);
+        
+        console.log(`\nTop textures by memory:`);
+        sorted.slice(0, 10).forEach(([key, data]) => {
+            console.log(`  ${key}: ${data.width}x${data.height} = ${(data.memory / 1024 / 1024).toFixed(1)}MB`);
+        });
+        
+        // Group by hash
+        const byHash = new Map();
+        for (const [hash, nodeCache] of this.textureCache) {
+            const sizes = Array.from(nodeCache.keys()).map(s => s || 'FULL').join(', ');
+            const totalMem = Array.from(nodeCache.values()).reduce((sum, d) => sum + d.memorySize, 0);
+            byHash.set(hash.substring(0, 8), { sizes, totalMem });
+        }
+        
+        // Debug logging disabled - uncomment if needed
+        // console.log(`\nTextures by image:`);
+        // byHash.forEach((data, hash) => {
+        //     console.log(`  ${hash}: [${data.sizes}] = ${(data.totalMem / 1024 / 1024).toFixed(1)}MB`);
+        // });
+    }
+    
+    /**
+     * Invalidate cache for a specific hash
+     * @param {string} hash - The hash to invalidate
+     */
+    invalidateHash(hash) {
+        if (!this.textureCache.has(hash)) return;
+        
+        // Only log invalidation for debugging when enabled
+        if (window.DEBUG_LOD_STATUS) {
+            console.log(`🔄 LOD Manager: Invalidating cache for ${hash.substring(0, 8)}`);
+        }
+        
+        // Delete all GL textures for this hash
+        const hashCache = this.textureCache.get(hash);
+        if (hashCache) {
+            for (const lodData of hashCache.values()) {
+                if (lodData.texture) {
+                    this.gl.deleteTexture(lodData.texture);
+                }
+            }
+        }
+        
+        // Remove from caches
+        this.textureCache.delete(hash);
+        
+        // Remove from access order
+        const index = this.accessOrder.findIndex(item => item.hash === hash);
+        if (index !== -1) {
+            this.accessOrder.splice(index, 1);
+        }
+        
+        // Remove any pending uploads for this hash
+        this.uploadQueue = this.uploadQueue.filter(item => item.hash !== hash);
+    }
+    
+    /**
+     * Clear all cached textures
+     */
+    clear() {
+        // Delete all GL textures
+        for (const hashCache of this.textureCache.values()) {
+            for (const lodData of hashCache.values()) {
+                if (lodData.texture) {
+                    this.gl.deleteTexture(lodData.texture);
+                }
+            }
+        }
+        
+        this.textureCache.clear();
+        this.uploadQueue.length = 0;
+        this.accessOrder.length = 0;
+        this.activelyRenderedTextures.clear();
+        console.log('🧹 LOD Manager: Cleared all textures');
+    }
+    
+    /**
+     * Clear the list of actively rendered textures (call at start of each frame)
+     */
+    clearActivelyRendered() {
+        // Only clear if enough time has passed (prevent clearing mid-frame)
+        const now = Date.now();
+        if (now - this.lastActiveUpdate > 16) { // 16ms = ~60fps
+            this.activelyRenderedTextures.clear();
+            this.lastActiveUpdate = now;
+        }
+    }
+    
+    /**
+     * Get all available LOD sizes for a given hash
+     * @param {string} hash - Image hash
+     * @returns {Array<number|null>} Array of available LOD sizes
+     */
+    getAvailableLODs(hash) {
+        const nodeCache = this.textureCache.get(hash);
+        if (!nodeCache) return [];
+        
+        return Array.from(nodeCache.keys()).sort((a, b) => {
+            // Sort by size (null = full res goes last)
+            if (a === null) return 1;
+            if (b === null) return -1;
+            return b - a; // Descending order
+        });
+    }
 }
 
 // Export for module systems
@@ -496,4 +951,13 @@ if (typeof module !== 'undefined' && module.exports) {
 // Make available globally for browser environments
 if (typeof window !== 'undefined') {
     window.TextureLODManager = TextureLODManager;
+    
+    // Debug helper
+    window.checkTextureCache = () => {
+        if (window.app?.graphCanvas?.webglRenderer?.lodManager) {
+            window.app.graphCanvas.webglRenderer.lodManager.logCacheContents();
+        } else {
+            console.log('TextureLODManager not found');
+        }
+    };
 }

@@ -28,6 +28,7 @@ import '../js/dragdrop.js';
 import '../js/core/animation.js';
 import '../js/core/viewport.js';
 import '../js/core/selection.js';
+import '../js/core/ThumbnailRequestCoordinator.js';
 import '../js/core/handles.js';
 import '../js/core/alignment.js';
 import '../js/core/BulkOperationManager.js';
@@ -83,6 +84,7 @@ import '../js/core/StateSyncManager.js';
 import '../js/core/NetworkLayer.js';
 import '../js/core/ClientUndoManager.js';
 import '../js/core/CollaborativeArchitecture.js';
+import '../js/core/VideoProcessingListener.js';
 import '../js/core/AutoInit.js';
 
 // 12) UI Components

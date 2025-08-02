@@ -40,9 +40,19 @@ npm run serve-client
   - Ctrl/Cmd+D to duplicate
   - Delete/Backspace to remove
   - Ctrl/Cmd+Z/Y for undo/redo
+  - Ctrl/Cmd+A to select all
+  - Escape to deselect
 - **Navigation**:
   - Mouse wheel to zoom
+  - Spacebar+drag or Cmd/Ctrl+drag to pan
   - Drag empty space to pan
+  - G to toggle gallery view
+  - N to open canvas navigator
+  - / to open search
+  - I to toggle properties inspector
+  - C to toggle color correction panel
+- **Debug shortcuts** (use with caution):
+  - Ctrl+Shift+Delete to wipe database (shows confirmation)
 - **Auto-save** to localStorage
 - **High-DPI display** support
 

@@ -21,10 +21,31 @@ class ConnectionStatus {
         
         // Handle different connection states using unified notifications only
         if (status === 'connected') {
-            this.hideRetryButton();
-            // Show brief success notification for connection
+            // Update the existing connection notification to show success
             if (window.unifiedNotifications) {
-                window.unifiedNotifications.success('Connected to server', { duration: 3000 });
+                // First try to update existing notification
+                const hasExisting = window.unifiedNotifications.notifications.has('connection-status');
+                
+                if (hasExisting) {
+                    // Update existing notification to success
+                    window.unifiedNotifications.update('connection-status', {
+                        type: 'success',
+                        message: 'Connected to server',
+                        detail: null
+                    });
+                    
+                    // Then remove it after a delay
+                    setTimeout(() => {
+                        window.unifiedNotifications.remove('connection-status');
+                    }, 2000);
+                } else {
+                    // No existing notification, just show success briefly
+                    window.unifiedNotifications.success('Connected to server', { 
+                        id: 'connection-success',
+                        duration: 3000,
+                        persistent: false
+                    });
+                }
             }
         } else if (status === 'disconnected' || status === 'error') {
             // Show persistent notifications with retry for disconnected/error states
@@ -40,7 +61,6 @@ class ConnectionStatus {
                 });
             }
         }
-
     }
     
     /**

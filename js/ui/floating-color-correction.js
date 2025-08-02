@@ -37,34 +37,14 @@ class FloatingColorCorrection {
                 </div>
             </div>
             <div class="color-correction-content">
-                <div class="curve-section">
-                    <div class="section-header">
-                        <div class="section-title">Tone Curve</div>
-                        <label class="bypass-toggle">
-                            <input type="checkbox" class="bypass-checkbox">
-                            <span class="bypass-label">Bypass</span>
-                        </label>
-                    </div>
-                    <div class="curve-editor-container"></div>
-                    <div class="curve-controls">
-                        <button class="curve-reset-btn" title="Reset curve">Reset</button>
-                        <button class="curve-preset-btn" title="Presets">Presets</button>
-                    </div>
-                </div>
-                <div class="color-adjustments-section">
-                    <div class="section-title">Color Adjustments</div>
-                    <div class="adjustment-controls"></div>
-                </div>
+                <div class="no-selection-message">Select an image to adjust color correction</div>
             </div>
         `;
         
         this.addStyles();
         document.body.appendChild(this.panel);
         
-        // Initialize the spline curve editor after DOM is ready
-        requestAnimationFrame(() => {
-            this.initializeCurveEditor();
-        });
+        // Curve editor will be initialized when a node is selected
     }
 
     addStyles() {
@@ -80,9 +60,9 @@ class FloatingColorCorrection {
                 font-family: ${FONT_CONFIG.APP_FONT};
                 font-size: 12px;
                 color: #e0e0e0;
-                width: 320px;
-                min-width: 320px;
-                max-width: 320px;
+                width: 250px;
+                min-width: 200px;
+                max-width: 250px;
                 min-height: 400px;
                 display: flex;
                 flex-direction: column;
@@ -217,20 +197,35 @@ class FloatingColorCorrection {
             .adjustment-slider::-webkit-slider-thumb {
                 -webkit-appearance: none;
                 appearance: none;
-                width: 14px;
-                height: 14px;
-                background: #0066cc;
-                border-radius: 50%;
-                cursor: pointer;
-            }
-            
-            .adjustment-slider::-moz-range-thumb {
-                width: 14px;
-                height: 14px;
+                width: 12px;
+                height: 12px;
                 background: #0066cc;
                 border-radius: 50%;
                 cursor: pointer;
                 border: none;
+                box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+                transition: background-color 0.15s ease, transform 0.15s ease;
+            }
+            
+            .adjustment-slider::-webkit-slider-thumb:hover {
+                background: #0077dd;
+                transform: scale(1.1);
+            }
+            
+            .adjustment-slider::-moz-range-thumb {
+                width: 12px;
+                height: 12px;
+                background: #0066cc;
+                border-radius: 50%;
+                cursor: pointer;
+                border: none;
+                box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+                transition: background-color 0.15s ease, transform 0.15s ease;
+            }
+            
+            .adjustment-slider::-moz-range-thumb:hover {
+                background: #0077dd;
+                transform: scale(1.1);
             }
             
             .adjustment-value {
@@ -256,18 +251,25 @@ class FloatingColorCorrection {
             }
 
             .bypass-toggle {
-                display: flex;
-                align-items: center;
-                gap: 6px;
+                width: 8px;
+                height: 8px;
+                border-radius: 50%;
+                background-color: #999;
                 cursor: pointer;
-                user-select: none;
+                transition: background-color 0.2s ease;
+                flex-shrink: 0;
             }
-
-            .bypass-checkbox {
-                width: 14px;
-                height: 14px;
-                accent-color: #0066cc;
-                cursor: pointer;
+            
+            .bypass-toggle:hover {
+                background-color: #bbb;
+            }
+            
+            .bypass-toggle.active {
+                background-color: #555;
+            }
+            
+            .bypass-toggle.active:hover {
+                background-color: #666;
             }
 
             .bypass-label {
@@ -286,10 +288,15 @@ class FloatingColorCorrection {
                 pointer-events: none;
                 cursor: not-allowed;
             }
+            
+            .color-adjustments-section.bypassed .adjustment-controls {
+                opacity: 0.4;
+                pointer-events: none;
+            }
 
             .curve-editor-container {
                 width: 100%;
-                height: 256px;
+                height: 225px;
                 background: #2a2a2a;
                 border: 1px solid #444;
                 border-radius: 4px;
@@ -347,11 +354,19 @@ class FloatingColorCorrection {
 
         // Set up content event delegation - handles all content events
         const contentEl = this.panel.querySelector('.color-correction-content');
-        contentEl.addEventListener('change', (e) => {
-            if (e.target.classList.contains('bypass-checkbox')) {
-                this.handleBypassToggle(e.target.checked);
+        
+        // Handle bypass toggle clicks
+        contentEl.addEventListener('click', (e) => {
+            if (e.target.classList.contains('bypass-toggle')) {
+                const type = e.target.dataset.type;
+                const isActive = e.target.classList.contains('active');
+                
+                if (type === 'tone-curve') {
+                    this.handleBypassToggle(!isActive);
+                } else if (type === 'color-adjustments') {
+                    this.handleColorAdjustmentsBypass(!isActive);
+                }
             }
-            // Don't handle adjustment-slider on change event - only on input event
         });
 
         contentEl.addEventListener('click', (e) => {
@@ -382,6 +397,26 @@ class FloatingColorCorrection {
                     }
                 }
                 this.updateNodeAdjustment(adjustmentKey, value);
+            }
+        });
+        
+        // Add double-click to reset sliders
+        contentEl.addEventListener('dblclick', (e) => {
+            if (e.target.classList.contains('adjustment-slider')) {
+                const adjustmentKey = e.target.dataset.adjustment;
+                const defaultValue = 0; // All adjustments default to 0
+                
+                // Update the slider
+                e.target.value = defaultValue;
+                
+                // Update the node
+                this.updateNodeAdjustment(adjustmentKey, defaultValue);
+                
+                // Update the displayed value
+                const valueDisplay = e.target.parentElement.querySelector('.adjustment-value');
+                if (valueDisplay) {
+                    valueDisplay.textContent = adjustmentKey === 'hue' ? '0°' : '0.00';
+                }
             }
         });
     }
@@ -466,10 +501,10 @@ class FloatingColorCorrection {
     }
 
     updateSelection(selectedNodes) {
-        // Only show for single image node selection
+        // Show for single image or video node selection
         if (selectedNodes.size === 1) {
             const node = Array.from(selectedNodes.values())[0];
-            if (node.type === 'media/image') {
+            if (node.type === 'media/image' || node.type === 'media/video') {
                 this.currentNode = node;
                 this.updateUI();
                 return;
@@ -484,7 +519,7 @@ class FloatingColorCorrection {
         const contentEl = this.panel.querySelector('.color-correction-content');
         
         if (!this.currentNode) {
-            contentEl.innerHTML = '<div class="no-selection-message">Select an image to adjust color correction</div>';
+            contentEl.innerHTML = '<div class="no-selection-message">Select an image or video to adjust color correction</div>';
             return;
         }
 
@@ -497,19 +532,19 @@ class FloatingColorCorrection {
             <div class="curve-section">
                 <div class="section-header">
                     <div class="section-title">Tone Curve</div>
-                    <label class="bypass-toggle">
-                        <input type="checkbox" class="bypass-checkbox" ${this.currentNode.toneCurveBypassed ? 'checked' : ''}>
-                        <span class="bypass-label">Bypass</span>
-                    </label>
+                    <div class="bypass-toggle ${this.currentNode.toneCurveBypassed ? 'active' : ''}" data-type="tone-curve" title="Bypass tone curve"></div>
                 </div>
                 <div class="curve-editor-container"></div>
                 <div class="curve-controls">
-                    <button class="curve-reset-btn" title="Reset curve">Reset</button>
-                    <button class="curve-preset-btn" title="Presets">Presets</button>
+                    <!-- <button class="curve-reset-btn" title="Reset curve">Reset</button> -->
+                    <!-- <button class="curve-preset-btn" title="Presets">Presets</button> -->
                 </div>
             </div>
             <div class="color-adjustments-section">
-                <div class="section-title">Color Adjustments</div>
+                <div class="section-header">
+                    <div class="section-title">Color Adjustments</div>
+                    <div class="bypass-toggle ${this.currentNode.colorAdjustmentsBypassed ? 'active' : ''}" data-type="color-adjustments" title="Bypass color adjustments"></div>
+                </div>
                 <div class="adjustment-controls"></div>
             </div>
         `;
@@ -678,25 +713,51 @@ class FloatingColorCorrection {
     }
 
     handleBypassToggle(bypassed) {
+        if (!this.currentNode) return;
+        
         const curveSection = this.panel.querySelector('.curve-section');
+        const bypassToggle = this.panel.querySelector('[data-type="tone-curve"]');
+        
         if (bypassed) {
             curveSection.classList.add('bypassed');
+            if (bypassToggle) bypassToggle.classList.add('active');
         } else {
             curveSection.classList.remove('bypassed');
+            if (bypassToggle) bypassToggle.classList.remove('active');
         }
+        
+        // Save bypass state with node
+        this.currentNode.toneCurveBypassed = bypassed;
         
         // Update the node immediately
         this.updateNodeCurve();
-        
-        // Save bypass state with node
-        if (this.currentNode) {
-            this.currentNode.toneCurveBypassed = bypassed;
-        }
     }
 
     isBypassed() {
-        const checkbox = this.panel.querySelector('.bypass-checkbox');
-        return checkbox && checkbox.checked;
+        return this.currentNode && this.currentNode.toneCurveBypassed;
+    }
+    
+    handleColorAdjustmentsBypass(bypassed) {
+        if (!this.currentNode) return;
+        
+        this.currentNode.colorAdjustmentsBypassed = bypassed;
+        
+        // Update visual state
+        const colorSection = this.panel.querySelector('.color-adjustments-section');
+        const bypassToggle = this.panel.querySelector('[data-type="color-adjustments"]');
+        
+        if (colorSection) {
+            if (bypassed) {
+                colorSection.classList.add('bypassed');
+                if (bypassToggle) bypassToggle.classList.add('active');
+            } else {
+                colorSection.classList.remove('bypassed');
+                if (bypassToggle) bypassToggle.classList.remove('active');
+            }
+        }
+        
+        // Trigger redraw to apply/remove adjustments
+        this.requestRedraw();
     }
 
     updatePosition() {

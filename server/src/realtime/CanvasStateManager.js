@@ -9,7 +9,7 @@ class CanvasStateManager {
     constructor(db) {
         this.db = db;
         
-        // In-memory canvas states by project ID
+        // In-memory canvas states by canvas ID
         this.canvasStates = new Map();
         
         // State version tracking
@@ -21,36 +21,36 @@ class CanvasStateManager {
     }
     
     /**
-     * Get or create canvas state for a project
+     * Get or create canvas state for a canvas
      */
-    async getCanvasState(projectId) {
-        if (!this.canvasStates.has(projectId)) {
+    async getCanvasState(canvasId) {
+        if (!this.canvasStates.has(canvasId)) {
             // Load from database
-            const state = await this.loadCanvasState(projectId);
-            this.canvasStates.set(projectId, state);
-            this.stateVersions.set(projectId, state.version || 0);
+            const state = await this.loadCanvasState(canvasId);
+            this.canvasStates.set(canvasId, state);
+            this.stateVersions.set(canvasId, state.version || 0);
         }
         
-        return this.canvasStates.get(projectId);
+        return this.canvasStates.get(canvasId);
     }
     
     /**
      * Load canvas state from database
      */
-    async loadCanvasState(projectId) {
+    async loadCanvasState(canvasId) {
         try {
             // Get latest canvas data
             const canvas = await this.db.get(
-                'SELECT * FROM canvases WHERE project_id = ? ORDER BY updated_at DESC LIMIT 1',
-                [projectId]
+                'SELECT * FROM canvases WHERE id = ?',
+                [canvasId]
             );
             
-            if (canvas && canvas.data) {
-                const data = JSON.parse(canvas.data);
+            if (canvas && canvas.canvas_data) {
+                const data = JSON.parse(canvas.canvas_data);
                 return {
                     nodes: data.nodes || [],
-                    version: canvas.version || 0,
-                    lastModified: canvas.updated_at
+                    version: data.version || 0,
+                    lastModified: canvas.last_modified
                 };
             }
         } catch (error) {
@@ -68,9 +68,9 @@ class CanvasStateManager {
     /**
      * Execute operation on server state
      */
-    async executeOperation(projectId, operation, userId) {
-        const state = await this.getCanvasState(projectId);
-        const currentVersion = this.stateVersions.get(projectId) || 0;
+    async executeOperation(canvasId, operation, userId) {
+        const state = await this.getCanvasState(canvasId);
+        const currentVersion = this.stateVersions.get(canvasId) || 0;
         
         // Validate operation
         const validation = await this.validateOperation(operation, state);
@@ -90,12 +90,12 @@ class CanvasStateManager {
         
         // Increment version
         const newVersion = currentVersion + 1;
-        this.stateVersions.set(projectId, newVersion);
+        this.stateVersions.set(canvasId, newVersion);
         state.version = newVersion;
         state.lastModified = Date.now();
         
         // Save to database
-        await this.saveCanvasState(projectId, state);
+        await this.saveCanvasState(canvasId, state);
         
         // Operation history is now handled by OperationHistory class in collaboration.js
         // This prevents duplicate operations (one with undo data, one without)
@@ -665,24 +665,25 @@ class CanvasStateManager {
     /**
      * Save canvas state to database
      */
-    async saveCanvasState(projectId, state) {
+    async saveCanvasState(canvasId, state) {
         const data = JSON.stringify({
             nodes: state.nodes,
             version: state.version
         });
         
         await this.db.run(
-            `INSERT OR REPLACE INTO canvases (project_id, data, version, updated_at)
-             VALUES (?, ?, ?, ?)`,
-            [projectId, data, state.version, Date.now()]
+            `UPDATE canvases 
+             SET canvas_data = ?, last_modified = CURRENT_TIMESTAMP 
+             WHERE id = ?`,
+            [data, canvasId]
         );
     }
     
     /**
      * Get full canvas state for sync
      */
-    async getFullState(projectId) {
-        const state = await this.getCanvasState(projectId);
+    async getFullState(canvasId) {
+        const state = await this.getCanvasState(canvasId);
         return {
             nodes: state.nodes,
             version: state.version
@@ -857,9 +858,9 @@ class CanvasStateManager {
     /**
      * Clear canvas state (for testing)
      */
-    clearState(projectId) {
-        this.canvasStates.delete(projectId);
-        this.stateVersions.delete(projectId);
+    clearState(canvasId) {
+        this.canvasStates.delete(canvasId);
+        this.stateVersions.delete(canvasId);
     }
 }
 

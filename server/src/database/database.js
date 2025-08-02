@@ -35,13 +35,11 @@ class Database {
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 username TEXT UNIQUE NOT NULL,
                 display_name TEXT,
-                avatar_path TEXT,
-                last_active DATETIME DEFAULT CURRENT_TIMESTAMP,
                 created_at DATETIME DEFAULT CURRENT_TIMESTAMP
             );
             
-            -- Projects table
-            CREATE TABLE IF NOT EXISTS projects (
+            -- Canvases table
+            CREATE TABLE IF NOT EXISTS canvases (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 name TEXT NOT NULL,
                 description TEXT,
@@ -52,10 +50,10 @@ class Database {
                 created_at DATETIME DEFAULT CURRENT_TIMESTAMP
             );
             
-            -- Project versions for history/undo functionality
-            CREATE TABLE IF NOT EXISTS project_versions (
+            -- Canvas versions for history/undo functionality
+            CREATE TABLE IF NOT EXISTS canvas_versions (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
-                project_id INTEGER NOT NULL REFERENCES projects(id),
+                canvas_id INTEGER NOT NULL REFERENCES canvases(id),
                 version_number INTEGER NOT NULL,
                 canvas_data JSON NOT NULL,
                 changes_summary TEXT,
@@ -63,20 +61,20 @@ class Database {
                 created_at DATETIME DEFAULT CURRENT_TIMESTAMP
             );
             
-            -- Project collaborators
-            CREATE TABLE IF NOT EXISTS project_collaborators (
-                project_id INTEGER NOT NULL REFERENCES projects(id),
+            -- Canvas collaborators
+            CREATE TABLE IF NOT EXISTS canvas_collaborators (
+                canvas_id INTEGER NOT NULL REFERENCES canvases(id),
                 user_id INTEGER NOT NULL REFERENCES users(id),
                 permission TEXT CHECK(permission IN ('read', 'write', 'admin')) DEFAULT 'write',
                 invited_by INTEGER REFERENCES users(id),
                 joined_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-                PRIMARY KEY (project_id, user_id)
+                PRIMARY KEY (canvas_id, user_id)
             );
             
             -- Real-time operations log for conflict resolution
             CREATE TABLE IF NOT EXISTS operations (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
-                project_id INTEGER NOT NULL REFERENCES projects(id),
+                canvas_id INTEGER NOT NULL REFERENCES canvases(id),
                 user_id INTEGER NOT NULL REFERENCES users(id),
                 operation_type TEXT NOT NULL,
                 operation_data JSON NOT NULL,
@@ -93,7 +91,7 @@ class Database {
                 file_size INTEGER NOT NULL,
                 file_hash TEXT NOT NULL,
                 uploaded_by INTEGER NOT NULL REFERENCES users(id),
-                project_id INTEGER REFERENCES projects(id),
+                canvas_id INTEGER REFERENCES canvases(id),
                 created_at DATETIME DEFAULT CURRENT_TIMESTAMP
             );
             
@@ -101,7 +99,7 @@ class Database {
             CREATE TABLE IF NOT EXISTS active_sessions (
                 id TEXT PRIMARY KEY,
                 user_id INTEGER NOT NULL REFERENCES users(id),
-                project_id INTEGER REFERENCES projects(id),
+                canvas_id INTEGER REFERENCES canvases(id),
                 socket_id TEXT NOT NULL,
                 cursor_position JSON,
                 selection_data JSON,
@@ -109,29 +107,32 @@ class Database {
             );
             
             -- Canvas state for server-authoritative sync
-            CREATE TABLE IF NOT EXISTS canvases (
+            CREATE TABLE IF NOT EXISTS canvas_states (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
-                project_id INTEGER NOT NULL REFERENCES projects(id),
+                canvas_id INTEGER NOT NULL REFERENCES canvases(id),
                 data JSON NOT NULL,
                 version INTEGER DEFAULT 1,
                 updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-                UNIQUE(project_id)
+                UNIQUE(canvas_id)
             );
             
             -- Indexes for performance
-            CREATE INDEX IF NOT EXISTS idx_projects_owner ON projects(owner_id);
-            CREATE INDEX IF NOT EXISTS idx_project_versions_project ON project_versions(project_id);
-            CREATE INDEX IF NOT EXISTS idx_operations_project_sequence ON operations(project_id, sequence_number);
+            CREATE INDEX IF NOT EXISTS idx_canvases_owner ON canvases(owner_id);
+            CREATE INDEX IF NOT EXISTS idx_canvas_versions_canvas ON canvas_versions(canvas_id);
+            CREATE INDEX IF NOT EXISTS idx_operations_canvas_sequence ON operations(canvas_id, sequence_number);
             CREATE INDEX IF NOT EXISTS idx_files_hash ON files(file_hash);
-            CREATE INDEX IF NOT EXISTS idx_active_sessions_project ON active_sessions(project_id);
+            CREATE INDEX IF NOT EXISTS idx_active_sessions_canvas ON active_sessions(canvas_id);
             CREATE INDEX IF NOT EXISTS idx_active_sessions_user ON active_sessions(user_id);
-            CREATE INDEX IF NOT EXISTS idx_canvases_project ON canvases(project_id);
+            CREATE INDEX IF NOT EXISTS idx_canvas_states_canvas ON canvas_states(canvas_id);
         `;
         
         await this.exec(schema);
         
         // Apply undo system migrations
         await this.applyUndoMigrations();
+        
+        // Apply video processing migrations
+        await this.applyVideoMigrations();
         
         // Create default user if it doesn't exist
         const defaultUser = await this.get('SELECT * FROM users WHERE id = 1');
@@ -170,7 +171,7 @@ class Database {
                 await this.run(`
                     CREATE TABLE IF NOT EXISTS active_transactions (
                         id TEXT PRIMARY KEY,
-                        project_id INTEGER NOT NULL REFERENCES projects(id),
+                        canvas_id INTEGER NOT NULL REFERENCES canvases(id),
                         user_id INTEGER NOT NULL REFERENCES users(id),
                         source TEXT,
                         started_at DATETIME DEFAULT CURRENT_TIMESTAMP,
@@ -180,11 +181,35 @@ class Database {
                 `);
                 
                 await this.run('CREATE INDEX IF NOT EXISTS idx_active_transactions_user ON active_transactions(user_id, state)');
-                await this.run('CREATE INDEX IF NOT EXISTS idx_active_transactions_project ON active_transactions(project_id)');
+                await this.run('CREATE INDEX IF NOT EXISTS idx_active_transactions_canvas ON active_transactions(canvas_id)');
 
             }
         } catch (error) {
             console.error('⚠️ Error applying undo migrations:', error);
+            // Non-fatal - the system can work without these columns
+        }
+    }
+    
+    async applyVideoMigrations() {
+        try {
+            // Check if video processing columns exist
+            const columns = await this.all(`PRAGMA table_info(files)`);
+            const hasProcessedFormats = columns.some(col => col.name === 'processed_formats');
+            
+            if (!hasProcessedFormats) {
+                console.log('🎬 Applying video processing migrations...');
+                
+                // Add columns for video processing
+                await this.run('ALTER TABLE files ADD COLUMN processed_formats TEXT');
+                await this.run('ALTER TABLE files ADD COLUMN processing_status TEXT DEFAULT "pending" CHECK(processing_status IN ("pending", "processing", "completed", "failed"))');
+                await this.run('ALTER TABLE files ADD COLUMN processing_started_at DATETIME');
+                await this.run('ALTER TABLE files ADD COLUMN processing_completed_at DATETIME');
+                await this.run('ALTER TABLE files ADD COLUMN processing_error TEXT');
+                
+                console.log('✅ Video processing migrations applied');
+            }
+        } catch (error) {
+            console.error('⚠️ Error applying video migrations:', error);
             // Non-fatal - the system can work without these columns
         }
     }
@@ -240,10 +265,10 @@ class Database {
     }
     
     // Utility methods for common operations
-    async createUser(username, displayName = null, avatarPath = null) {
+    async createUser(username, displayName = null) {
         const result = await this.run(
-            'INSERT INTO users (username, display_name, avatar_path) VALUES (?, ?, ?)',
-            [username, displayName, avatarPath]
+            'INSERT INTO users (username, display_name) VALUES (?, ?)',
+            [username, displayName]
         );
         return result.lastID;
     }
@@ -256,23 +281,23 @@ class Database {
         return await this.get('SELECT * FROM users WHERE username = ?', [username]);
     }
     
-    async createProject(name, ownerId, description = null, canvasData = null) {
+    async createCanvas(name, ownerId, description = null, canvasData = null) {
         const result = await this.run(
-            'INSERT INTO projects (name, owner_id, description, canvas_data) VALUES (?, ?, ?, ?)',
+            'INSERT INTO canvases (name, owner_id, description, canvas_data) VALUES (?, ?, ?, ?)',
             [name, ownerId, description, JSON.stringify(canvasData)]
         );
         return result.lastID;
     }
     
-    async getProject(id) {
-        const project = await this.get('SELECT * FROM projects WHERE id = ?', [id]);
-        if (project && project.canvas_data) {
-            project.canvas_data = JSON.parse(project.canvas_data);
+    async getCanvas(id) {
+        const canvas = await this.get('SELECT * FROM canvases WHERE id = ?', [id]);
+        if (canvas && canvas.canvas_data) {
+            canvas.canvas_data = JSON.parse(canvas.canvas_data);
         }
-        return project;
+        return canvas;
     }
     
-    async updateProject(id, updates) {
+    async updateCanvas(id, updates) {
         const fields = [];
         const values = [];
         
@@ -290,22 +315,22 @@ class Database {
         values.push(id);
         
         await this.run(
-            `UPDATE projects SET ${fields.join(', ')} WHERE id = ?`,
+            `UPDATE canvases SET ${fields.join(', ')} WHERE id = ?`,
             values
         );
     }
     
-    async addOperation(projectId, userId, operationType, operationData, sequenceNumber) {
+    async addOperation(canvasId, userId, operationType, operationData, sequenceNumber) {
         await this.run(
-            'INSERT INTO operations (project_id, user_id, operation_type, operation_data, sequence_number) VALUES (?, ?, ?, ?, ?)',
-            [projectId, userId, operationType, JSON.stringify(operationData), sequenceNumber]
+            'INSERT INTO operations (canvas_id, user_id, operation_type, operation_data, sequence_number) VALUES (?, ?, ?, ?, ?)',
+            [canvasId, userId, operationType, JSON.stringify(operationData), sequenceNumber]
         );
     }
     
-    async getOperationsSince(projectId, sequenceNumber) {
+    async getOperationsSince(canvasId, sequenceNumber) {
         const operations = await this.all(
-            'SELECT * FROM operations WHERE project_id = ? AND sequence_number > ? ORDER BY sequence_number',
-            [projectId, sequenceNumber]
+            'SELECT * FROM operations WHERE canvas_id = ? AND sequence_number > ? ORDER BY sequence_number',
+            [canvasId, sequenceNumber]
         );
         
         return operations.map(op => ({
@@ -315,12 +340,12 @@ class Database {
     }
     
     async cleanup() {
-        // Clean up old operations (keep last 1000 per project)
+        // Clean up old operations (keep last 1000 per canvas)
         await this.run(`
             DELETE FROM operations 
             WHERE id NOT IN (
                 SELECT id FROM operations 
-                WHERE project_id = operations.project_id 
+                WHERE canvas_id = operations.canvas_id 
                 ORDER BY sequence_number DESC 
                 LIMIT 1000
             )

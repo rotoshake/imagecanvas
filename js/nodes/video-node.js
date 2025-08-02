@@ -25,6 +25,29 @@ class VideoNode extends BaseNode {
         this._lastDrawTime = 0; // Track last draw to prevent flicker
         this._primaryLoadCompleteTime = null; // Track when video finished loading
         
+        // Visibility tracking for performance
+        this._isVisible = true; // Assume visible by default
+        this._wasPlaying = false; // Track if video was playing before hiding
+        this._tinyPaused = false; // Track if paused due to tiny size
+        
+        // Frame tracking for deduplication
+        this._lastRenderedTime = -1; // Track last rendered video time
+        this._frameSkipCount = 0; // Track skipped frames for debugging
+        
+        // Color adjustments (non-destructive, used by WebGL renderer)
+        this.adjustments = {
+            brightness: 0.0, // range -1..1
+            contrast: 0.0,   // range -1..1
+            saturation: 0.0, // range -1..1
+            hue: 0.0         // degrees -180..180
+        };
+        
+        // Tone curve data
+        this.toneCurve = null;
+        this.toneCurveBypassed = false;
+        this.colorAdjustmentsBypassed = false;
+        this.needsGLUpdate = false; // flag for renderer cache
+        
     }
     
     async setVideo(src, filename = null, hash = null) {
@@ -48,6 +71,14 @@ class VideoNode extends BaseNode {
             this.properties.serverUrl = src;
         } else if (src) {
             this.properties.src = src;
+        }
+        
+        // Check if video needs transcoding (after page refresh)
+        // This happens when we have a serverFilename but transcoding wasn't completed
+        if (this.properties.serverFilename && !this.properties.transcodingComplete) {
+            // We'll be loading the original file while transcoding resumes
+            console.log(`🎬 Video node detected interrupted transcoding, will resume in background`);
+            await this.checkAndResumeTranscoding();
         }
         
         this.loadingState = 'loading';
@@ -149,7 +180,12 @@ class VideoNode extends BaseNode {
             return src;
         }
         
-        // 2. Try to get from cache using hash
+        // 2. Try temporary video URL (for newly dropped videos)
+        if (this.properties.tempVideoUrl) {
+            return this.properties.tempVideoUrl;
+        }
+        
+        // 3. Try to get from cache using hash
         if (this.properties.hash && window.imageCache) {
             const cached = window.imageCache.get(this.properties.hash);
             if (cached) {
@@ -157,7 +193,7 @@ class VideoNode extends BaseNode {
             }
         }
         
-        // 3. Try server URL
+        // 4. Try server URL
         if (this.properties.serverUrl) {
             // Convert relative URL to absolute if needed
             const url = this.properties.serverUrl.startsWith('http') 
@@ -166,7 +202,19 @@ class VideoNode extends BaseNode {
             return url;
         }
         
-        // 4. Try resource cache (for duplicated nodes)
+        // 4.5. If we have a serverFilename but no serverUrl (interrupted transcoding)
+        // Try to load the original uploaded file
+        if (this.properties.serverFilename && !this.properties.transcodingComplete) {
+            console.log(`🔄 Video transcoding was interrupted, loading original: ${this.properties.serverFilename}`);
+            const originalUrl = CONFIG.SERVER.API_BASE + `/uploads/${this.properties.serverFilename}`;
+            
+            // Mark that we need to update when transcoding completes
+            this.properties.pendingServerUrlUpdate = true;
+            
+            return originalUrl;
+        }
+        
+        // 5. Try resource cache (for duplicated nodes)
         if (this.properties.hash && window.app?.imageResourceCache) {
             const resource = window.app.imageResourceCache.get(this.properties.hash);
             if (resource?.url) {
@@ -174,13 +222,21 @@ class VideoNode extends BaseNode {
             }
         }
         
-        // 5. No source available
+        // 6. Check if we're pending initialization
+        if (this.properties.pendingVideoInit) {
+            // This is expected - video will be initialized soon
+            return null;
+        }
+        
+        // 7. No source available
         console.error(`❌ No video source available for node ${this.id}`, {
             hash: this.properties.hash,
             serverUrl: this.properties.serverUrl,
             filename: this.properties.filename,
             hasImageCache: !!window.imageCache,
-            hasResourceCache: !!window.app?.imageResourceCache
+            hasResourceCache: !!window.app?.imageResourceCache,
+            tempVideoUrl: this.properties.tempVideoUrl,
+            pendingInit: this.properties.pendingVideoInit
         });
         return null;
     }
@@ -305,14 +361,35 @@ class VideoNode extends BaseNode {
                 this.markDirty();
             });
             
-            // Throttled redraw during playback
-            video.addEventListener('timeupdate', () => {
-                // Only trigger redraw occasionally, not every frame
-                if (!this._lastUpdateTime || Date.now() - this._lastUpdateTime > 100) {
-                    this._lastUpdateTime = Date.now();
-                    this.markDirty();
-                }
-            });
+            // Use requestVideoFrameCallback for efficient video rendering if available
+            if ('requestVideoFrameCallback' in video) {
+                // Modern API - only redraws when video has a new frame
+                const frameCallback = () => {
+                    if (!this.video.paused && this._isVisible) {
+                        this.markDirty();
+                        this.video.requestVideoFrameCallback(frameCallback);
+                    }
+                };
+                video.addEventListener('play', () => {
+                    this.video.requestVideoFrameCallback(frameCallback);
+                });
+            } else {
+                // Fallback: Smart throttled redraw during playback
+                let lastFrameTime = 0;
+                video.addEventListener('timeupdate', () => {
+                    // Only trigger redraw if enough time has passed AND video is visible
+                    const now = Date.now();
+                    const timeSinceLastFrame = now - lastFrameTime;
+                    
+                    // Respect video's actual frame rate (most videos are 24-30fps, not 60fps)
+                    const minFrameInterval = 33; // ~30fps max
+                    
+                    if (timeSinceLastFrame >= minFrameInterval && this._isVisible) {
+                        lastFrameTime = now;
+                        this.markDirty();
+                    }
+                });
+            }
             
             video.onerror = () => reject(new Error('Failed to load video'));
             video.src = src;
@@ -383,6 +460,74 @@ class VideoNode extends BaseNode {
         return this.thumbnail; // Return our simple thumbnail or null
     }
     
+    async checkAndResumeTranscoding() {
+        if (!this.properties.serverFilename || !this.properties.filename) {
+            return;
+        }
+        
+        console.log(`🔍 Checking transcoding status for ${this.properties.filename}`);
+        
+        try {
+            // Check with server if video is still processing
+            const response = await fetch(`${CONFIG.SERVER.API_BASE}/api/video-status/${encodeURIComponent(this.properties.serverFilename)}`);
+            
+            if (!response.ok) {
+                console.log(`⚠️ Could not check video status: ${response.status}`);
+                return;
+            }
+            
+            const status = await response.json();
+            console.log(`📊 Video status:`, status);
+            
+            // If video is pending or processing, re-queue it
+            if (status.status === 'pending' || status.status === 'processing') {
+                console.log(`🔄 Video ${this.properties.filename} needs transcoding, requesting re-queue`);
+                
+                // Mark that we're waiting for transcoding to complete
+                this.properties.pendingServerUrlUpdate = true;
+                
+                // Register with video processing listener
+                if (window.videoProcessingListener) {
+                    window.videoProcessingListener.registerVideoNode(this.properties.filename, this);
+                }
+                
+                // Request re-processing via WebSocket
+                if (window.app?.network?.socket) {
+                    window.app.network.socket.emit('resume_video_processing', {
+                        filename: this.properties.filename,
+                        serverFilename: this.properties.serverFilename
+                    });
+                    
+                    // Show notification
+                    if (window.unifiedNotifications) {
+                        window.unifiedNotifications.info(`Resuming video processing for ${this.properties.filename}`, {
+                            id: `video-resume-${this.properties.filename}`,
+                            duration: 3000
+                        });
+                    }
+                }
+            } else if (status.status === 'completed' && status.formats && status.formats.length > 0) {
+                // Video was already transcoded, update properties
+                this.properties.transcodingComplete = true;
+                this.properties.availableFormats = status.formats;
+                
+                // Update server URL to use transcoded version
+                const baseName = this.properties.serverFilename.replace(/\.[^.]+$/, '');
+                const transcodedFilename = `${baseName}.${status.formats[0]}`;
+                this.properties.serverUrl = `/uploads/${transcodedFilename}`;
+                this.properties.serverFilename = transcodedFilename;
+                
+                console.log(`✅ Video already transcoded, using ${transcodedFilename}`);
+            } else if (status.status === 'error') {
+                console.error(`❌ Video transcoding failed previously: ${status.error}`);
+                // Mark as complete to prevent re-trying
+                this.properties.transcodingComplete = true;
+            }
+        } catch (error) {
+            console.error(`❌ Error checking video status:`, error);
+        }
+    }
+    
     shouldShowLoadingRing() {
         // Always show during primary loading
         if (this.loadingState === 'loading' || (!this.video && this.loadingState !== 'error')) {
@@ -435,14 +580,30 @@ class VideoNode extends BaseNode {
         
         // Don't try to draw video if it's not ready yet
         if (!this.video || this.video.readyState < 2) {
-            // Show thumbnail if available while video loads
-            if (this.thumbnail) {
+            // Check if we have a blob URL that should be playing or if we're transcoding
+            const hasBlobUrl = this.properties.tempVideoUrl && this.properties.tempVideoUrl.startsWith('blob:');
+            const isTranscoding = this.properties.pendingServerUrlUpdate;
+            
+            // Only show thumbnail if we don't have a blob URL trying to play and not transcoding
+            if (!hasBlobUrl && !isTranscoding && this.thumbnail) {
                 ctx.imageSmoothingEnabled = true;
                 ctx.imageSmoothingQuality = CONFIG.THUMBNAILS.QUALITY;
                 ctx.drawImage(this.thumbnail, 0, 0, this.size[0], this.size[1]);
-            } else if (this.loadingState === 'loaded') {
-                // If we're "loaded" but video isn't ready, show placeholder
+            } else if (this.loadingState === 'loaded' && !hasBlobUrl && !isTranscoding) {
+                // If we're "loaded" but video isn't ready and no blob URL, show placeholder
                 this.drawPlaceholder(ctx, 'Loading...');
+            } else if (hasBlobUrl || isTranscoding) {
+                // We have a blob URL or are transcoding, keep trying to show video even if readyState is low
+                // This prevents switching to thumbnail during initial load or transcoding
+                if (this.video && this.video.videoWidth > 0) {
+                    this.drawVideo(ctx);
+                    this.managePlayback();
+                } else if (this.thumbnail) {
+                    // Fallback to thumbnail if video dimensions aren't available yet
+                    ctx.imageSmoothingEnabled = true;
+                    ctx.imageSmoothingQuality = CONFIG.THUMBNAILS.QUALITY;
+                    ctx.drawImage(this.thumbnail, 0, 0, this.size[0], this.size[1]);
+                }
             }
             return;
         }
@@ -457,10 +618,32 @@ class VideoNode extends BaseNode {
         const screenHeight = this.size[1] * scale;
         const useThumbnail = screenWidth < CONFIG.PERFORMANCE.THUMBNAIL_THRESHOLD || 
                             screenHeight < CONFIG.PERFORMANCE.THUMBNAIL_THRESHOLD;
+        
+        // Stop video decoding when very small to save CPU
+        if (useThumbnail && this.video && !this.video.paused && !this.properties.paused) {
+            this._tinyPaused = true;
+            this.video.pause();
+        } else if (!useThumbnail && this._tinyPaused && this.video && this._isVisible) {
+            this._tinyPaused = false;
+            if (!this.properties.paused) {
+                this.video.play().catch(() => {});
+            }
+        }
 
         try {
-            if (useThumbnail && this.thumbnail) {
-                // Use simple video thumbnail for small sizes
+            // Check if we have a playing blob URL or if we're transitioning from one
+            const hasBlobUrl = this.properties.tempVideoUrl && this.properties.tempVideoUrl.startsWith('blob:');
+            const isPlaying = this.video && !this.video.paused;
+            const isTranscoding = this.properties.pendingServerUrlUpdate; // Still transcoding
+            
+            // Don't use thumbnail if:
+            // 1. Video is actively playing
+            // 2. We have a blob URL (still loading from blob)
+            // 3. We're in the middle of transcoding transition
+            const shouldShowVideo = isPlaying || hasBlobUrl || isTranscoding;
+            
+            if (useThumbnail && this.thumbnail && !shouldShowVideo) {
+                // Use simple video thumbnail for small sizes only when video is truly inactive
                 ctx.imageSmoothingEnabled = true;
                 ctx.imageSmoothingQuality = CONFIG.THUMBNAILS.QUALITY;
                 ctx.drawImage(this.thumbnail, 0, 0, this.size[0], this.size[1]);
@@ -499,7 +682,7 @@ class VideoNode extends BaseNode {
     }
     
     managePlayback() {
-        if (!this.video) return;
+        if (!this.video || !this._isVisible) return;
         
         // Only try to play if we should be playing but aren't
         if (!this.properties.paused && this.video.paused && !this._needsUserInteraction) {
@@ -693,6 +876,184 @@ class VideoNode extends BaseNode {
             loop: this.video.loop,
             readyState: this.video.readyState
         };
+    }
+    
+    /**
+     * Update color adjustments
+     */
+    updateAdjustments(newValues = {}) {
+        Object.assign(this.adjustments, newValues);
+        this.needsGLUpdate = true;
+        
+        // Schedule an immediate frame on the global canvas
+        if (window.app?.graphCanvas) {
+            requestAnimationFrame(() => {
+                window.app.graphCanvas.draw();
+            });
+        }
+    }
+    
+    /**
+     * Update tone curve data
+     */
+    updateToneCurve(curveData) {
+        // console.log('Video updateToneCurve called', curveData ? 'with data' : 'null');
+        this.toneCurve = curveData;
+        this.needsGLUpdate = true;
+        
+        // Force immediate redraw
+        if (window.app?.graphCanvas) {
+            window.app.graphCanvas.dirty_canvas = true;
+            requestAnimationFrame(() => {
+                window.app.graphCanvas.draw();
+            });
+        }
+    }
+    
+    /**
+     * Override markDirty to implement frame deduplication
+     */
+    markDirty() {
+        // Check if we actually need to redraw
+        if (this.video && this.video.readyState >= 2) {
+            const currentTime = this.video.currentTime;
+            
+            // Skip if frame hasn't changed (with small tolerance for floating point)
+            if (Math.abs(currentTime - this._lastRenderedTime) < 0.001) {
+                this._frameSkipCount++;
+                return; // Skip this frame
+            }
+            
+            this._lastRenderedTime = currentTime;
+            
+            // Log frame skip stats occasionally for debugging
+            if (this._frameSkipCount > 0 && Math.random() < 0.01) { // 1% chance
+                if (window.DEBUG_LOD_STATUS) {
+                    console.log(`🎬 Video ${this.id}: Skipped ${this._frameSkipCount} duplicate frames`);
+                }
+                this._frameSkipCount = 0;
+            }
+        }
+        
+        // Call parent implementation
+        super.markDirty();
+    }
+    
+    /**
+     * Called when node visibility changes (for performance optimization)
+     */
+    onVisibilityChange(isVisible) {
+        if (this._isVisible === isVisible) return; // No change
+        
+        this._isVisible = isVisible;
+        
+        if (!this.video) return;
+        
+        if (!isVisible) {
+            // Going offscreen - pause if playing
+            if (!this.video.paused && !this.properties.paused) {
+                this._wasPlaying = true;
+                this.video.pause();
+                // Silently pause offscreen video
+            }
+        } else {
+            // Coming onscreen - resume if was playing
+            if (this._wasPlaying && !this.properties.paused && this.video.paused && !this._tinyPaused) {
+                this.video.play().catch(() => {
+                    // Autoplay might be blocked, that's okay
+                });
+                this._wasPlaying = false;
+                // Silently resume onscreen video
+            }
+        }
+    }
+    
+    /**
+     * Get optimal video quality based on display size
+     * Returns: 'preview' | 'small' | 'medium' | 'full'
+     */
+    getOptimalQuality(screenWidth, screenHeight) {
+        const size = Math.max(screenWidth, screenHeight);
+        
+        if (size < 200) return 'preview';  // 240p
+        if (size < 400) return 'small';    // 480p
+        if (size < 800) return 'medium';   // 720p
+        return 'full';                      // Original
+    }
+    
+    /**
+     * Switch video quality (for future server support)
+     */
+    async switchQuality(quality) {
+        // This will be implemented when server supports multi-resolution
+        // For now, just log the intention
+        if (this._currentQuality !== quality) {
+            console.log(`📹 Would switch ${this.title} to ${quality} quality`);
+            this._currentQuality = quality;
+        }
+    }
+    
+    /**
+     * Update video source when transcoding completes
+     */
+    async updateVideoSource() {
+        if (!this.video || !this.properties.serverUrl) return;
+        
+        console.log(`🔄 Updating video source to transcoded version: ${this.properties.serverUrl}`);
+        
+        // Clear temp video URL to ensure we use the transcoded version
+        if (this.properties.tempVideoUrl) {
+            console.log('🧹 Clearing tempVideoUrl to use transcoded version');
+            delete this.properties.tempVideoUrl;
+        }
+        
+        // Save current state
+        const currentTime = this.video.currentTime;
+        const wasPaused = this.video.paused || this.properties.paused;
+        const wasVisible = this._isVisible;
+        
+        // Resolve the new URL - now it will use serverUrl since tempVideoUrl is cleared
+        const newUrl = await this.resolveVideoSource();
+        if (!newUrl || newUrl === this.video.src) {
+            console.log('📹 Video source unchanged or unavailable');
+            return;
+        }
+        
+        console.log(`🎬 Switching from ${this.video.src} to ${newUrl}`);
+        
+        // Create new video element to avoid interruption
+        const newVideo = await this.loadVideoAsync(newUrl);
+        
+        // Restore state
+        newVideo.currentTime = currentTime;
+        if (!wasPaused && wasVisible) {
+            newVideo.play().catch(() => {});
+        }
+        
+        // Replace old video
+        const oldVideo = this.video;
+        this.video = newVideo;
+        
+        // Clean up old video
+        oldVideo.pause();
+        oldVideo.src = '';
+        
+        // Clean up blob URL if it was one
+        if (this._tempBlobUrl) {
+            URL.revokeObjectURL(this._tempBlobUrl);
+            delete this._tempBlobUrl;
+        }
+        
+        // Clear the pending update flag
+        this.properties.pendingServerUrlUpdate = false;
+        
+        // Update thumbnail with new video
+        this.createVideoThumbnail();
+        
+        // Force redraw
+        this.markDirty();
+        
+        console.log(`✅ Video source updated successfully`);
     }
 }
 

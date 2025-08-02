@@ -404,7 +404,7 @@ class CreateNodeCommand extends Command {
                     
                     // Update the node's properties with server URL
                     currentNode.properties.serverUrl = uploadResult.url;
-                    currentNode.properties.serverFilename = uploadResult.serverFilename || uploadResult.filename;
+                    currentNode.properties.serverFilename = uploadResult.serverFilename;
                     
                     // Update the image source to use server URL
                     const fullUrl = CONFIG.SERVER.API_BASE + uploadResult.url;
@@ -475,7 +475,7 @@ class CreateNodeCommand extends Command {
                                 !existingNode.properties.serverUrl) {
 
                                 existingNode.properties.serverUrl = fullUrl;
-                                existingNode.properties.serverFilename = uploadResult.serverFilename || uploadResult.filename;
+                                existingNode.properties.serverFilename = uploadResult.serverFilename;
                                 
                                 // Update image source if the node has an img element
                                 if (existingNode.img) {

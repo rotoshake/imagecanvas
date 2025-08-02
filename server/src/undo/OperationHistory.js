@@ -13,54 +13,64 @@ class OperationHistory {
         this.operations = new Map(); // operationId -> operation record
         this.userOperations = new Map(); // userId -> [operationIds]
         this.transactions = new Map(); // transactionId -> [operationIds]
-        this.timeline = new Map(); // projectId -> [ordered operationIds]
+        this.timeline = new Map(); // canvasId -> [ordered operationIds]
         
-        // Track undo/redo state per user per project
-        this.userUndoState = new Map(); // `${userId}-${projectId}` -> { undoStack, redoStack }
+        // Track undo/redo state per user per canvas
+        this.userUndoState = new Map(); // `${userId}-${canvasId}` -> { undoStack, redoStack }
     }
     
     /**
-     * Initialize history for a project
+     * Initialize history for a canvas
      */
-    async initializeProject(projectId) {
-        if (!this.timeline.has(projectId)) {
-            this.timeline.set(projectId, []);
+    async initializeCanvas(canvasId) {
+        if (!this.timeline.has(canvasId)) {
+            this.timeline.set(canvasId, []);
             
             // Load existing operations from database if any
-            await this.loadProjectHistory(projectId);
+            await this.loadCanvasHistory(canvasId);
         }
     }
     
     /**
-     * Load project history from database
+     * Load canvas history from database
      */
-    async loadProjectHistory(projectId) {
+    async loadCanvasHistory(canvasId) {
         try {
             const operations = await this.db.all(
                 `SELECT * FROM operations 
-                 WHERE project_id = ? 
+                 WHERE canvas_id = ? 
                  ORDER BY sequence_number ASC`,
-                [projectId]
+                [canvasId]
             );
 
-            const projectTimeline = [];
+            const canvasTimeline = [];
             
             for (const op of operations) {
+                // Parse the data JSON which contains params, undoData, changes, and operationId
+                let parsedData = {};
+                try {
+                    parsedData = JSON.parse(op.data);
+                } catch (e) {
+                    console.error('Failed to parse operation data:', e);
+                    parsedData = { params: {} };
+                }
+                
                 const operation = {
-                    id: op.operation_id || `op_${op.id}`, // Use operation_id if available, otherwise prefix with op_
-                    type: op.operation_type,
-                    params: JSON.parse(op.operation_data),
+                    id: parsedData.operationId || `op_${op.id}`,
+                    type: op.type,
+                    params: parsedData.params || {},
                     userId: op.user_id,
-                    projectId: op.project_id,
-                    timestamp: op.applied_at,
+                    canvasId: op.canvas_id,
+                    timestamp: op.created_at,
                     sequenceNumber: op.sequence_number,
-                    state: 'applied',
+                    state: op.is_undone ? 'undone' : 'applied',
                     transactionId: op.transaction_id || null,
-                    undoData: op.undo_data ? JSON.parse(op.undo_data) : null
+                    undoData: parsedData.undoData || null,
+                    changes: parsedData.changes || null
                 };
                 
                 this.operations.set(operation.id, operation);
-                projectTimeline.push(operation.id);
+                canvasTimeline.push(operation.id);
                 
                 // Track by user
                 const userKey = operation.userId;
@@ -78,18 +88,18 @@ class OperationHistory {
                 }
             }
             
-            this.timeline.set(projectId, projectTimeline);
+            this.timeline.set(canvasId, canvasTimeline);
             
         } catch (error) {
-            console.error('Error loading project history:', error);
+            console.error('Error loading canvas history:', error);
         }
     }
     
     /**
      * Record a new operation
      */
-    async recordOperation(operation, userId, projectId, transactionId = null) {
-        await this.initializeProject(projectId);
+    async recordOperation(operation, userId, canvasId, transactionId = null) {
+        await this.initializeCanvas(canvasId);
         
         // Generate operation ID if not provided
         const operationId = operation.id || `op_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
@@ -106,7 +116,7 @@ class OperationHistory {
             type: operation.type,
             params: operation.params,
             userId: userId,
-            projectId: projectId,
+            canvasId: canvasId,
             transactionId: transactionId,
             timestamp: Date.now(),
             undoData: operation.undoData || null,
@@ -118,10 +128,10 @@ class OperationHistory {
         // Store in memory
         this.operations.set(operationId, record);
         
-        // Add to project timeline
-        const projectTimeline = this.timeline.get(projectId) || [];
-        projectTimeline.push(operationId);
-        this.timeline.set(projectId, projectTimeline);
+        // Add to canvas timeline
+        const canvasTimeline = this.timeline.get(canvasId) || [];
+        canvasTimeline.push(operationId);
+        this.timeline.set(canvasId, canvasTimeline);
         
         // Track by user
         if (!this.userOperations.has(userId)) {
@@ -138,7 +148,7 @@ class OperationHistory {
         }
         
         // Clear user's redo stack on new operation
-        const undoStateKey = `${userId}-${projectId}`;
+        const undoStateKey = `${userId}-${canvasId}`;
         const undoState = this.userUndoState.get(undoStateKey);
         if (undoState) {
             undoState.redoStack = [];
@@ -158,17 +168,20 @@ class OperationHistory {
             // Store undo data in a new column
             await this.db.run(
                 `INSERT INTO operations 
-                 (project_id, user_id, operation_type, operation_data, sequence_number, transaction_id, undo_data, operation_id) 
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+                 (canvas_id, user_id, type, data, sequence_number, transaction_id) 
+                 VALUES (?, ?, ?, ?, ?, ?)`,
                 [
-                    operation.projectId,
+                    operation.canvasId,
                     operation.userId,
                     operation.type,
-                    JSON.stringify(operation.params),
+                    JSON.stringify({
+                        params: operation.params,
+                        undoData: operation.undoData,
+                        changes: operation.changes,
+                        operationId: operation.id
+                    }),
                     operation.sequenceNumber,
-                    operation.transactionId,
-                    operation.undoData ? JSON.stringify(operation.undoData) : null,
-                    operation.id
+                    operation.transactionId
                 ]
             );
         } catch (error) {
@@ -178,16 +191,16 @@ class OperationHistory {
     }
     
     /**
-     * Get undoable operations for a user in a project
+     * Get undoable operations for a user in a canvas
      */
-    getUndoableOperations(userId, projectId, limit = 1) {
-        const projectTimeline = this.timeline.get(projectId) || [];
+    getUndoableOperations(userId, canvasId, limit = 1) {
+        const canvasTimeline = this.timeline.get(canvasId) || [];
         const undoable = [];
         const processedTransactions = new Set();
 
         // Walk backwards through the timeline
-        for (let i = projectTimeline.length - 1; i >= 0 && undoable.length < limit; i--) {
-            const opId = projectTimeline[i];
+        for (let i = canvasTimeline.length - 1; i >= 0 && undoable.length < limit; i--) {
+            const opId = canvasTimeline[i];
             const op = this.operations.get(opId);
             
             // Only consider operations from this user that are applied
@@ -235,10 +248,10 @@ class OperationHistory {
     }
     
     /**
-     * Get redoable operations for a user in a project
+     * Get redoable operations for a user in a canvas
      */
-    getRedoableOperations(userId, projectId, limit = 1) {
-        const undoStateKey = `${userId}-${projectId}`;
+    getRedoableOperations(userId, canvasId, limit = 1) {
+        const undoStateKey = `${userId}-${canvasId}`;
         const undoState = this.userUndoState.get(undoStateKey);
         
         if (!undoState || undoState.redoStack.length === 0) {
@@ -251,7 +264,7 @@ class OperationHistory {
     /**
      * Mark operations as undone
      */
-    markOperationsUndone(operationIds, userId, projectId) {
+    markOperationsUndone(operationIds, userId, canvasId) {
         const undoneInfo = [];
         
         for (const opId of operationIds) {
@@ -270,7 +283,7 @@ class OperationHistory {
         }
         
         // Add to user's redo stack
-        const undoStateKey = `${userId}-${projectId}`;
+        const undoStateKey = `${userId}-${canvasId}`;
         if (!this.userUndoState.has(undoStateKey)) {
             this.userUndoState.set(undoStateKey, {
                 undoStack: [],
@@ -306,7 +319,7 @@ class OperationHistory {
     /**
      * Mark operations as redone
      */
-    markOperationsRedone(operationIds, userId, projectId) {
+    markOperationsRedone(operationIds, userId, canvasId) {
         const redoneInfo = [];
         
         for (const opId of operationIds) {
@@ -325,7 +338,7 @@ class OperationHistory {
         }
         
         // Remove from redo stack
-        const undoStateKey = `${userId}-${projectId}`;
+        const undoStateKey = `${userId}-${canvasId}`;
         const undoState = this.userUndoState.get(undoStateKey);
         if (undoState && undoState.redoStack.length > 0) {
             // Remove the last item (most recent)
@@ -338,12 +351,12 @@ class OperationHistory {
     /**
      * Get operations that affect specific nodes
      */
-    getNodeOperations(nodeIds, projectId) {
-        const projectTimeline = this.timeline.get(projectId) || [];
+    getNodeOperations(nodeIds, canvasId) {
+        const canvasTimeline = this.timeline.get(canvasId) || [];
         const nodeIdSet = new Set(nodeIds);
         const nodeOperations = [];
         
-        for (const opId of projectTimeline) {
+        for (const opId of canvasTimeline) {
             const op = this.operations.get(opId);
             if (op && op.state === 'applied') {
                 const affectedNodes = this.getAffectedNodes(op);
@@ -414,7 +427,7 @@ class OperationHistory {
     /**
      * Check for conflicts with other users' operations
      */
-    async checkUndoConflicts(operationIds, userId, projectId) {
+    async checkUndoConflicts(operationIds, userId, canvasId) {
         const conflicts = [];
         const affectedNodes = new Set();
         
@@ -437,9 +450,9 @@ class OperationHistory {
         }
         
         // Check for later operations on the same nodes by other users
-        const projectTimeline = this.timeline.get(projectId) || [];
+        const canvasTimeline = this.timeline.get(canvasId) || [];
         
-        for (const opId of projectTimeline) {
+        for (const opId of canvasTimeline) {
             const op = this.operations.get(opId);
             
             // Skip if it's our own operation or if it's before our undo point
@@ -471,20 +484,20 @@ class OperationHistory {
     }
     
     /**
-     * Get all operations for a project (for debugging)
-     * @param {string} projectId - Project ID
+     * Get all operations for a canvas (for debugging)
+     * @param {string} canvasId - Canvas ID
      * @param {number} limit - Maximum number of operations to return
      * @param {string} type - 'undo' or 'redo'
      * @returns {Array} List of operations
      */
-    getAllProjectOperations(projectId, limit = 20, type = 'undo') {
-        const projectTimeline = this.timeline.get(projectId) || [];
+    getAllCanvasOperations(canvasId, limit = 20, type = 'undo') {
+        const canvasTimeline = this.timeline.get(canvasId) || [];
         const operations = [];
 
         if (type === 'undo') {
             // Get most recent applied operations
-            for (let i = projectTimeline.length - 1; i >= 0 && operations.length < limit; i--) {
-                const opId = projectTimeline[i];
+            for (let i = canvasTimeline.length - 1; i >= 0 && operations.length < limit; i--) {
+                const opId = canvasTimeline[i];
                 const op = this.operations.get(opId);
                 
                 if (op && op.state === 'applied') {
@@ -513,8 +526,8 @@ class OperationHistory {
             }
         } else if (type === 'redo') {
             // Get most recent undone operations
-            for (let i = projectTimeline.length - 1; i >= 0 && operations.length < limit; i--) {
-                const opId = projectTimeline[i];
+            for (let i = canvasTimeline.length - 1; i >= 0 && operations.length < limit; i--) {
+                const opId = canvasTimeline[i];
                 const op = this.operations.get(opId);
                 
                 if (op && op.state === 'undone') {
@@ -534,9 +547,9 @@ class OperationHistory {
     /**
      * Get user's undo/redo state
      */
-    getUserUndoState(userId, projectId) {
-        const undoable = this.getUndoableOperations(userId, projectId, 10);
-        const redoable = this.getRedoableOperations(userId, projectId, 10);
+    getUserUndoState(userId, canvasId) {
+        const undoable = this.getUndoableOperations(userId, canvasId, 10);
+        const redoable = this.getRedoableOperations(userId, canvasId, 10);
         
         const state = {
             canUndo: undoable.length > 0,
@@ -551,18 +564,18 @@ class OperationHistory {
     }
     
     /**
-     * Clear project history
+     * Clear canvas history
      * @returns {number} Number of operations cleared
      */
-    clearProjectHistory(projectId) {
+    clearCanvasHistory(canvasId) {
         // Remove from timeline
-        this.timeline.delete(projectId);
+        this.timeline.delete(canvasId);
         
         let clearedCount = 0;
         
         // Remove operations
         for (const [opId, op] of this.operations.entries()) {
-            if (op.projectId === projectId) {
+            if (op.canvasId === canvasId) {
                 this.operations.delete(opId);
                 clearedCount++;
                 
@@ -590,7 +603,7 @@ class OperationHistory {
         
         // Clear undo states
         for (const [key, state] of this.userUndoState.entries()) {
-            if (key.endsWith(`-${projectId}`)) {
+            if (key.endsWith(`-${canvasId}`)) {
                 this.userUndoState.delete(key);
             }
         }

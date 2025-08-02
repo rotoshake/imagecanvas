@@ -22,8 +22,10 @@ class ImageCanvas {
         
         // State
         this.dirty_canvas = true;
+        this.dirty_nodes = new Set(); // Track which specific nodes need redrawing
         this.mouseState = this.createMouseState();
         this.interactionState = this.createInteractionState();
+        this._renderLoopId = null; // Track render loop to prevent duplicates
         
         // Performance
         this.frameCounter = 0;
@@ -33,6 +35,9 @@ class ImageCanvas {
         // FPS Test Mode
         this.fpsTestMode = 'normal'; // 'normal', 'minimal', 'nocap', 'noanimations', 'noloading'
         this.frameTimes = [];
+        
+        // Spacebar tracking for panning
+        this.spacePressed = false;
         this.maxFrameTimeSamples = 120; // Keep last 2 seconds at 60fps
         this.isTestModeActive = false;
         
@@ -174,6 +179,7 @@ class ImageCanvas {
         
         // Keyboard events
         document.addEventListener('keydown', this.onKeyDown.bind(this));
+        document.addEventListener('keyup', this.onKeyUp.bind(this));
         
         // Window resize - debounced to prevent flicker
         this.debouncedResize = Utils.debounce(this.onWindowResize.bind(this), 100);
@@ -186,6 +192,12 @@ class ImageCanvas {
     }
     
     startRenderLoop() {
+        // Prevent multiple render loops
+        if (this._renderLoopId) {
+            console.warn('Render loop already running, skipping duplicate start');
+            return;
+        }
+        
         // Track loading state check timing
         let lastLoadingCheck = 0;
         const LOADING_CHECK_INTERVAL = 100; // Check every 100ms - balanced performance/responsiveness
@@ -224,6 +236,11 @@ class ImageCanvas {
             let renderReasons = [];
             
             if (this.dirty_canvas) renderReasons.push('dirty');
+            
+            // Debug: Track why we're rendering
+            if (window.DEBUG_RENDER_REASONS && renderReasons.length > 0) {
+                console.log(`🎬 Render triggered by: ${renderReasons.join(', ')}`);
+            }
             
             // Periodically check if we have loading nodes
             if (now - lastLoadingCheck > LOADING_CHECK_INTERVAL) {
@@ -279,17 +296,38 @@ class ImageCanvas {
             // Update general animations (integrated for 120 FPS performance)
             const hasActiveAnimations = this.animationSystem && this.animationSystem.updateAnimations(deltaTime);
             
-            // Check if any videos are playing or alignment is active
-            const hasActiveVideos = this.graph.nodes && this.graph.nodes.some(node => 
-                node.type === 'media/video' && node.video && !node.video.paused
-            );
+            // Check if any videos need updates
+            let hasVideoUpdates = false;
+            let videoOnlyUpdate = false;
+            
+            if (this.dirty_nodes.size > 0) {
+                // Check if we only have video node updates
+                videoOnlyUpdate = true;
+                for (const nodeId of this.dirty_nodes) {
+                    const node = this.graph.getNodeById(nodeId);
+                    if (!node || node.type !== 'media/video') {
+                        videoOnlyUpdate = false;
+                        break;
+                    }
+                    if (node.video && !node.video.paused) {
+                        hasVideoUpdates = true;
+                    }
+                }
+            }
+            
+            // Also check for any playing videos that might not be in dirty_nodes yet
+            if (!hasVideoUpdates && this.graph.nodes) {
+                hasVideoUpdates = this.graph.nodes.some(node => 
+                    node.type === 'media/video' && node.video && !node.video.paused
+                );
+            }
             
             const hasActiveAlignment = this.alignmentManager && this.alignmentManager.isAnimating();
             const hasActiveViewportAnimation = this.viewport && this.viewport.isAnimating;
             
-            if (hasActiveVideos) {
+            if (hasVideoUpdates) {
                 shouldDraw = true;
-                renderReasons.push('video');
+                renderReasons.push(videoOnlyUpdate ? 'video-only' : 'video');
             }
             if (hasActiveAlignment) {
                 shouldDraw = true;
@@ -311,14 +349,64 @@ class ImageCanvas {
             
             if (shouldDraw) {
                 this.dirty_canvas = false;
+                this.dirty_nodes.clear(); // Clear dirty nodes after drawing
                 this.draw();
             }
-            requestAnimationFrame(renderFrame);
+            
+            // Only continue the render loop if we have ongoing animations or updates
+            const needsContinuousUpdates = hasActiveAnimations || 
+                                         hasActiveAlignment || 
+                                         hasActiveViewportAnimation || 
+                                         hasVideoUpdates ||
+                                         activelyLoadingNodes.size > 0;
+            
+            if (needsContinuousUpdates || this.dirty_canvas || this.dirty_nodes.size > 0) {
+                this._renderLoopId = requestAnimationFrame(renderFrame);
+            } else {
+                // Stop the loop - it will restart when something changes
+                this._renderLoopId = null;
+            }
         };
-        requestAnimationFrame(renderFrame);
+        
+        // Start the loop
+        this._renderLoopId = requestAnimationFrame(renderFrame);
+        
+        // Set up a getter/setter to restart the loop when canvas becomes dirty
+        this._setupDirtyCanvasWatcher();
+    }
+    
+    _setupDirtyCanvasWatcher() {
+        // Only set up once
+        if (this._dirtyCanvasWatcherSetup) return;
+        this._dirtyCanvasWatcherSetup = true;
+        
+        // Store the actual dirty state
+        this._dirty_canvas_internal = this.dirty_canvas || false;
+        
+        // Override the property to restart render loop when set to true
+        Object.defineProperty(this, 'dirty_canvas', {
+            get() {
+                return this._dirty_canvas_internal;
+            },
+            set(value) {
+                this._dirty_canvas_internal = value;
+                
+                // If setting to true and render loop is not running, restart it
+                if (value === true && !this._renderLoopId) {
+                    this.startRenderLoop();
+                }
+            },
+            configurable: true
+        });
     }
     
     startTestRenderLoop() {
+        // Prevent multiple render loops
+        if (this._renderLoopId) {
+            console.warn('Test render loop already running, skipping duplicate start');
+            return;
+        }
+        
         console.log(`🧪 FPS Test Mode: ${this.fpsTestMode}`);
         
         let lastRenderTime = 0;
@@ -378,10 +466,10 @@ class ImageCanvas {
             }
             
             lastRenderTime = currentTime;
-            requestAnimationFrame(testRenderFrame);
+            this._renderLoopId = requestAnimationFrame(testRenderFrame);
         };
         
-        requestAnimationFrame(testRenderFrame);
+        this._renderLoopId = requestAnimationFrame(testRenderFrame);
     }
     
     setFPSTestMode(mode) {
@@ -392,6 +480,13 @@ class ImageCanvas {
         }
         
         const oldMode = this.fpsTestMode;
+        
+        // Stop existing render loop before switching
+        if (this._renderLoopId) {
+            cancelAnimationFrame(this._renderLoopId);
+            this._renderLoopId = null;
+        }
+        
         this.fpsTestMode = mode;
         this.frameTimes = []; // Reset frame time samples
         
@@ -682,11 +777,13 @@ Mode: ${this.fpsTestMode}`;
         // Regular interaction updates
         if (this.mouseState.down) {
             this.updateInteractions(e);
+            // Only mark dirty when actually dragging/interacting
+            this.dirty_canvas = true;
         }
         this.updateCursor();
         
         this.mouseState.last = [x, y];
-        this.dirty_canvas = true;
+        // Don't mark canvas dirty for simple mouse moves without interaction
     }
     
     onMouseUp(e) {
@@ -739,12 +836,33 @@ Mode: ${this.fpsTestMode}`;
     onMouseWheel(e) {
         e.preventDefault();
         
-        // Navigation zoom (intentionally NOT synced to other users)
-        const delta = e.deltaY < 0 ? -1 : 1; // Negative for zoom in (wheel up), positive for zoom out (wheel down)
         const mousePos = this.mouseState.canvas || [0, 0];
         
-        // Use the viewport.zoom method to ensure navigation state is saved
-        this.viewport.zoom(delta, mousePos[0], mousePos[1]);
+        // Check for pinch zoom (ctrl key or cmd key on Mac)
+        if (e.ctrlKey || e.metaKey) {
+            // Direct pinch zoom - no momentum
+            const zoomScale = 1 - (e.deltaY * 0.01);
+            const currentScale = this.viewport.scale;
+            const targetScale = currentScale * zoomScale;
+            
+            // Apply zoom with the calculated scale
+            this.viewport.scale = Utils.clamp(
+                targetScale,
+                CONFIG.CANVAS.MIN_SCALE,
+                CONFIG.CANVAS.MAX_SCALE
+            );
+            
+            if (this.viewport.scale !== currentScale) {
+                const scaleDelta = this.viewport.scale / currentScale;
+                this.viewport.offset[0] = mousePos[0] - (mousePos[0] - this.viewport.offset[0]) * scaleDelta;
+                this.viewport.offset[1] = mousePos[1] - (mousePos[1] - this.viewport.offset[1]) * scaleDelta;
+                this.viewport.validateState();
+            }
+        } else {
+            // Always zoom on regular scroll (removed trackpad detection)
+            const delta = e.deltaY < 0 ? -1 : 1; // Negative for zoom in (wheel up), positive for zoom out (wheel down)
+            this.viewport.zoom(delta, mousePos[0], mousePos[1]);
+        }
         
         // Notify viewport of movement for LOD optimization
         this.viewport.notifyMovement();
@@ -755,8 +873,13 @@ Mode: ${this.fpsTestMode}`;
             this.updateTextEditingOverlaySize(this._editingTextInput, this._editingTextNode);
         }
         
-        // Clear preload queue during zoom - will be repopulated with new nearby nodes
-        this.clearPreloadQueue();
+        // Throttle preload queue clearing to avoid performance impact
+        if (!this._preloadClearTimeout) {
+            this._preloadClearTimeout = setTimeout(() => {
+                this.clearPreloadQueue();
+                this._preloadClearTimeout = null;
+            }, 100);
+        }
         
         this.dirty_canvas = true;
     }
@@ -857,10 +980,30 @@ Mode: ${this.fpsTestMode}`;
     }
     
     onKeyDown(e) {
+        // Track spacebar press for panning
+        if (e.key === ' ' || e.code === 'Space') {
+            this.spacePressed = true;
+            // Update cursor to indicate pan mode if hovering over canvas
+            if (this.canvas.style) {
+                this.canvas.style.cursor = 'grab';
+            }
+        }
+        
         if (this.isEditingText()) return;
         
         if (this.handleKeyboardShortcut(e)) {
             e.preventDefault();
+        }
+    }
+    
+    onKeyUp(e) {
+        // Track spacebar release
+        if (e.key === ' ' || e.code === 'Space') {
+            this.spacePressed = false;
+            // Reset cursor
+            if (this.canvas.style) {
+                this.canvas.style.cursor = '';
+            }
         }
     }
     
@@ -907,9 +1050,13 @@ Mode: ${this.fpsTestMode}`;
     // ===================================
     
     handlePanMode(e) {
-        // Ctrl/Cmd+drag anywhere for canvas pan (highest priority)
-        if (e.button === 0 && (e.ctrlKey || e.metaKey)) {
+        // Ctrl/Cmd+drag or Space+drag anywhere for canvas pan (highest priority)
+        if (e.button === 0 && (e.ctrlKey || e.metaKey || this.spacePressed)) {
             this.interactionState.dragging.canvas = true;
+            // Update cursor to grabbing when dragging
+            if (this.canvas.style) {
+                this.canvas.style.cursor = 'grabbing';
+            }
             return true;
         }
         
@@ -1656,6 +1803,12 @@ Mode: ${this.fpsTestMode}`;
         // Canvas pan
         if (this.interactionState.dragging.canvas) {
             this.interactionState.dragging.canvas = false;
+            // Reset cursor if we were using spacebar
+            if (this.spacePressed && this.canvas.style) {
+                this.canvas.style.cursor = 'grab';
+            } else if (this.canvas.style) {
+                this.canvas.style.cursor = '';
+            }
         }
 
         // Node drag
@@ -1877,8 +2030,8 @@ Mode: ${this.fpsTestMode}`;
                     });
                 }
                 
-                // Request full sync from server
-                window.app.stateSyncManager.requestFullSync();
+                // Request full sync from server (true = manual sync)
+                window.app.stateSyncManager.requestFullSync(true);
                 
                 // The sync completion will be handled by the existing handleFullStateSync method
                 // which will update the notification when done
@@ -3512,6 +3665,15 @@ Mode: ${this.fpsTestMode}`;
         this.dirty_canvas = true;
     }
     
+    markNodeDirty(node) {
+        // Mark a specific node as needing redraw
+        if (node && node.id) {
+            this.dirty_nodes.add(node.id);
+            // Still mark canvas as dirty, but we'll use this info to optimize later
+            this.dirty_canvas = true;
+        }
+    }
+    
     invalidateVisibilityCache() {
         this.cachedVisibleNodes = null;
     }
@@ -3793,8 +3955,12 @@ Mode: ${this.fpsTestMode}`;
         if (!this.viewport.shouldDrawGrid()) return;
         
         const gridInfo = this.viewport.getGridOffset();
-        ctx.fillStyle = ColorUtils.get('canvas', 'grid_lines');
+        const gridColor = ColorUtils.get('canvas', 'grid_lines');
         
+        // Use the original simple approach but ensure color is set
+        ctx.fillStyle = gridColor;
+        
+        // Draw grid dots
         for (let x = gridInfo.x; x < this.canvas.width; x += gridInfo.spacing) {
             for (let y = gridInfo.y; y < this.canvas.height; y += gridInfo.spacing) {
                 ctx.fillRect(x - 1, y - 1, 2, 2);
@@ -3803,13 +3969,36 @@ Mode: ${this.fpsTestMode}`;
     }
     
     updateNodeVisibility(visibleNodes) {
-        // Queue media loading for visible nodes (non-blocking)
-        for (const node of visibleNodes) {
-            if ((node.type === 'media/image' || node.type === 'media/video') && 
-                node.loadingState === 'idle' && node.properties.hash) {
-                this.queueNodeLoading(node, 'visible');
+        // Create a Set of visible node IDs for fast lookup
+        const visibleNodeIds = new Set(visibleNodes.map(n => n.id));
+        
+        // Track visibility changes
+        if (!this.previousVisibleNodes) {
+            this.previousVisibleNodes = new Set();
+        }
+        
+        // Check all nodes for visibility changes
+        if (this.graph && this.graph.nodes) {
+            for (const node of this.graph.nodes) {
+                const isNowVisible = visibleNodeIds.has(node.id);
+                const wasVisible = this.previousVisibleNodes.has(node.id);
+                
+                // Notify nodes of visibility changes
+                if (isNowVisible !== wasVisible && typeof node.onVisibilityChange === 'function') {
+                    node.onVisibilityChange(isNowVisible);
+                }
+                
+                // Queue media loading for newly visible nodes (non-blocking)
+                if (isNowVisible && !wasVisible && 
+                    (node.type === 'media/image' || node.type === 'media/video') && 
+                    node.loadingState === 'idle' && node.properties.hash) {
+                    this.queueNodeLoading(node, 'visible');
+                }
             }
         }
+        
+        // Update the previous visible set
+        this.previousVisibleNodes = visibleNodeIds;
         
         // Queue preloading for nearby nodes
         this.queueNearbyNodes();
@@ -4017,7 +4206,7 @@ Mode: ${this.fpsTestMode}`;
         }
         
         // Skip if hidden by user preference
-        const showTitles = window.app?.userProfileSystem?.getPreference('showTitles', false);
+        const showTitles = window.app?.userProfileSystem?.getPreference('showTitles', true);
         if (!showTitles) {
             return;
         }
@@ -4143,7 +4332,7 @@ Mode: ${this.fpsTestMode}`;
         ctx.setTransform(this.viewport.dpr, 0, 0, this.viewport.dpr, 0, 0);
         
         // Transparent background
-        ctx.globalAlpha = 0.15;
+        ctx.globalAlpha = 0.0;
         ctx.fillStyle = ColorUtils.get('canvas', 'selection_fill');
         ctx.fillRect(sx - margin, sy - margin, sw + margin * 2, sh + margin * 2);
         
@@ -4310,6 +4499,7 @@ Mode: ${this.fpsTestMode}`;
         this.canvas.removeEventListener('dblclick', this.onDoubleClick.bind(this));
         
         document.removeEventListener('keydown', this.onKeyDown.bind(this));
+        document.removeEventListener('keyup', this.onKeyUp.bind(this));
         
         if (this.debouncedResize) {
             window.removeEventListener('resize', this.debouncedResize);

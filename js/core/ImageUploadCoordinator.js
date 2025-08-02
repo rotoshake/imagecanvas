@@ -192,7 +192,7 @@ class ImageUploadCoordinator {
         if (nodes.length > 0) {
             nodes.forEach(node => {
                 node.properties.serverUrl = uploadResult.url;
-                node.properties.serverFilename = uploadResult.serverFilename || uploadResult.filename;
+                node.properties.serverFilename = uploadResult.serverFilename;
                 
                 // Update image source if needed
                 if (node.img && node.img.src.startsWith('data:')) {
@@ -210,7 +210,7 @@ class ImageUploadCoordinator {
                 await this.app.operationPipeline.execute('image_upload_complete', {
                     hash: hash,
                     serverUrl: uploadResult.url,
-                    serverFilename: uploadResult.serverFilename || uploadResult.filename
+                    serverFilename: uploadResult.serverFilename
                 });
                 // Server notified of upload completion
             } catch (error) {
@@ -224,7 +224,7 @@ class ImageUploadCoordinator {
                             await this.app.operationPipeline.execute('image_upload_complete', {
                                 hash: hash,
                                 serverUrl: uploadResult.url,
-                                serverFilename: uploadResult.serverFilename || uploadResult.filename
+                                serverFilename: uploadResult.serverFilename
                             });
                             
                         } catch (retryError) {
@@ -243,7 +243,7 @@ class ImageUploadCoordinator {
             
             this.app.imageResourceCache.set(hash, {
                 url: fullUrl,
-                serverFilename: uploadResult.serverFilename || uploadResult.filename,
+                serverFilename: uploadResult.serverFilename,
                 originalFilename: originalFilename,
                 thumbnail: nodes[0]?.thumbnail || existingCache?.thumbnail,
                 isLocal: false
@@ -267,7 +267,7 @@ class ImageUploadCoordinator {
             const currentNode = this.app.graph.getNodeById(node.id);
             if (currentNode) {
                 currentNode.properties.serverUrl = uploadResult.url;
-                currentNode.properties.serverFilename = uploadResult.serverFilename || uploadResult.filename;
+                currentNode.properties.serverFilename = uploadResult.serverFilename;
                 
                 const fullUrl = uploadResult.url.startsWith('http') 
                     ? uploadResult.url 

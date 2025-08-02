@@ -216,7 +216,13 @@ class BaseNode {
     
     markDirty() {
         if (this.graph?.canvas) {
-            this.graph.canvas.dirty_canvas = true;
+            // For video nodes, use node-specific dirty tracking
+            if (this.type === 'media/video' && this.graph.canvas.markNodeDirty) {
+                this.graph.canvas.markNodeDirty(this);
+            } else {
+                // For other nodes, mark entire canvas as dirty
+                this.graph.canvas.dirty_canvas = true;
+            }
         }
     }
     

@@ -278,6 +278,26 @@ class ThumbnailCache {
         thumbnails.set(size, canvas);
         this._trackAccess(hash);
         this._notify(hash); // Notify subscribers that a new thumbnail is available
+        console.log(`📢 Notifying subscribers about new ${size}px thumbnail for ${hash.substring(0, 8)}`);
+        
+        // Also mark all image nodes with this hash as needing update
+        if (window.app?.graph?.nodes) {
+            let updatedCount = 0;
+            for (const node of window.app.graph.nodes) {
+                if (node.properties?.hash === hash) {
+                    node.needsGLUpdate = true;
+                    updatedCount++;
+                }
+            }
+            if (updatedCount > 0) {
+                console.log(`🔄 Marked ${updatedCount} nodes for GL update`);
+                // Force immediate redraw
+                if (window.app.graphCanvas) {
+                    window.app.graphCanvas.dirty_canvas = true;
+                    window.app.graphCanvas.dirty_bgcanvas = true;
+                }
+            }
+        }
         
         // Check if we need to evict based on memory OR count
         if (this.currentMemoryUsage > this.maxMemoryBytes || this.cache.size > this.maxHashEntries) {
@@ -899,6 +919,15 @@ class ThumbnailCache {
     async loadServerThumbnails(hash, serverFilename, sizes = null) {
         if (!hash || !serverFilename) return false;
         
+        // Validate that serverFilename looks like a server-generated filename
+        if (!serverFilename.match(/^\d{13}-[a-z0-9]+\./i)) {
+            // Only warn in debug mode - this is common with user-uploaded files
+            if (window.DEBUG_CACHE) {
+                console.warn(`⚠️ loadServerThumbnails: serverFilename doesn't look server-generated: ${serverFilename}`);
+            }
+            return false;
+        }
+        
         // Use provided sizes or default to all sizes
         const sizesToLoad = sizes || this.thumbnailSizes;
         
@@ -971,16 +1000,25 @@ class ThumbnailCache {
             );
             
             if (imageNode) {
-                // Try to extract server filename from serverUrl
+                // Priority 1: Extract server filename from serverUrl (most reliable)
                 if (imageNode.properties?.serverUrl) {
                     const urlParts = imageNode.properties.serverUrl.split('/');
-                    serverFilename = urlParts[urlParts.length - 1]; // Get filename from URL
-                    // Extracted server filename from serverUrl
+                    const filenameFromUrl = urlParts[urlParts.length - 1];
+                    // Only use this if it looks like a server-generated filename (contains timestamp and random chars)
+                    if (filenameFromUrl && filenameFromUrl.match(/^\d{13}-[a-z0-9]+\./i)) {
+                        serverFilename = filenameFromUrl;
+                        console.log(`🔗 Using server filename from serverUrl: ${serverFilename}`);
+                    }
                 }
-                // Fallback: check if we have serverFilename property directly
-                else if (imageNode.properties?.serverFilename) {
-                    serverFilename = imageNode.properties.serverFilename;
-                    // Using stored serverFilename
+                // Priority 2: Check if we have serverFilename property directly (only if serverUrl didn't work)
+                if (!serverFilename && imageNode.properties?.serverFilename) {
+                    // Only use serverFilename if it looks like a server-generated name
+                    if (imageNode.properties.serverFilename.match(/^\d{13}-[a-z0-9]+\./i)) {
+                        serverFilename = imageNode.properties.serverFilename;
+                        console.log(`📋 Using stored serverFilename: ${serverFilename}`);
+                    } else {
+                        console.warn(`⚠️ Ignoring serverFilename that looks like original filename: ${imageNode.properties.serverFilename}`);
+                    }
                 }
             }
         }

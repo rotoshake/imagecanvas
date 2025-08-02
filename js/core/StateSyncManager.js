@@ -58,7 +58,11 @@ class StateSyncManager {
         this.network.on('operation_rejected', this.handleOperationRejected.bind(this));
         
         // Listen for full state sync
-        this.network.on('full_state_sync', this.handleFullStateSync.bind(this));
+        this.network.on('full_state_sync', (data) => {
+            const isManualSync = this.isManualSyncPending || false;
+            this.isManualSyncPending = false; // Reset the flag
+            this.handleFullStateSync(data, isManualSync);
+        });
         
     }
     
@@ -66,13 +70,13 @@ class StateSyncManager {
      * Execute an operation with server-authoritative sync
      */
     async executeOperation(command) {
-        // Check if we're connected and joined to a project
+        // Check if we're connected and joined to a canvas
         if (!this.network.isConnected) {
             throw new Error('Not connected to server - operation cannot be executed');
         }
         
-        if (!this.network.currentProject) {
-            throw new Error('Not joined to any project - operation cannot be executed');
+        if (!this.network.currentCanvas) {
+            throw new Error('Not joined to any canvas - operation cannot be executed');
         }
         
         const operationId = this.generateOperationId();
@@ -782,7 +786,7 @@ class StateSyncManager {
     /**
      * Handle full state sync from server
      */
-    async handleFullStateSync(data) {
+    async handleFullStateSync(data, isManualSync = false) {
         const { state, stateVersion } = data;
 
         this.updating = true;
@@ -810,8 +814,8 @@ class StateSyncManager {
                 this.app.graphCanvas.dirty_canvas = true;
             }
 
-            // Show success notification
-            if (window.unifiedNotifications) {
+            // Only show sync notification for manual syncs (not when loading canvases)
+            if (isManualSync && window.unifiedNotifications) {
                 window.unifiedNotifications.success('Sync complete', {
                     id: 'manual-sync',
                     detail: `${state.nodes?.length || 0} nodes synced`,
@@ -829,11 +833,12 @@ class StateSyncManager {
     /**
      * Request full state sync from server
      */
-    requestFullSync() {
+    requestFullSync(isManualSync = false) {
         
         if (this.network) {
+            this.isManualSyncPending = isManualSync;
             this.network.emit('request_full_sync', {
-                projectId: this.network.currentProject?.id
+                canvasId: this.network.currentCanvas?.id
             });
         } else {
             console.error('Cannot request full sync - network not initialized');
@@ -882,6 +887,20 @@ class StateSyncManager {
                 nodeData.properties.hash
             );
             
+            // Restore color correction settings if present
+            if (nodeData.properties.adjustments) {
+                node.adjustments = { ...nodeData.properties.adjustments };
+            }
+            if (nodeData.properties.toneCurve !== undefined) {
+                node.toneCurve = nodeData.properties.toneCurve;
+            }
+            if (nodeData.properties.toneCurveBypassed !== undefined) {
+                node.toneCurveBypassed = nodeData.properties.toneCurveBypassed;
+            }
+            if (nodeData.properties.colorAdjustmentsBypassed !== undefined) {
+                node.colorAdjustmentsBypassed = nodeData.properties.colorAdjustmentsBypassed;
+            }
+            
             // Log what we're creating
             // console.log(`🖼️ Creating image node ${node.id} with references:`, {
             //     hash: nodeData.properties.hash?.substring(0, 8),
@@ -889,13 +908,60 @@ class StateSyncManager {
             //     filename: nodeData.properties.filename
             // });
             
-        } else if (node.type === 'media/video' && nodeData.properties.src) {
-            // Don't await so loading state is visible
+        } else if (node.type === 'media/video') {
+            // Set loading state immediately for visual feedback
+            node.loadingState = 'loading';
+            node.loadingProgress = 0;
+            
+            // For reference-based nodes, we don't pass src directly
+            // The node will resolve it from hash/serverUrl
             node.setVideo(
-                nodeData.properties.src,
+                nodeData.properties.serverUrl || null, // Pass serverUrl if available
                 nodeData.properties.filename,
                 nodeData.properties.hash
             );
+            
+            // Restore video-specific properties
+            if (nodeData.properties.paused !== undefined) {
+                node.properties.paused = nodeData.properties.paused;
+            }
+            if (nodeData.properties.loop !== undefined) {
+                node.properties.loop = nodeData.properties.loop;
+            }
+            if (nodeData.properties.muted !== undefined) {
+                node.properties.muted = nodeData.properties.muted;
+            }
+            if (nodeData.properties.autoplay !== undefined) {
+                node.properties.autoplay = nodeData.properties.autoplay;
+            }
+            
+            // Restore transcoding-related properties
+            if (nodeData.properties.transcodingComplete !== undefined) {
+                node.properties.transcodingComplete = nodeData.properties.transcodingComplete;
+            }
+            if (nodeData.properties.availableFormats !== undefined) {
+                node.properties.availableFormats = nodeData.properties.availableFormats;
+            }
+            if (nodeData.properties.serverUrl !== undefined) {
+                node.properties.serverUrl = nodeData.properties.serverUrl;
+            }
+            if (nodeData.properties.serverFilename !== undefined) {
+                node.properties.serverFilename = nodeData.properties.serverFilename;
+            }
+            
+            // Restore color correction settings for video nodes
+            if (nodeData.properties.adjustments) {
+                node.adjustments = { ...nodeData.properties.adjustments };
+            }
+            if (nodeData.properties.toneCurve !== undefined) {
+                node.toneCurve = nodeData.properties.toneCurve;
+            }
+            if (nodeData.properties.toneCurveBypassed !== undefined) {
+                node.toneCurveBypassed = nodeData.properties.toneCurveBypassed;
+            }
+            if (nodeData.properties.colorAdjustmentsBypassed !== undefined) {
+                node.colorAdjustmentsBypassed = nodeData.properties.colorAdjustmentsBypassed;
+            }
         }
         
         return node;
@@ -1019,6 +1085,18 @@ class StateSyncManager {
                     );
                 }
             }
+            
+            // If video node just got a serverUrl (from upload in another tab), trigger loading
+            if (node.type === 'media/video' && !hadServerUrl && willHaveServerUrl) {
+                // Trigger video loading with the new serverUrl
+                if (node.setVideo) {
+                    node.setVideo(
+                        willHaveServerUrl,
+                        node.properties.filename,
+                        node.properties.hash
+                    );
+                }
+            }
         }
         
         // Update other attributes
@@ -1046,6 +1124,22 @@ class StateSyncManager {
         // Update aspect ratio
         if (nodeData.aspectRatio !== undefined) {
             node.aspectRatio = nodeData.aspectRatio;
+        }
+        
+        // Update color correction settings for image and video nodes
+        if ((node.type === 'media/image' || node.type === 'media/video') && nodeData.properties) {
+            if (nodeData.properties.adjustments) {
+                node.adjustments = { ...nodeData.properties.adjustments };
+            }
+            if (nodeData.properties.toneCurve !== undefined) {
+                node.toneCurve = nodeData.properties.toneCurve;
+            }
+            if (nodeData.properties.toneCurveBypassed !== undefined) {
+                node.toneCurveBypassed = nodeData.properties.toneCurveBypassed;
+            }
+            if (nodeData.properties.colorAdjustmentsBypassed !== undefined) {
+                node.colorAdjustmentsBypassed = nodeData.properties.colorAdjustmentsBypassed;
+            }
         }
         
         // Invalidate selection bounding box cache if this node is selected
@@ -1085,9 +1179,23 @@ class StateSyncManager {
                     nodeData.properties = {
                         hash: node.properties.hash,
                         serverUrl: node.properties.serverUrl,
+                        serverFilename: node.properties.serverFilename,
                         filename: node.properties.filename,
                         scale: node.properties.scale || 1.0
                     };
+                    
+                    // Preserve video-specific properties
+                    if (node.type === 'media/video') {
+                        nodeData.properties.paused = node.properties.paused;
+                        nodeData.properties.transcodingComplete = node.properties.transcodingComplete;
+                        nodeData.properties.availableFormats = node.properties.availableFormats;
+                        nodeData.properties.loop = node.properties.loop;
+                        nodeData.properties.muted = node.properties.muted;
+                        nodeData.properties.autoplay = node.properties.autoplay;
+                        
+                        // Keep serverUrl and serverFilename if they exist (they're already in the base properties)
+                        // This is important for transcoded videos
+                    }
                 }
                 
                 states.push(nodeData);
@@ -1188,9 +1296,9 @@ class StateSyncManager {
     handleOperationRejected(data) {
         
         // Check if rejection is due to authentication issues
-        if (data.error === 'Not authenticated' || data.error === 'Not authenticated for this project') {
+        if (data.error === 'Not authenticated' || data.error === 'Not authenticated for this canvas') {
             
-            // Try to rejoin the project after a short delay
+            // Try to rejoin the canvas after a short delay
             if (this.network.currentProject && this.network.currentUser) {
                 setTimeout(() => {
                     

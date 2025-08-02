@@ -9,6 +9,12 @@ class AnimationSystem {
         this.lastTime = 0;
         this.enabled = true; // Global animation control
         
+        // Fixed timestep simulation for stable spring physics
+        this.fixedTimestep = 1/60;  // 60Hz physics (16.67ms) - 2x faster than 120Hz
+        this.accumulator = 0;
+        this.maxSubsteps = 4;  // Prevent spiral of death
+        this.timeScale = CONFIG.ALIGNMENT.TIME_SCALE || 1.0;  // Time scaling factor from config
+        
         // Listen for user preference changes
         this.setupPreferenceListener();
     }
@@ -44,27 +50,66 @@ class AnimationSystem {
     updateAnimations(deltaTime) {
         if (!this.running || !this.enabled) return false;
         
-        // Convert deltaTime to seconds and cap for stability (33ms = 30 FPS minimum)
-        const deltaTimeSeconds = Math.min(deltaTime / 1000, 0.033);
+        // Convert deltaTime to seconds and cap for extreme cases
+        const frameDeltaTime = Math.min(deltaTime / 1000, 0.1); // Cap at 100ms
         
-        const toRemove = [];
-        let hasActiveAnimations = false;
+        // Accumulate time for fixed timestep simulation with time scaling
+        this.accumulator += frameDeltaTime * this.timeScale;
         
-        for (const [id, animation] of this.animations) {
-            hasActiveAnimations = true;
-            const finished = this.updateAnimation(animation, deltaTimeSeconds);
-            if (finished) {
-                toRemove.push(id);
-                if (animation.onComplete) {
-                    animation.onComplete();
-                }
-            }
+        // Clamp accumulator to prevent spiral of death
+        const maxAccumulator = this.fixedTimestep * this.maxSubsteps;
+        if (this.accumulator > maxAccumulator) {
+            this.accumulator = maxAccumulator;
         }
         
-        toRemove.forEach(id => this.animations.delete(id));
+        const toRemove = [];
+        let hasActiveAnimations = this.animations.size > 0;
+        
+        // Run physics simulation with fixed timestep
+        let substeps = 0;
+        while (this.accumulator >= this.fixedTimestep && substeps < this.maxSubsteps) {
+            // Update all animations with fixed timestep
+            for (const [id, animation] of this.animations) {
+                const finished = this.updateAnimation(animation, this.fixedTimestep);
+                if (finished && !toRemove.includes(id)) {
+                    toRemove.push(id);
+                }
+            }
+            
+            this.accumulator -= this.fixedTimestep;
+            substeps++;
+        }
+        
+        // Apply interpolation for remaining time if needed
+        if (this.accumulator > 0 && this.fixedTimestep > 0) {
+            const alpha = this.accumulator / this.fixedTimestep;
+            this.interpolateAnimations(alpha);
+        }
+        
+        // Remove finished animations and call their callbacks
+        for (const id of toRemove) {
+            const animation = this.animations.get(id);
+            if (animation && animation.onComplete) {
+                animation.onComplete();
+            }
+            this.animations.delete(id);
+        }
         
         // Return true if there are still active animations (need continued updates)
         return hasActiveAnimations && this.animations.size > 0;
+    }
+    
+    interpolateAnimations(alpha) {
+        for (const [id, animation] of this.animations) {
+            const { target, properties } = animation;
+            
+            for (const [prop, config] of Object.entries(properties)) {
+                if (config.previousValue !== undefined && config.currentValue !== undefined) {
+                    // Linear interpolation for smooth visuals
+                    target[prop] = config.previousValue + (config.currentValue - config.previousValue) * alpha;
+                }
+            }
+        }
     }
     
     updateAnimation(animation, deltaTimeSeconds) {
@@ -72,7 +117,10 @@ class AnimationSystem {
         let allFinished = true;
         
         for (const [prop, config] of Object.entries(properties)) {
-            const current = target[prop];
+            // Store previous value for interpolation
+            config.previousValue = config.currentValue !== undefined ? config.currentValue : target[prop];
+            
+            const current = config.currentValue !== undefined ? config.currentValue : target[prop];
             const targetValue = config.target;
             const velocity = config.velocity || 0;
             
@@ -81,13 +129,20 @@ class AnimationSystem {
             
             // All calculations now use seconds directly
             config.velocity = velocity + acceleration * deltaTimeSeconds;
-            target[prop] = current + config.velocity * deltaTimeSeconds;
+            const newValue = current + config.velocity * deltaTimeSeconds;
+            
+            // Store the physics-calculated value
+            config.currentValue = newValue;
+            
+            // Update the actual target property (will be overwritten by interpolation if needed)
+            target[prop] = newValue;
             
             const threshold = config.threshold || 0.05;
             if (Math.abs(dx) > threshold || Math.abs(config.velocity) > threshold) {
                 allFinished = false;
             } else {
                 // Snap to final value
+                config.currentValue = targetValue;
                 target[prop] = targetValue;
                 config.velocity = 0;
             }

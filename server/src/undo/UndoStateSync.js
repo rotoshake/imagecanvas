@@ -57,12 +57,12 @@ class UndoStateSync {
     /**
      * Handle undo request from client
      */
-    async handleUndo(userId, projectId, socketId) {
+    async handleUndo(userId, canvasId, socketId) {
         
         try {
-            const undoable = this.history.getUndoableOperations(userId, projectId, 1);
+            const undoable = this.history.getUndoableOperations(userId, canvasId, 1);
             if (undoable.length === 0) {
-                return this.createUndoResponse(false, 'Nothing to undo', userId, projectId);
+                return this.createUndoResponse(false, 'Nothing to undo', userId, canvasId);
             }
 
             const undoItem = undoable[0];
@@ -72,37 +72,37 @@ class UndoStateSync {
 
             const operations = this.getOperations(operationIds);
 
-            const conflicts = await this.history.checkUndoConflicts(operationIds, userId, projectId);
+            const conflicts = await this.history.checkUndoConflicts(operationIds, userId, canvasId);
             if (conflicts.length > 0) {
                 
             }
 
-            const stateChanges = await this.executeUndo(operations, projectId);
-            this.history.markOperationsUndone(operationIds, userId, projectId);
+            const stateChanges = await this.executeUndo(operations, canvasId);
+            this.history.markOperationsUndone(operationIds, userId, canvasId);
 
-            const response = this.createUndoResponse(true, 'Undo successful', userId, projectId, operationIds, stateChanges, conflicts);
+            const response = this.createUndoResponse(true, 'Undo successful', userId, canvasId, operationIds, stateChanges, conflicts);
 
-            this.broadcastUndo(response, userId, projectId);
+            this.broadcastUndo(response, userId, canvasId);
 
             return response;
         } catch (error) {
             console.error('❌ Undo execution failed:', error);
-            return this.createUndoResponse(false, 'Failed to execute undo', userId, projectId, null, null, null, error.message);
+            return this.createUndoResponse(false, 'Failed to execute undo', userId, canvasId, null, null, null, error.message);
         }
     }
     
     /**
      * Handle redo request from client
      */
-    async handleRedo(userId, projectId, socketId) {
+    async handleRedo(userId, canvasId, socketId) {
         
         // Get next redoable operation(s)
-        const redoable = this.history.getRedoableOperations(userId, projectId, 1);
+        const redoable = this.history.getRedoableOperations(userId, canvasId, 1);
         if (redoable.length === 0) {
             return {
                 success: false,
                 reason: 'Nothing to redo',
-                undoState: this.history.getUserUndoState(userId, projectId)
+                undoState: this.history.getUserUndoState(userId, canvasId)
             };
         }
         
@@ -118,13 +118,13 @@ class UndoStateSync {
         
         try {
             // Execute redo
-            const stateChanges = await this.executeRedo(operations, projectId);
+            const stateChanges = await this.executeRedo(operations, canvasId);
             
             // Mark operations as redone
-            this.history.markOperationsRedone(operationIds, userId, projectId);
+            this.history.markOperationsRedone(operationIds, userId, canvasId);
             
             // Get updated undo state
-            const undoState = this.history.getUserUndoState(userId, projectId);
+            const undoState = this.history.getUserUndoState(userId, canvasId);
             
             // Prepare response
             const response = {
@@ -136,8 +136,8 @@ class UndoStateSync {
             
             // Broadcast state update to ALL clients (including the initiator)
             // This ensures StateSyncManager handles the changes properly
-            this.io.to(`project_${projectId}`).emit('state_update', {
-                stateVersion: this.stateManager.stateVersions.get(projectId) || 0,
+            this.io.to(`canvas_${canvasId}`).emit('state_update', {
+                stateVersion: this.stateManager.stateVersions.get(canvasId) || 0,
                 changes: stateChanges,
                 operationId: `redo_${Date.now()}`,
                 fromUserId: userId,
@@ -146,14 +146,14 @@ class UndoStateSync {
             
             // Broadcast redo confirmation to all user sessions (cross-tab sync)
             this.broadcastToUser(userId, 'redo_executed', {
-                projectId,
+                canvasId,
                 operations: operationIds,
                 stateChanges: stateChanges,
                 undoState: undoState
             });
             
-            // Notify other users in the project
-            this.broadcastToOthers(userId, projectId, 'remote_redo', {
+            // Notify other users in the canvas
+            this.broadcastToOthers(userId, canvasId, 'remote_redo', {
                 userId: userId,
                 redoneOperations: operationIds,
                 affectedNodes: this.extractAffectedNodes(operations)
@@ -167,7 +167,7 @@ class UndoStateSync {
                 success: false,
                 reason: 'Failed to execute redo',
                 error: error.message,
-                undoState: this.history.getUserUndoState(userId, projectId)
+                undoState: this.history.getUserUndoState(userId, canvasId)
             };
         }
     }
@@ -175,7 +175,7 @@ class UndoStateSync {
     /**
      * Execute undo operations
      */
-    async executeUndo(operations, projectId) {
+    async executeUndo(operations, canvasId) {
         const stateChanges = {
             added: [],
             updated: [],
@@ -183,7 +183,7 @@ class UndoStateSync {
         };
         
         // Get current state
-        const state = await this.stateManager.getCanvasState(projectId);
+        const state = await this.stateManager.getCanvasState(canvasId);
 
         // Process operations in reverse order
         for (let i = operations.length - 1; i >= 0; i--) {
@@ -200,13 +200,13 @@ class UndoStateSync {
         }
         
         // Increment state version
-        const currentVersion = this.stateManager.stateVersions.get(projectId) || 0;
+        const currentVersion = this.stateManager.stateVersions.get(canvasId) || 0;
         const newVersion = currentVersion + 1;
-        this.stateManager.stateVersions.set(projectId, newVersion);
+        this.stateManager.stateVersions.set(canvasId, newVersion);
         state.version = newVersion;
         
         // Save state
-        await this.stateManager.saveCanvasState(projectId, state);
+        await this.stateManager.saveCanvasState(canvasId, state);
         
         return stateChanges;
     }
@@ -214,7 +214,7 @@ class UndoStateSync {
     /**
      * Execute redo operations
      */
-    async executeRedo(operations, projectId) {
+    async executeRedo(operations, canvasId) {
         const stateChanges = {
             added: [],
             updated: [],
@@ -222,7 +222,7 @@ class UndoStateSync {
         };
         
         // Get current state
-        const state = await this.stateManager.getCanvasState(projectId);
+        const state = await this.stateManager.getCanvasState(canvasId);
         
         // Process operations in original order
         for (const op of operations) {
@@ -238,13 +238,13 @@ class UndoStateSync {
         }
         
         // Increment state version
-        const currentVersion = this.stateManager.stateVersions.get(projectId) || 0;
+        const currentVersion = this.stateManager.stateVersions.get(canvasId) || 0;
         const newVersion = currentVersion + 1;
-        this.stateManager.stateVersions.set(projectId, newVersion);
+        this.stateManager.stateVersions.set(canvasId, newVersion);
         state.version = newVersion;
         
         // Save state
-        await this.stateManager.saveCanvasState(projectId, state);
+        await this.stateManager.saveCanvasState(canvasId, state);
         
         return stateChanges;
     }
@@ -635,26 +635,26 @@ class UndoStateSync {
     }
     
     /**
-     * Broadcast to other users in a project
+     * Broadcast to other users in a canvas
      */
-    broadcastToOthers(userId, projectId, event, data) {
-        // Broadcast to project room, excluding the user's sockets
+    broadcastToOthers(userId, canvasId, event, data) {
+        // Broadcast to canvas room, excluding the user's sockets
         const userSessions = this.userSessions.get(userId) || new Set();
-        this.io.to(`project_${projectId}`).except([...userSessions]).emit(event, data);
+        this.io.to(`canvas_${canvasId}`).except([...userSessions]).emit(event, data);
     }
     
     /**
      * Get undo/redo state for a user
      */
-    getUserUndoState(userId, projectId) {
-        return this.history.getUserUndoState(userId, projectId);
+    getUserUndoState(userId, canvasId) {
+        return this.history.getUserUndoState(userId, canvasId);
     }
 
-    createUndoResponse(success, reason, userId, projectId, operationIds = [], stateChanges = {}, conflicts = [], error = null) {
+    createUndoResponse(success, reason, userId, canvasId, operationIds = [], stateChanges = {}, conflicts = [], error = null) {
         const response = {
             success,
             reason,
-            undoState: this.history.getUserUndoState(userId, projectId)
+            undoState: this.history.getUserUndoState(userId, canvasId)
         };
 
         if (success) {
@@ -683,9 +683,9 @@ class UndoStateSync {
         return operations;
     }
 
-    broadcastUndo(response, userId, projectId) {
-        this.io.to(`project_${projectId}`).emit('state_update', {
-            stateVersion: this.stateManager.stateVersions.get(projectId) || 0,
+    broadcastUndo(response, userId, canvasId) {
+        this.io.to(`canvas_${canvasId}`).emit('state_update', {
+            stateVersion: this.stateManager.stateVersions.get(canvasId) || 0,
             changes: response.stateUpdate,
             operationId: `undo_${Date.now()}`,
             fromUserId: userId,
@@ -693,13 +693,13 @@ class UndoStateSync {
         });
 
         this.broadcastToUser(userId, 'undo_executed', {
-            projectId,
+            canvasId,
             operations: response.undoneOperations,
             stateChanges: response.stateUpdate,
             undoState: response.undoState
         });
 
-        this.broadcastToOthers(userId, projectId, 'remote_undo', {
+        this.broadcastToOthers(userId, canvasId, 'remote_undo', {
             userId: userId,
             undoneOperations: response.undoneOperations,
             affectedNodes: this.extractAffectedNodes(this.getOperations(response.undoneOperations))
