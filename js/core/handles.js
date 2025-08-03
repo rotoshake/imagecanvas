@@ -9,14 +9,84 @@ class HandleDetector {
     }
     
     getNodeAtPosition(x, y, nodes) {
-        // Check from top to bottom (reverse order for proper layering)
+        // First pass: check regular nodes (foreground layer) from top to bottom
         for (let i = nodes.length - 1; i >= 0; i--) {
             const node = nodes[i];
-            if (node.containsPoint(x, y)) {
+            if (node.type !== 'container/group' && node.containsPoint(x, y)) {
                 return node;
             }
         }
+        
+        // Second pass: check group nodes (background layer) from top to bottom
+        // Only allow selection via title bar area - no background selection
+        for (let i = nodes.length - 1; i >= 0; i--) {
+            const node = nodes[i];
+            if (node.type === 'container/group') {
+                // For group nodes, only check title bar and handle areas
+                if (this.isGroupTitleBarArea(x, y, node)) {
+                    return { node, interactionType: 'titleBar' };
+                } else if (this.isGroupResizeHandleArea(x, y, node)) {
+                    return { node, interactionType: 'resizeHandle' };
+                } else if (this.isGroupCollapseButtonArea(x, y, node)) {
+                    return { node, interactionType: 'collapseButton' };
+                }
+                // Note: removed background interaction - groups only selectable via title bar
+            }
+        }
+        
         return null;
+    }
+    
+    /**
+     * Check if point is in the title bar area of a group node
+     */
+    isGroupTitleBarArea(x, y, groupNode) {
+        const titleBarHeight = groupNode.getScreenSpaceTitleBarHeightForViewport(this.viewport);
+        return (
+            x >= groupNode.pos[0] && 
+            x <= groupNode.pos[0] + groupNode.size[0] &&
+            y >= groupNode.pos[1] && 
+            y <= groupNode.pos[1] + titleBarHeight
+        );
+    }
+    
+    /**
+     * Check if point is on a group resize handle
+     */
+    isGroupResizeHandleArea(x, y, groupNode) {
+        if (groupNode.isCollapsed) return false;
+        
+        const titleBarHeight = groupNode.getScreenSpaceTitleBarHeightForViewport(this.viewport);
+        const handleSize = 12;
+        const handles = [
+            { x: groupNode.pos[0] + groupNode.size[0] - handleSize/2, y: groupNode.pos[1] + groupNode.size[1] - handleSize/2 }, // SE
+            { x: groupNode.pos[0] + handleSize/2, y: groupNode.pos[1] + groupNode.size[1] - handleSize/2 }, // SW
+            { x: groupNode.pos[0] + groupNode.size[0] - handleSize/2, y: groupNode.pos[1] + titleBarHeight + handleSize/2 } // NE
+        ];
+        
+        for (const handle of handles) {
+            if (x >= handle.x - handleSize/2 && x <= handle.x + handleSize/2 &&
+                y >= handle.y - handleSize/2 && y <= handle.y + handleSize/2) {
+                return true;
+            }
+        }
+        
+        return false;
+    }
+    
+    /**
+     * Check if point is on the collapse/expand button
+     */
+    isGroupCollapseButtonArea(x, y, groupNode) {
+        const titleBarHeight = groupNode.getScreenSpaceTitleBarHeightForViewport(this.viewport);
+        const buttonSize = 16;
+        const buttonX = groupNode.pos[0] + groupNode.size[0] - 25;
+        const buttonY = groupNode.pos[1] + titleBarHeight / 2;
+        
+        return (
+            x >= buttonX - buttonSize/2 && x <= buttonX + buttonSize/2 &&
+            y >= buttonY - buttonSize/2 && y <= buttonY + buttonSize/2
+        );
     }
     
     getResizeHandle(x, y) {

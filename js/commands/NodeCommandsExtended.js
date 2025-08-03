@@ -15,6 +15,14 @@ class ResizeNodeCommand extends Command {
         }
         
         if (!sizes || !Array.isArray(sizes) || sizes.length !== nodeIds.length) {
+            console.error('ResizeNodeCommand validation failed:', {
+                sizes,
+                sizesIsArray: Array.isArray(sizes),
+                sizesLength: sizes?.length,
+                nodeIds,
+                nodeIdsLength: nodeIds.length,
+                params: this.params
+            });
             return { valid: false, error: 'Invalid sizes array' };
         }
         

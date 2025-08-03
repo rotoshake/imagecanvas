@@ -883,6 +883,10 @@ class NodeFactory {
                 case 'text':   // Legacy database type
                     node = new TextNode();
                     break;
+                case 'container/group':
+                case 'group':   // Legacy database type
+                    node = new GroupNode();
+                    break;
                 default:
                     
                     return null;

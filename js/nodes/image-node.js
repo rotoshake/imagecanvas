@@ -176,6 +176,9 @@ class ImageNode extends BaseNode {
             this.originalWidth = this.img.width || this.img.naturalWidth;
             this.originalHeight = this.img.height || this.img.naturalHeight;
             
+            // Initialize last rendered resolution to full resolution
+            this.setLastRenderedResolution(this.originalWidth, this.originalHeight, 'full');
+            
             // Calculate actual aspect ratio from loaded image
             const actualAspectRatio = this.img.width / this.img.height;
             this.originalAspect = actualAspectRatio;

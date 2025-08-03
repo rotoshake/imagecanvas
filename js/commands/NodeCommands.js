@@ -873,9 +873,487 @@ class DeleteNodeCommand extends Command {
     }
 }
 
+class GroupNodeCommand extends Command {
+    constructor(params, origin = 'local') {
+        super(params.action, params, origin);
+    }
+    
+    validate() {
+        const { action } = this.params;
+        
+        switch (action) {
+            case 'group_create':
+                const { nodeIds, groupPos, groupTitle } = this.params;
+                if (!nodeIds || !Array.isArray(nodeIds) || nodeIds.length === 0) {
+                    return { valid: false, error: 'Missing or invalid nodeIds for group creation' };
+                }
+                if (!groupPos || !Array.isArray(groupPos) || groupPos.length !== 2) {
+                    return { valid: false, error: 'Invalid group position' };
+                }
+                return { valid: true };
+                
+            case 'group_add_node':
+            case 'group_remove_node':
+                const { groupId, nodeId } = this.params;
+                if (!groupId || !nodeId) {
+                    return { valid: false, error: 'Missing groupId or nodeId' };
+                }
+                return { valid: true };
+                
+            case 'group_move':
+                const { groupId: moveGroupId, position } = this.params;
+                if (!moveGroupId) {
+                    return { valid: false, error: 'Missing groupId for move' };
+                }
+                if (!position || !Array.isArray(position) || position.length !== 2) {
+                    return { valid: false, error: 'Invalid position for group move' };
+                }
+                return { valid: true };
+                
+            case 'group_resize':
+                const { groupId: resizeGroupId, size } = this.params;
+                if (!resizeGroupId) {
+                    return { valid: false, error: 'Missing groupId for resize' };
+                }
+                if (!size || !Array.isArray(size) || size.length !== 2) {
+                    return { valid: false, error: 'Invalid size for group resize' };
+                }
+                return { valid: true };
+                
+            case 'group_toggle_collapsed':
+                const { groupId: toggleGroupId } = this.params;
+                if (!toggleGroupId) {
+                    return { valid: false, error: 'Missing groupId for toggle collapsed' };
+                }
+                return { valid: true };
+                
+            case 'group_update_style':
+                const { groupId: styleGroupId, style } = this.params;
+                if (!styleGroupId) {
+                    return { valid: false, error: 'Missing groupId for style update' };
+                }
+                if (!style || typeof style !== 'object') {
+                    return { valid: false, error: 'Invalid style object' };
+                }
+                return { valid: true };
+                
+            default:
+                return { valid: false, error: `Unknown group action: ${action}` };
+        }
+    }
+    
+    async prepareUndoData(context) {
+        const { graph } = context;
+        const { action } = this.params;
+        
+        this.undoData = { action };
+        
+        switch (action) {
+            case 'group_create':
+                // Store original node positions before grouping
+                this.undoData.originalNodePositions = {};
+                this.params.nodeIds.forEach(nodeId => {
+                    const node = graph.getNodeById(nodeId);
+                    if (node) {
+                        this.undoData.originalNodePositions[nodeId] = [...node.pos];
+                    }
+                });
+                break;
+                
+            case 'group_add_node':
+                // Store previous group membership
+                const nodeToAdd = graph.getNodeById(this.params.nodeId);
+                if (nodeToAdd) {
+                    this.undoData.previousGroup = this.findNodeGroup(graph, nodeToAdd.id);
+                    this.undoData.nodePosition = [...nodeToAdd.pos];
+                }
+                break;
+                
+            case 'group_remove_node':
+                // Store current group membership and position
+                this.undoData.currentGroup = this.params.groupId;
+                const nodeToRemove = graph.getNodeById(this.params.nodeId);
+                if (nodeToRemove) {
+                    this.undoData.nodePosition = [...nodeToRemove.pos];
+                }
+                break;
+                
+            case 'group_move':
+                // Store original positions of group and all child nodes
+                const moveGroup = graph.getNodeById(this.params.groupId);
+                if (moveGroup) {
+                    this.undoData.originalGroupPosition = [...moveGroup.pos];
+                    this.undoData.originalChildPositions = {};
+                    moveGroup.getChildNodes().forEach(childNode => {
+                        this.undoData.originalChildPositions[childNode.id] = [...childNode.pos];
+                    });
+                }
+                break;
+                
+            case 'group_resize':
+                // Store original group size
+                const resizeGroup = graph.getNodeById(this.params.groupId);
+                if (resizeGroup) {
+                    this.undoData.originalSize = [...resizeGroup.size];
+                    this.undoData.originalPosition = [...resizeGroup.pos];
+                }
+                break;
+                
+            case 'group_toggle_collapsed':
+                // Store original collapsed state
+                const toggleGroup = graph.getNodeById(this.params.groupId);
+                if (toggleGroup) {
+                    this.undoData.originalCollapsed = toggleGroup.isCollapsed;
+                    this.undoData.originalSize = [...toggleGroup.size];
+                }
+                break;
+                
+            case 'group_update_style':
+                // Store original style
+                const styleGroup = graph.getNodeById(this.params.groupId);
+                if (styleGroup) {
+                    this.undoData.originalStyle = { ...styleGroup.style };
+                }
+                break;
+        }
+    }
+    
+    async execute(context) {
+        const { graph } = context;
+        const { action } = this.params;
+        
+        switch (action) {
+            case 'group_create':
+                return this.executeGroupCreate(graph);
+            case 'group_add_node':
+                return this.executeGroupAddNode(graph);
+            case 'group_remove_node':
+                return this.executeGroupRemoveNode(graph);
+            case 'group_move':
+                return this.executeGroupMove(graph);
+            case 'group_resize':
+                return this.executeGroupResize(graph);
+            case 'group_toggle_collapsed':
+                return this.executeGroupToggleCollapsed(graph);
+            case 'group_update_style':
+                return this.executeGroupUpdateStyle(graph);
+            default:
+                throw new Error(`Unknown group action: ${action}`);
+        }
+    }
+    
+    async executeGroupCreate(graph) {
+        // Create new group node
+        const group = new GroupNode();
+        
+        // Use provided ID or generate temp ID for optimistic updates
+        if (this.params.groupId) {
+            group.id = this.params.groupId;
+        } else if (this.origin === 'local') {
+            // Generate temporary ID for optimistic update
+            group.id = this.generateTempId();
+            group._isOptimistic = true;
+        }
+        
+        group.pos = [...this.params.groupPos];
+        
+        if (this.params.groupTitle) {
+            group.title = this.params.groupTitle;
+        }
+        
+        if (this.params.groupSize) {
+            group.size = [...this.params.groupSize];
+        }
+        
+        // Add nodes to group
+        this.params.nodeIds.forEach(nodeId => {
+            group.addChildNode(nodeId);
+        });
+        
+        // Update group bounds to fit all child nodes
+        group.updateBounds();
+        
+        // Add group to graph
+        graph.add(group);
+        
+        this.undoData.createdGroupId = group.id;
+        this.executed = true;
+        
+        return { group, childNodeIds: this.params.nodeIds };
+    }
+    
+    async executeGroupAddNode(graph) {
+        const group = graph.getNodeById(this.params.groupId);
+        const node = graph.getNodeById(this.params.nodeId);
+        
+        if (!group || !node) {
+            throw new Error('Group or node not found');
+        }
+        
+        // Remove from previous group if exists
+        const previousGroup = this.findNodeGroup(graph, node.id);
+        if (previousGroup) {
+            previousGroup.removeChildNode(node.id);
+            // Don't update bounds here - let the remove command handle it
+        }
+        
+        // Add to new group
+        group.addChildNode(node.id);
+        
+        // Don't update bounds here - let the canvas handle it after all operations complete
+        this.executed = true;
+        return { success: true };
+    }
+    
+    async executeGroupRemoveNode(graph) {
+        const group = graph.getNodeById(this.params.groupId);
+        const node = graph.getNodeById(this.params.nodeId);
+        
+        if (!group || !node) {
+            throw new Error('Group or node not found');
+        }
+        
+        group.removeChildNode(node.id);
+        
+        // Don't update bounds here - let the canvas handle it after all operations complete
+        this.executed = true;
+        return { success: true };
+    }
+    
+    async executeGroupMove(graph) {
+        const group = graph.getNodeById(this.params.groupId);
+        if (!group) {
+            throw new Error('Group not found');
+        }
+        
+        // Calculate offset
+        const deltaX = this.params.position[0] - group.pos[0];
+        const deltaY = this.params.position[1] - group.pos[1];
+        
+        // Move group
+        group.pos[0] = this.params.position[0];
+        group.pos[1] = this.params.position[1];
+        
+        // Move all child nodes
+        group.moveChildNodes(deltaX, deltaY);
+        
+        this.executed = true;
+        return { success: true };
+    }
+    
+    async executeGroupResize(graph) {
+        const group = graph.getNodeById(this.params.groupId);
+        if (!group) {
+            throw new Error('Group not found');
+        }
+        
+        // Store current position for undo
+        if (!this.undoData.originalPosition) {
+            this.undoData.originalPosition = [...group.pos];
+        }
+        
+        // Update group size and position if provided
+        group.size[0] = this.params.size[0];
+        group.size[1] = this.params.size[1];
+        
+        if (this.params.position) {
+            group.pos[0] = this.params.position[0];
+            group.pos[1] = this.params.position[1];
+        }
+        
+        // Mark as dirty but don't updateBounds - that's already been done
+        group.markDirty();
+        
+        this.executed = true;
+        return { success: true };
+    }
+    
+    async executeGroupToggleCollapsed(graph) {
+        const group = graph.getNodeById(this.params.groupId);
+        if (!group) {
+            throw new Error('Group not found');
+        }
+        
+        group.toggleCollapsed();
+        
+        this.executed = true;
+        return { success: true, isCollapsed: group.isCollapsed };
+    }
+    
+    async executeGroupUpdateStyle(graph) {
+        const group = graph.getNodeById(this.params.groupId);
+        if (!group) {
+            throw new Error('Group not found');
+        }
+        
+        Object.assign(group.style, this.params.style);
+        group.markDirty();
+        
+        this.executed = true;
+        return { success: true };
+    }
+    
+    async undo(context) {
+        const { graph } = context;
+        
+        if (!this.undoData) {
+            throw new Error('No undo data available');
+        }
+        
+        switch (this.undoData.action) {
+            case 'group_create':
+                // Remove the created group
+                const createdGroup = graph.getNodeById(this.undoData.createdGroupId);
+                if (createdGroup) {
+                    graph.remove(createdGroup);
+                }
+                
+                // Restore original node positions
+                if (this.undoData.originalNodePositions) {
+                    Object.entries(this.undoData.originalNodePositions).forEach(([nodeId, pos]) => {
+                        const node = graph.getNodeById(nodeId);
+                        if (node) {
+                            node.pos[0] = pos[0];
+                            node.pos[1] = pos[1];
+                        }
+                    });
+                }
+                break;
+                
+            case 'group_add_node':
+                // Remove node from current group
+                const currentGroup = graph.getNodeById(this.params.groupId);
+                if (currentGroup) {
+                    currentGroup.removeChildNode(this.params.nodeId);
+                    currentGroup.updateBounds();
+                }
+                
+                // Add back to previous group if it existed
+                if (this.undoData.previousGroup) {
+                    const previousGroup = graph.getNodeById(this.undoData.previousGroup);
+                    if (previousGroup) {
+                        previousGroup.addChildNode(this.params.nodeId);
+                        previousGroup.updateBounds();
+                    }
+                }
+                
+                // Restore node position
+                const nodeToRestore = graph.getNodeById(this.params.nodeId);
+                if (nodeToRestore && this.undoData.nodePosition) {
+                    nodeToRestore.pos[0] = this.undoData.nodePosition[0];
+                    nodeToRestore.pos[1] = this.undoData.nodePosition[1];
+                }
+                break;
+                
+            case 'group_remove_node':
+                // Add node back to group
+                const groupToRestore = graph.getNodeById(this.undoData.currentGroup);
+                if (groupToRestore) {
+                    groupToRestore.addChildNode(this.params.nodeId);
+                    groupToRestore.updateBounds();
+                }
+                break;
+                
+            case 'group_move':
+                // Restore group position
+                const movedGroup = graph.getNodeById(this.params.groupId);
+                if (movedGroup && this.undoData.originalGroupPosition) {
+                    movedGroup.pos[0] = this.undoData.originalGroupPosition[0];
+                    movedGroup.pos[1] = this.undoData.originalGroupPosition[1];
+                    
+                    // Restore child positions
+                    if (this.undoData.originalChildPositions) {
+                        Object.entries(this.undoData.originalChildPositions).forEach(([nodeId, pos]) => {
+                            const childNode = graph.getNodeById(nodeId);
+                            if (childNode) {
+                                childNode.pos[0] = pos[0];
+                                childNode.pos[1] = pos[1];
+                            }
+                        });
+                    }
+                }
+                break;
+                
+            case 'group_resize':
+                // Restore group size and position
+                const resizedGroup = graph.getNodeById(this.params.groupId);
+                if (resizedGroup) {
+                    if (this.undoData.originalSize) {
+                        resizedGroup.size[0] = this.undoData.originalSize[0];
+                        resizedGroup.size[1] = this.undoData.originalSize[1];
+                    }
+                    if (this.undoData.originalPosition) {
+                        resizedGroup.pos[0] = this.undoData.originalPosition[0];
+                        resizedGroup.pos[1] = this.undoData.originalPosition[1];
+                    }
+                }
+                break;
+                
+            case 'group_toggle_collapsed':
+                // Restore collapsed state
+                const toggledGroup = graph.getNodeById(this.params.groupId);
+                if (toggledGroup) {
+                    toggledGroup.isCollapsed = this.undoData.originalCollapsed;
+                    if (this.undoData.originalSize) {
+                        toggledGroup.size[0] = this.undoData.originalSize[0];
+                        toggledGroup.size[1] = this.undoData.originalSize[1];
+                    }
+                }
+                break;
+                
+            case 'group_update_style':
+                // Restore original style
+                const styledGroup = graph.getNodeById(this.params.groupId);
+                if (styledGroup && this.undoData.originalStyle) {
+                    styledGroup.style = { ...this.undoData.originalStyle };
+                    styledGroup.markDirty();
+                }
+                break;
+        }
+        
+        return { success: true };
+    }
+    
+    /**
+     * Find which group a node belongs to
+     */
+    findNodeGroup(graph, nodeId) {
+        for (const node of graph.nodes) {
+            if (node.type === 'container/group' && node.childNodes.has(nodeId)) {
+                return node;
+            }
+        }
+        return null;
+    }
+    
+    /**
+     * Support optimistic updates for group operations
+     */
+    supportsOptimisticUpdate() {
+        // Group creation should be server-only to avoid phantom nodes
+        if (this.params.action === 'group_create') {
+            return false;
+        }
+        // Other group operations support optimistic updates
+        return true;
+    }
+    
+    /**
+     * Generate temporary ID for optimistic group creation
+     */
+    generateTempId() {
+        return `_temp_group_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+    }
+}
+
 class UpdateNodePropertyCommand extends Command {
     constructor(params, origin = 'local') {
         super('node_property_update', params, origin);
+        
+        // Ensure nodeIds is always set for consistency
+        if (this.params.nodeId && !this.params.nodeIds) {
+            this.params.nodeIds = [this.params.nodeId];
+        }
     }
     
     validate() {
@@ -897,16 +1375,18 @@ class UpdateNodePropertyCommand extends Command {
     async prepareUndoData(context) {
         const { graph } = context;
 
-        if (this.initialState) {
+        if (this.initialState && this.initialState.nodes && this.params.nodeIds) {
             this.undoData = {
                 previousProperties: {}
             };
             this.params.nodeIds.forEach((nodeId, index) => {
-                const isDirectProperty = ['title', 'toneCurve', 'toneCurveBypassed', 'colorAdjustmentsBypassed', 'adjustments', 'colorBalance', 'colorBalanceBypassed'].includes(this.params.property);
-                const oldValue = isDirectProperty ? this.initialState.nodes[index][this.params.property] : this.initialState.nodes[index].properties[this.params.property];
-                this.undoData.previousProperties[nodeId] = {
-                    [this.params.property]: oldValue
-                };
+                if (this.initialState.nodes[index]) {
+                    const isDirectProperty = ['title', 'toneCurve', 'toneCurveBypassed', 'colorAdjustmentsBypassed', 'adjustments', 'colorBalance', 'colorBalanceBypassed'].includes(this.params.property);
+                    const oldValue = isDirectProperty ? this.initialState.nodes[index][this.params.property] : this.initialState.nodes[index].properties[this.params.property];
+                    this.undoData.previousProperties[nodeId] = {
+                        [this.params.property]: oldValue
+                    };
+                }
             });
             return;
         }
@@ -1000,6 +1480,7 @@ if (typeof window !== 'undefined') {
         MoveNodeCommand,
         CreateNodeCommand,
         DeleteNodeCommand,
+        GroupNodeCommand,
         UpdateNodePropertyCommand
     };
 }

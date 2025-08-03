@@ -179,6 +179,28 @@ class CanvasStateManager {
             case 'image_upload_complete':
                 return this.applyImageUploadComplete(operation.params, state, changes);
                 
+            // Group operations
+            case 'group_create':
+                return this.applyGroupCreate(operation.params, state, changes);
+                
+            case 'group_add_node':
+                return this.applyGroupAddNode(operation.params, state, changes);
+                
+            case 'group_remove_node':
+                return this.applyGroupRemoveNode(operation.params, state, changes);
+                
+            case 'group_move':
+                return this.applyGroupMove(operation.params, state, changes);
+                
+            case 'group_resize':
+                return this.applyGroupResize(operation.params, state, changes);
+                
+            case 'group_toggle_collapsed':
+                return this.applyGroupToggleCollapsed(operation.params, state, changes);
+                
+            case 'group_update_style':
+                return this.applyGroupUpdateStyle(operation.params, state, changes);
+                
             default:
                 
                 return null;
@@ -867,7 +889,247 @@ class CanvasStateManager {
             return { valid: true };
         });
         
+        // Group operation validators
+        validators.set('group_create', (op, state) => {
+            if (!op.params.nodeIds || !Array.isArray(op.params.nodeIds) || op.params.nodeIds.length === 0) {
+                return { valid: false, error: 'Missing or invalid nodeIds for group creation' };
+            }
+            if (!op.params.groupPos || !Array.isArray(op.params.groupPos) || op.params.groupPos.length !== 2) {
+                return { valid: false, error: 'Invalid group position' };
+            }
+            return { valid: true };
+        });
+        
+        validators.set('group_add_node', (op, state) => {
+            if (!op.params.groupId || !op.params.nodeId) {
+                return { valid: false, error: 'Missing groupId or nodeId' };
+            }
+            return { valid: true };
+        });
+        
+        validators.set('group_remove_node', (op, state) => {
+            if (!op.params.groupId || !op.params.nodeId) {
+                return { valid: false, error: 'Missing groupId or nodeId' };
+            }
+            return { valid: true };
+        });
+        
+        validators.set('group_move', (op, state) => {
+            if (!op.params.groupId) {
+                return { valid: false, error: 'Missing groupId for move' };
+            }
+            if (!op.params.position || !Array.isArray(op.params.position) || op.params.position.length !== 2) {
+                return { valid: false, error: 'Invalid position for group move' };
+            }
+            return { valid: true };
+        });
+        
+        validators.set('group_resize', (op, state) => {
+            if (!op.params.groupId) {
+                return { valid: false, error: 'Missing groupId for resize' };
+            }
+            if (!op.params.size || !Array.isArray(op.params.size) || op.params.size.length !== 2) {
+                return { valid: false, error: 'Invalid size for group resize' };
+            }
+            return { valid: true };
+        });
+        
+        validators.set('group_toggle_collapsed', (op, state) => {
+            if (!op.params.groupId) {
+                return { valid: false, error: 'Missing groupId for toggle collapsed' };
+            }
+            return { valid: true };
+        });
+        
+        validators.set('group_update_style', (op, state) => {
+            if (!op.params.groupId) {
+                return { valid: false, error: 'Missing groupId for style update' };
+            }
+            if (!op.params.style || typeof op.params.style !== 'object') {
+                return { valid: false, error: 'Invalid style object' };
+            }
+            return { valid: true };
+        });
+        
         return validators;
+    }
+    
+    // ===================================
+    // GROUP OPERATION HANDLERS
+    // ===================================
+    
+    /**
+     * Apply group creation
+     */
+    applyGroupCreate(params, state, changes) {
+        const groupId = params.groupId || this.generateNodeId();
+        
+        // Create group node
+        const group = {
+            id: groupId,
+            type: 'container/group',
+            pos: [...params.groupPos],
+            size: params.groupSize ? [...params.groupSize] : [300, 200],
+            properties: {
+                childNodes: [...params.nodeIds],
+                isCollapsed: false,
+                style: params.style || {}
+            },
+            title: params.groupTitle || 'Group',
+            flags: {}
+        };
+        
+        state.nodes.push(group);
+        changes.added.push(group);
+        
+        return changes;
+    }
+    
+    /**
+     * Apply adding node to group
+     */
+    applyGroupAddNode(params, state, changes) {
+        const group = state.nodes.find(n => n.id === params.groupId);
+        if (!group || group.type !== 'container/group') {
+            return changes; // Silently ignore missing groups
+        }
+        
+        // Initialize childNodes if it doesn't exist
+        if (!group.properties.childNodes) {
+            group.properties.childNodes = [];
+        }
+        
+        // Add node to group if not already present
+        if (!group.properties.childNodes.includes(params.nodeId)) {
+            group.properties.childNodes.push(params.nodeId);
+            changes.updated.push(group);
+        }
+        
+        return changes;
+    }
+    
+    /**
+     * Apply removing node from group
+     */
+    applyGroupRemoveNode(params, state, changes) {
+        const group = state.nodes.find(n => n.id === params.groupId);
+        if (!group || group.type !== 'container/group') {
+            return changes; // Silently ignore missing groups
+        }
+        
+        if (group.properties.childNodes) {
+            const index = group.properties.childNodes.indexOf(params.nodeId);
+            if (index !== -1) {
+                group.properties.childNodes.splice(index, 1);
+                changes.updated.push(group);
+            }
+        }
+        
+        return changes;
+    }
+    
+    /**
+     * Apply group move (moves group and all child nodes)
+     */
+    applyGroupMove(params, state, changes) {
+        const group = state.nodes.find(n => n.id === params.groupId);
+        if (!group || group.type !== 'container/group') {
+            return changes; // Silently ignore missing groups
+        }
+        
+        // Calculate offset
+        const deltaX = params.position[0] - group.pos[0];
+        const deltaY = params.position[1] - group.pos[1];
+        
+        // Update group position
+        group.pos[0] = params.position[0];
+        group.pos[1] = params.position[1];
+        changes.updated.push(group);
+        
+        // Update child node positions
+        if (group.properties.childNodes) {
+            for (const nodeId of group.properties.childNodes) {
+                const childNode = state.nodes.find(n => n.id === nodeId);
+                if (childNode) {
+                    childNode.pos[0] += deltaX;
+                    childNode.pos[1] += deltaY;
+                    changes.updated.push(childNode);
+                }
+            }
+        }
+        
+        return changes;
+    }
+    
+    /**
+     * Apply group resize
+     */
+    applyGroupResize(params, state, changes) {
+        const group = state.nodes.find(n => n.id === params.groupId);
+        if (!group || group.type !== 'container/group') {
+            return changes; // Silently ignore missing groups
+        }
+        
+        // Update group size
+        group.size[0] = params.size[0];
+        group.size[1] = params.size[1];
+        
+        // Update position if provided
+        if (params.position) {
+            group.pos[0] = params.position[0];
+            group.pos[1] = params.position[1];
+        }
+        
+        changes.updated.push(group);
+        return changes;
+    }
+    
+    /**
+     * Apply group collapse/expand toggle
+     */
+    applyGroupToggleCollapsed(params, state, changes) {
+        const group = state.nodes.find(n => n.id === params.groupId);
+        if (!group || group.type !== 'container/group') {
+            return changes; // Silently ignore missing groups
+        }
+        
+        // Toggle collapsed state
+        group.properties.isCollapsed = !group.properties.isCollapsed;
+        
+        // Update size based on collapsed state
+        if (group.properties.isCollapsed) {
+            // Store expanded size and use collapsed size
+            group.properties.expandedSize = [...group.size];
+            group.size = [200, 40]; // Collapsed size
+        } else {
+            // Restore expanded size
+            if (group.properties.expandedSize) {
+                group.size = [...group.properties.expandedSize];
+            }
+        }
+        
+        changes.updated.push(group);
+        return changes;
+    }
+    
+    /**
+     * Apply group style update
+     */
+    applyGroupUpdateStyle(params, state, changes) {
+        const group = state.nodes.find(n => n.id === params.groupId);
+        if (!group || group.type !== 'container/group') {
+            return changes; // Silently ignore missing groups
+        }
+        
+        // Update group style
+        if (!group.properties.style) {
+            group.properties.style = {};
+        }
+        
+        Object.assign(group.properties.style, params.style);
+        changes.updated.push(group);
+        
+        return changes;
     }
     
     /**

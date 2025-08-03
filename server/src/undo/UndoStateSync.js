@@ -394,7 +394,7 @@ class UndoStateSync {
                 if (node) {
                     // Handle both direct properties (like title) and nested properties
                     for (const [key, value] of Object.entries(props)) {
-                        if (['title', 'type', 'id', 'pos', 'size', 'rotation', 'flags'].includes(key)) {
+                        if (['title', 'type', 'id', 'pos', 'size', 'rotation', 'flags', 'toneCurve', 'toneCurveBypassed', 'colorAdjustmentsBypassed', 'adjustments', 'colorBalance', 'colorBalanceBypassed'].includes(key)) {
                             // Direct node property
                             node[key] = value;
                         } else {
@@ -529,12 +529,15 @@ class UndoStateSync {
      */
     undoPropertyUpdate(operation, state, changes) {
         if (operation.undoData && operation.undoData.previousProperties) {
+            // Track which nodes have been updated to avoid duplicates
+            const updatedNodeIds = new Set();
+            
             for (const [nodeId, props] of Object.entries(operation.undoData.previousProperties)) {
                 const node = state.nodes.find(n => n.id == nodeId);
                 if (node) {
                     // Handle both direct properties (like title) and nested properties
                     for (const [key, value] of Object.entries(props)) {
-                        if (['title', 'type', 'id', 'pos', 'size', 'rotation', 'flags'].includes(key)) {
+                        if (['title', 'type', 'id', 'pos', 'size', 'rotation', 'flags', 'toneCurve', 'toneCurveBypassed', 'colorAdjustmentsBypassed', 'adjustments', 'colorBalance', 'colorBalanceBypassed'].includes(key)) {
                             // Direct node property
                             node[key] = value;
                         } else {

@@ -15,12 +15,20 @@ class FloatingColorCorrection {
         this.colorBalanceVisible = false;
         this.colorBalancePosition = null;
         
+        // Undo interaction tracking
+        this.toneCurveUndoStarted = false;
+        this.adjustmentUndoStarted = false;
+        this.colorBalanceUndoStarted = false;
+        
         // Callback for when visibility changes
         this.visibilityCallback = null;
         
         this.createUI();
         this.setupEventListeners();
         this.updatePosition();
+        
+        // Make sure panel doesn't block canvas interactions when starting a drag
+        this.setupCanvasInteractionHandling();
         
         // Load saved state from localStorage
         this.loadState();
@@ -89,7 +97,7 @@ class FloatingColorCorrection {
                 display: flex;
                 justify-content: space-between;
                 align-items: center;
-                padding: 8px 14px;
+                padding: 4px 14px;
                 background: #2a2a2a;
                 border-bottom: 1px solid #333;
                 border-radius: 8px 8px 0 0;
@@ -197,6 +205,43 @@ class FloatingColorCorrection {
                 background: #444;
                 border-radius: 2px;
                 outline: none;
+            }
+            
+            /* Gradient backgrounds for different adjustment types */
+            .adjustment-slider[data-adjustment="brightness"] {
+                background: linear-gradient(to right, #000000, #ffffff);
+            }
+            
+            .adjustment-slider[data-adjustment="contrast"] {
+                background: linear-gradient(to right, #808080, #ffffff);
+            }
+            
+            .adjustment-slider[data-adjustment="saturation"] {
+                background: linear-gradient(to right, #808080,rgb(255, 0, 0));
+            }
+            
+            .adjustment-slider[data-adjustment="hue"] {
+                background: linear-gradient(to right, 
+rgb(255, 48, 48) 0%, 
+rgb(255, 255, 49) 16.66%, 
+rgb(50, 255, 50) 33.33%, 
+rgb(53, 255, 255) 50%, 
+rgb(47, 47, 254) 66.66%, 
+rgb(255, 57, 255) 83.33%, 
+rgb(255, 50, 50) 100%);
+            }
+            
+            .adjustment-slider[data-adjustment="temperature"] {
+                background: linear-gradient(to right, 
+                    #0066ff 0%, 
+                    #99ccff 25%, 
+                    #ffffff 50%, 
+                    #ffcc00 75%, 
+                    #ff6600 100%);
+            }
+            
+            .adjustment-slider[data-adjustment="tint"] {
+                background: linear-gradient(to right, #00ff00, #ff00ff);
             }
             
             .adjustment-slider::-webkit-slider-thumb {
@@ -456,6 +501,49 @@ class FloatingColorCorrection {
         });
     }
 
+    setupCanvasInteractionHandling() {
+        // Monitor canvas drag operations
+        let isDraggingOnCanvas = false;
+        let originalPointerEvents = null;
+        
+        // Function to temporarily disable panel interaction during canvas drags
+        const disablePanelDuringDrag = () => {
+            if (this.isVisible && !isDraggingOnCanvas) {
+                isDraggingOnCanvas = true;
+                originalPointerEvents = this.panel.style.pointerEvents;
+                this.panel.style.pointerEvents = 'none';
+            }
+        };
+        
+        const enablePanelAfterDrag = () => {
+            if (isDraggingOnCanvas) {
+                isDraggingOnCanvas = false;
+                if (this.isVisible) {
+                    this.panel.style.pointerEvents = originalPointerEvents || 'auto';
+                }
+            }
+        };
+        
+        // Listen for canvas mousedown events to detect drag start
+        document.addEventListener('mousedown', (e) => {
+            const canvas = this.canvas.canvas;
+            if (canvas && canvas.contains(e.target) && !this.panel.contains(e.target)) {
+                // Started dragging on canvas
+                disablePanelDuringDrag();
+            }
+        }, true);
+        
+        // Re-enable on mouseup
+        document.addEventListener('mouseup', () => {
+            enablePanelAfterDrag();
+        }, true);
+        
+        // Also handle when mouse leaves the window
+        document.addEventListener('mouseleave', () => {
+            enablePanelAfterDrag();
+        });
+    }
+
     makeDraggable(handle) {
         let isDragging = false;
         let startX, startY, startLeft, startTop;
@@ -543,6 +631,9 @@ class FloatingColorCorrection {
                 const previousNode = this.currentNode;
                 this.currentNode = node;
                 
+                // Set up undo/redo listeners for the new node
+                this.setupUndoRedoListeners();
+                
                 // Always update UI - it will be smart about what to update
                 this.updateUI();
                 
@@ -584,6 +675,134 @@ class FloatingColorCorrection {
             // Silent fail
         }
     }
+    
+    setupUndoRedoListeners() {
+        try {
+            // Clean up previous listeners
+            if (this._undoRedoListener) {
+                if (window.app?.events?.off) {
+                    window.app.events.off('undo_state_changed', this._undoRedoListener);
+                }
+                if (window.app?.networkLayer?.off) {
+                    window.app.networkLayer.off('undo_success', this._undoRedoListener);
+                    window.app.networkLayer.off('redo_success', this._undoRedoListener);
+                }
+            }
+            
+            // Set up new listener for undo/redo events using available event systems
+            if (this.currentNode) {
+                this._undoRedoListener = (data) => {
+                    try {
+                        // Refresh UI to match the node's current state after undo/redo
+                        requestAnimationFrame(() => {
+                            this.refreshUIFromNode();
+                        });
+                    } catch (error) {
+                        console.error('Error in color correction undo listener:', error);
+                    }
+                };
+                
+                // Listen for undo state changes via app.events
+                if (window.app?.events?.on) {
+                    window.app.events.on('undo_state_changed', this._undoRedoListener);
+                }
+                
+                // Also listen directly to network events for undo/redo success
+                if (window.app?.networkLayer?.on) {
+                    window.app.networkLayer.on('undo_success', this._undoRedoListener);
+                    window.app.networkLayer.on('redo_success', this._undoRedoListener);
+                }
+            }
+        } catch (error) {
+            console.error('Error setting up color correction undo listeners:', error);
+        }
+    }
+    
+    refreshUIFromNode() {
+        if (!this.currentNode) return;
+        
+        // Update adjustment sliders
+        this.updateAdjustmentControlsFromNode();
+        
+        // Update curve editor
+        if (this.splineCurveEditor) {
+            if (this.currentNode.toneCurve && this.currentNode.toneCurve.controlPoints) {
+                this.splineCurveEditor.loadCurve(this.currentNode.toneCurve);
+            } else {
+                this.splineCurveEditor.reset();
+            }
+        }
+        
+        // Update bypass toggle states
+        this.updateBypassStatesFromNode();
+        
+        // Update color balance wheels
+        if (this.colorBalancePanel && this.colorBalanceVisible) {
+            this.updateColorBalancePanel();
+        }
+    }
+    
+    updateAdjustmentControlsFromNode() {
+        if (!this.currentNode) return;
+        
+        const adjustmentContainer = this.panel.querySelector('.adjustment-controls');
+        if (!adjustmentContainer) return;
+        
+        const sliders = adjustmentContainer.querySelectorAll('.adjustment-slider');
+        sliders.forEach(slider => {
+            const key = slider.dataset.adjustment;
+            if (this.currentNode.adjustments && this.currentNode.adjustments[key] !== undefined) {
+                let value = this.currentNode.adjustments[key];
+                
+                // Handle legacy value conversion
+                if (key === 'hue') {
+                    value = Math.max(-180, Math.min(180, value));
+                } else if (Math.abs(value) > 1) {
+                    value = value / 100; // Convert from percentage
+                }
+                
+                slider.value = value;
+                
+                // Update the display value
+                const valueDisplay = slider.parentElement.querySelector('.adjustment-value');
+                if (valueDisplay) {
+                    if (key === 'hue') {
+                        valueDisplay.textContent = `${Math.round(value)}°`;
+                    } else {
+                        valueDisplay.textContent = value.toFixed(2);
+                    }
+                }
+            }
+        });
+    }
+    
+    updateBypassStatesFromNode() {
+        if (!this.currentNode) return;
+        
+        const toneCurveBypass = this.panel.querySelector('[data-type="tone-curve"]');
+        const colorAdjustmentsBypass = this.panel.querySelector('[data-type="color-adjustments"]');
+        const colorBalanceBypass = this.panel.querySelector('[data-type="color-balance"]');
+        
+        if (toneCurveBypass) {
+            toneCurveBypass.classList.toggle('active', this.currentNode.toneCurveBypassed);
+            const curveSection = this.panel.querySelector('.curve-section');
+            if (curveSection) {
+                curveSection.classList.toggle('bypassed', this.currentNode.toneCurveBypassed);
+            }
+        }
+        
+        if (colorAdjustmentsBypass) {
+            colorAdjustmentsBypass.classList.toggle('active', this.currentNode.colorAdjustmentsBypassed);
+            const colorSection = this.panel.querySelector('.color-adjustments-section');
+            if (colorSection) {
+                colorSection.classList.toggle('bypassed', this.currentNode.colorAdjustmentsBypassed);
+            }
+        }
+        
+        if (colorBalanceBypass) {
+            colorBalanceBypass.classList.toggle('active', this.currentNode.colorBalanceBypassed);
+        }
+    }
 
     updateUI() {
         const contentEl = this.panel.querySelector('.color-correction-content');
@@ -602,10 +821,15 @@ class FloatingColorCorrection {
             this.renderContent(contentEl);
         } else {
             // Content exists, just update the data
+            // Ensure curve editor is initialized
+            if (!this.splineCurveEditor) {
+                this.initializeCurveEditor();
+            }
+            
             // Update spline curve editor
             if (this.splineCurveEditor) {
                 if (this.currentNode.toneCurve && this.currentNode.toneCurve.controlPoints) {
-                    this.splineCurveEditor.setControlPoints(this.currentNode.toneCurve.controlPoints);
+                    this.splineCurveEditor.loadCurve(this.currentNode.toneCurve);
                 } else {
                     this.splineCurveEditor.reset();
                 }
@@ -630,6 +854,9 @@ class FloatingColorCorrection {
             const adjustmentControls = contentEl.querySelector('.adjustment-controls');
             if (adjustmentControls) {
                 this.updateAdjustmentControls(adjustmentControls);
+            } else {
+                // If adjustment controls don't exist, initialize them
+                this.initializeColorAdjustments();
             }
         }
     }
@@ -729,11 +956,9 @@ class FloatingColorCorrection {
             { key: 'brightness', label: 'Brightness', min: -1, max: 1, default: 0, step: 0.01 },
             { key: 'contrast', label: 'Contrast', min: -1, max: 1, default: 0, step: 0.01 },
             { key: 'saturation', label: 'Saturation', min: -1, max: 1, default: 0, step: 0.01 },
-            { key: 'hue', label: 'Hue', min: -180, max: 180, default: 0, step: 1 }
-            // Add new adjustments here, e.g.:
-            // { key: 'exposure', label: 'Exposure', min: -2, max: 2, default: 0, step: 0.01 },
-            // { key: 'highlights', label: 'Highlights', min: -1, max: 1, default: 0, step: 0.01 },
-            // { key: 'shadows', label: 'Shadows', min: -1, max: 1, default: 0, step: 0.01 }
+            { key: 'hue', label: 'Hue', min: -180, max: 180, default: 0, step: 1 },
+            { key: 'temperature', label: 'Temperature', min: -1, max: 1, default: 0, step: 0.01 },
+            { key: 'tint', label: 'Tint', min: -1, max: 1, default: 0, step: 0.01 }
         ];
         
         // Clear existing controls
@@ -793,6 +1018,12 @@ class FloatingColorCorrection {
     updateNodeAdjustment(adjustmentKey, value, isIntermediate = true) {
         if (!this.currentNode) return;
         
+        // Begin undo interaction on first intermediate change
+        if (isIntermediate && !this.adjustmentUndoStarted) {
+            this.beginAdjustmentUndo();
+            this.adjustmentUndoStarted = true;
+        }
+        
         // Notify WebGLRenderer that adjustments are starting
         if (isIntermediate && window.app?.graphCanvas?.renderer?.startAdjustment) {
             window.app.graphCanvas.renderer.startAdjustment(this.currentNode.id);
@@ -808,8 +1039,9 @@ class FloatingColorCorrection {
             brightness: 0.0,
             contrast: 0.0,
             saturation: 0.0,
-            hue: 0.0
-            // Future adjustments will be added here automatically
+            hue: 0.0,
+            temperature: 0.0,
+            tint: 0.0
         };
         
         // Apply defaults for any missing properties
@@ -823,7 +1055,9 @@ class FloatingColorCorrection {
         const newAdjustments = { ...this.currentNode.adjustments };
         
         // Update the adjustment value with proper conversion
-        if (adjustmentKey === 'brightness' || adjustmentKey === 'contrast' || adjustmentKey === 'saturation') {
+        if (adjustmentKey === 'brightness' || adjustmentKey === 'contrast' || 
+            adjustmentKey === 'saturation' || adjustmentKey === 'temperature' || 
+            adjustmentKey === 'tint') {
             // Ensure value is within -1 to 1 range
             newAdjustments[adjustmentKey] = Math.max(-1, Math.min(1, value));
         } else if (adjustmentKey === 'hue') {
@@ -839,14 +1073,16 @@ class FloatingColorCorrection {
             this.currentNode.updateAdjustments(this.currentNode.adjustments);
         }
         
-        // Trigger immediate redraw
+        // Invalidate WebGL cache and trigger redraw
+        this.currentNode.needsGLUpdate = true;
         if (window.app?.graphCanvas) {
             window.app.graphCanvas.dirty_canvas = true;
         }
         
-        // Save to server after final updates (not intermediate)
-        if (!isIntermediate) {
-            this.saveAdjustmentsToServer(newAdjustments);
+        // End undo interaction and save to server after final updates
+        if (!isIntermediate && this.adjustmentUndoStarted) {
+            this.endAdjustmentUndo();
+            this.adjustmentUndoStarted = false;
             
             // Notify WebGLRenderer that adjustments are complete
             if (window.app?.graphCanvas?.renderer?.endAdjustment) {
@@ -857,6 +1093,28 @@ class FloatingColorCorrection {
 
     handleCurveChange(curveData, isIntermediate = true) {
         if (!this.currentNode || this.isBypassed()) return;
+
+        if (isIntermediate) {
+            // Intermediate change during dragging - begin undo interaction if not started
+            if (!this.toneCurveUndoStarted) {
+                this.beginToneCurveUndo();
+                this.toneCurveUndoStarted = true;
+            }
+        } else {
+            // Final change
+            if (this.toneCurveUndoStarted) {
+                // End ongoing drag interaction
+                this.endToneCurveUndo();
+                this.toneCurveUndoStarted = false;
+            } else {
+                // Immediate operation (add/remove point) - create single undo entry
+                this.beginToneCurveUndo();
+                // Update node first, then end interaction
+                this.updateNodeCurve(curveData, isIntermediate);
+                this.endToneCurveUndo();
+                return; // Skip the second updateNodeCurve call
+            }
+        }
 
         // Update the node's tone curve data
         this.updateNodeCurve(curveData, isIntermediate);
@@ -881,19 +1139,62 @@ class FloatingColorCorrection {
         // Simple direct update - just update the node locally
         this.currentNode.toneCurve = curveData;
         
-        // Trigger immediate redraw
+        // Invalidate WebGL cache and trigger redraw
+        this.currentNode.needsGLUpdate = true;
         if (window.app?.graphCanvas) {
             window.app.graphCanvas.dirty_canvas = true;
         }
         
-        // Save to server after final updates (not intermediate)
+        // Notify WebGLRenderer that adjustments are complete on final updates
         if (!isIntermediate) {
-            this.saveToneCurveToServer(curveData);
-            
-            // Notify WebGLRenderer that adjustments are complete
             if (window.app?.graphCanvas?.renderer?.endAdjustment) {
                 window.app.graphCanvas.renderer.endAdjustment(this.currentNode.id);
             }
+        }
+    }
+
+    beginToneCurveUndo() {
+        if (window.app?.undoManager && this.currentNode) {
+            window.app.undoManager.beginInteraction([this.currentNode]);
+        }
+    }
+
+    endToneCurveUndo() {
+        if (window.app?.undoManager && this.currentNode) {
+            window.app.undoManager.endInteraction('node_property_update', {
+                property: 'toneCurve',
+                value: this.currentNode.toneCurve
+            });
+        }
+    }
+
+    beginAdjustmentUndo() {
+        if (window.app?.undoManager && this.currentNode) {
+            window.app.undoManager.beginInteraction([this.currentNode]);
+        }
+    }
+
+    endAdjustmentUndo() {
+        if (window.app?.undoManager && this.currentNode) {
+            window.app.undoManager.endInteraction('node_property_update', {
+                property: 'adjustments',
+                value: this.currentNode.adjustments
+            });
+        }
+    }
+
+    beginColorBalanceUndo() {
+        if (window.app?.undoManager && this.currentNode) {
+            window.app.undoManager.beginInteraction([this.currentNode]);
+        }
+    }
+
+    endColorBalanceUndo() {
+        if (window.app?.undoManager && this.currentNode) {
+            window.app.undoManager.endInteraction('node_property_update', {
+                property: 'colorBalance',
+                value: this.currentNode.colorBalance
+            });
         }
     }
 
@@ -914,11 +1215,17 @@ class FloatingColorCorrection {
         // Save bypass state with node
         this.currentNode.toneCurveBypassed = bypassed;
         
-        // Update the node immediately
-        this.updateNodeCurve(null, false); // Force commit since this is a toggle
+        // Use undo system for bypass toggle
+        if (window.app?.undoManager) {
+            window.app.undoManager.beginInteraction([this.currentNode]);
+            window.app.undoManager.endInteraction('node_property_update', {
+                property: 'toneCurveBypassed',
+                value: bypassed
+            });
+        }
         
-        // Save bypass state to server
-        this.saveBypassStateToServer('toneCurveBypassed', bypassed);
+        // Trigger redraw to apply/remove tone curve
+        this.requestRedraw();
     }
 
     isBypassed() {
@@ -930,9 +1237,6 @@ class FloatingColorCorrection {
         
         // Update locally immediately
         this.currentNode.colorAdjustmentsBypassed = bypassed;
-        
-        // Save bypass state to server
-        this.saveBypassStateToServer('colorAdjustmentsBypassed', bypassed);
         
         // Update visual state
         const colorSection = this.panel.querySelector('.color-adjustments-section');
@@ -948,6 +1252,15 @@ class FloatingColorCorrection {
             }
         }
         
+        // Use undo system for bypass toggle
+        if (window.app?.undoManager) {
+            window.app.undoManager.beginInteraction([this.currentNode]);
+            window.app.undoManager.endInteraction('node_property_update', {
+                property: 'colorAdjustmentsBypassed',
+                value: bypassed
+            });
+        }
+        
         // Trigger redraw to apply/remove adjustments
         this.requestRedraw();
     }
@@ -958,9 +1271,6 @@ class FloatingColorCorrection {
         // Update locally immediately
         this.currentNode.colorBalanceBypassed = bypassed;
         
-        // Save bypass state to server
-        this.saveBypassStateToServer('colorBalanceBypassed', bypassed);
-        
         // Update visual state
         const bypassToggle = this.panel.querySelector('[data-type="color-balance"]');
         if (bypassToggle) {
@@ -969,6 +1279,20 @@ class FloatingColorCorrection {
             } else {
                 bypassToggle.classList.remove('active');
             }
+        }
+        
+        // Update color balance panel to reflect bypass state
+        if (this.colorBalancePanel && this.colorBalanceVisible) {
+            this.updateColorBalancePanel();
+        }
+        
+        // Use undo system for bypass toggle
+        if (window.app?.undoManager) {
+            window.app.undoManager.beginInteraction([this.currentNode]);
+            window.app.undoManager.endInteraction('node_property_update', {
+                property: 'colorBalanceBypassed',
+                value: bypassed
+            });
         }
         
         // Trigger redraw to apply/remove color balance
@@ -1041,56 +1365,22 @@ class FloatingColorCorrection {
     
     
     requestRedraw() {
-        // Trigger canvas redraw without setting needsGLUpdate
+        // Trigger canvas redraw AND invalidate WebGL caches
+        if (this.currentNode) {
+            this.currentNode.needsGLUpdate = true;
+            
+            // Also invalidate the cache directly if renderer is available
+            if (window.app?.graphCanvas?.renderer?._invalidateCache) {
+                window.app.graphCanvas.renderer._invalidateCache(this.currentNode.id);
+            }
+        }
         if (window.app?.graphCanvas) {
             window.app.graphCanvas.dirty_canvas = true;
         }
     }
     
-    saveToneCurveToServer(curveData) {
-        // Simple server save for tone curve
-        if (window.app?.operationPipeline && window.NodeCommands) {
-            const command = new window.NodeCommands.UpdateNodePropertyCommand({
-                nodeId: this.currentNode.id,
-                nodeIds: [this.currentNode.id],
-                property: 'toneCurve',
-                value: curveData
-            });
-            window.app.operationPipeline.execute(command).catch(err => {
-                console.warn('Failed to save tone curve to server:', err);
-            });
-        }
-    }
-    
-    saveAdjustmentsToServer(adjustments) {
-        // Simple server save for color adjustments
-        if (window.app?.operationPipeline && window.NodeCommands) {
-            const command = new window.NodeCommands.UpdateNodePropertyCommand({
-                nodeId: this.currentNode.id,
-                nodeIds: [this.currentNode.id],
-                property: 'adjustments',
-                value: adjustments
-            });
-            window.app.operationPipeline.execute(command).catch(err => {
-                console.warn('Failed to save color adjustments to server:', err);
-            });
-        }
-    }
-    
-    saveBypassStateToServer(property, value) {
-        // Simple server save for bypass states
-        if (window.app?.operationPipeline && window.NodeCommands) {
-            const command = new window.NodeCommands.UpdateNodePropertyCommand({
-                nodeId: this.currentNode.id,
-                nodeIds: [this.currentNode.id],
-                property: property,
-                value: value
-            });
-            window.app.operationPipeline.execute(command).catch(err => {
-                console.warn(`Failed to save ${property} to server:`, err);
-            });
-        }
-    }
+    // Note: These methods have been removed and replaced with undo system integration
+    // All color correction operations now use beginInteraction/endInteraction for proper undo support
     
     showColorBalancePanel() {
         if (!this.currentNode) {
@@ -1196,7 +1486,7 @@ class FloatingColorCorrection {
                 display: flex;
                 justify-content: space-between;
                 align-items: center;
-                padding: 8px 14px;
+                padding: 4px 14px;
                 background: #2a2a2a;
                 border-bottom: 1px solid #333;
                 border-radius: 8px 8px 0 0;
@@ -1352,8 +1642,8 @@ class FloatingColorCorrection {
     updateColorBalancePanel() {
         if (!this.colorBalancePanel) return;
         
-        // Handle no selection case - disable wheels but keep panel visible
-        if (!this.currentNode) {
+        // Handle no selection case OR bypass case - disable wheels but keep panel visible
+        if (!this.currentNode || this.currentNode.colorBalanceBypassed) {
             if (this.shadowsWheel && this.midtonesWheel && this.highlightsWheel) {
                 // Reset wheels to neutral position
                 this.shadowsWheel.setValue(0, 0, 0.5);
@@ -1365,7 +1655,7 @@ class FloatingColorCorrection {
                 this.updateYRGBDisplay('midtones', { x: 0, y: 0, luminance: 0.5 });
                 this.updateYRGBDisplay('highlights', { x: 0, y: 0, luminance: 0.5 });
                 
-                // Optionally disable interaction (could add opacity or disable pointer events)
+                // Disable interaction (add opacity and disable pointer events)
                 const content = this.colorBalancePanel.querySelector('.color-balance-content');
                 if (content) {
                     content.style.opacity = '0.5';
@@ -1375,7 +1665,7 @@ class FloatingColorCorrection {
             return;
         }
         
-        // Re-enable interaction when node is selected
+        // Re-enable interaction when node is selected and not bypassed
         const content = this.colorBalancePanel.querySelector('.color-balance-content');
         if (content) {
             content.style.opacity = '1';
@@ -1556,34 +1846,41 @@ class FloatingColorCorrection {
     }
     
     updateColorBalance(isFinal = false) {
-        if (!this.currentNode || !this.currentNode.colorBalance) return;
+        console.log('🎨 updateColorBalance called:', { isFinal, hasNode: !!this.currentNode, hasColorBalance: !!this.currentNode?.colorBalance });
         
-        // Notify WebGLRenderer of active adjustments
-        if (!isFinal && window.app?.graphCanvas?.renderer?.startAdjustment) {
+        if (!this.currentNode || !this.currentNode.colorBalance) {
+            console.warn('⚠️ updateColorBalance: No current node or color balance data');
+            return;
+        }
+        
+        // Begin undo interaction on first intermediate change
+        if (!isFinal && !this.colorBalanceUndoStarted) {
+            this.beginColorBalanceUndo();
+            this.colorBalanceUndoStarted = true;
+        }
+        
+        // Notify WebGLRenderer of active adjustments and invalidate cache
+        if (window.app?.graphCanvas?.renderer?.startAdjustment) {
+            console.log('🎨 Starting WebGL adjustment for:', this.currentNode.id);
             window.app.graphCanvas.renderer.startAdjustment(this.currentNode.id);
         }
         
-        // Trigger immediate redraw
+        // Invalidate WebGL cache and trigger redraw
+        this.currentNode.needsGLUpdate = true;
         if (window.app?.graphCanvas) {
+            console.log('🎨 Triggering canvas redraw with cache invalidation');
             window.app.graphCanvas.dirty_canvas = true;
         }
         
-        // Save to server on final update
-        if (isFinal) {
-            if (window.app?.operationPipeline && window.NodeCommands) {
-                const command = new window.NodeCommands.UpdateNodePropertyCommand({
-                    nodeId: this.currentNode.id,
-                    nodeIds: [this.currentNode.id],
-                    property: 'colorBalance',
-                    value: this.currentNode.colorBalance
-                });
-                window.app.operationPipeline.execute(command).catch(err => {
-                    console.warn('Failed to save color balance to server:', err);
-                });
-            }
+        // End undo interaction and save to server on final update
+        if (isFinal && this.colorBalanceUndoStarted) {
+            console.log('🎨 Final update - ending undo interaction:', this.currentNode.colorBalance);
+            this.endColorBalanceUndo();
+            this.colorBalanceUndoStarted = false;
             
             // Notify WebGLRenderer that adjustments are complete
             if (window.app?.graphCanvas?.renderer?.endAdjustment) {
+                console.log('🎨 Ending WebGL adjustment for:', this.currentNode.id);
                 window.app.graphCanvas.renderer.endAdjustment(this.currentNode.id);
             }
         }
@@ -1643,6 +1940,17 @@ class FloatingColorCorrection {
     }
     
     destroy() {
+        // Clean up undo/redo listeners
+        if (this._undoRedoListener) {
+            if (window.app?.events?.off) {
+                window.app.events.off('undo_state_changed', this._undoRedoListener);
+            }
+            if (window.app?.networkLayer?.off) {
+                window.app.networkLayer.off('undo_success', this._undoRedoListener);
+                window.app.networkLayer.off('redo_success', this._undoRedoListener);
+            }
+        }
+        
         if (this.splineCurveEditor) {
             this.splineCurveEditor.destroy();
         }

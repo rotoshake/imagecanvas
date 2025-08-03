@@ -208,6 +208,30 @@ class ClientUndoManager {
             ...finalParams,
             nodeIds: finalNodeIds
         };
+        
+        // For single node operations, also set nodeId for backward compatibility
+        if (finalNodeIds.length === 1) {
+            params.nodeId = finalNodeIds[0];
+            
+            // Convert plural forms to singular for single node operations
+            if (params.positions && params.positions.length === 1) {
+                params.position = params.positions[0];
+                delete params.positions;
+            }
+            if (params.sizes && params.sizes.length === 1) {
+                params.size = params.sizes[0];
+                delete params.sizes;
+            }
+            if (params.rotations && params.rotations.length === 1) {
+                params.rotation = params.rotations[0];
+                delete params.rotations;
+            }
+            // Also handle 'angles' parameter for rotation commands
+            if (params.angles && params.angles.length === 1) {
+                params.angle = params.angles[0];
+                delete params.angles;
+            }
+        }
 
         window.app.operationPipeline.execute(commandType, params, { initialState });
 
@@ -404,6 +428,27 @@ class ClientUndoManager {
                     if (nodeData.properties) {
                         Object.assign(node.properties, nodeData.properties);
                     }
+                    
+                    // Add color correction properties if present
+                    if (nodeData.toneCurve !== undefined) {
+                        node.toneCurve = nodeData.toneCurve;
+                    }
+                    if (nodeData.toneCurveBypassed !== undefined) {
+                        node.toneCurveBypassed = nodeData.toneCurveBypassed;
+                    }
+                    if (nodeData.adjustments !== undefined) {
+                        node.adjustments = nodeData.adjustments;
+                    }
+                    if (nodeData.colorAdjustmentsBypassed !== undefined) {
+                        node.colorAdjustmentsBypassed = nodeData.colorAdjustmentsBypassed;
+                    }
+                    if (nodeData.colorBalance !== undefined) {
+                        node.colorBalance = nodeData.colorBalance;
+                    }
+                    if (nodeData.colorBalanceBypassed !== undefined) {
+                        node.colorBalanceBypassed = nodeData.colorBalanceBypassed;
+                    }
+                    
                     this.app.graph.add(node);
                 }
             }
@@ -435,6 +480,49 @@ class ClientUndoManager {
                     // Update aspect ratio if present
                     if (nodeData.aspectRatio !== undefined) {
                         node.aspectRatio = nodeData.aspectRatio;
+                    }
+                    
+                    // Update color correction properties if present
+                    if (nodeData.toneCurve !== undefined) {
+                        node.toneCurve = nodeData.toneCurve;
+                    }
+                    if (nodeData.toneCurveBypassed !== undefined) {
+                        node.toneCurveBypassed = nodeData.toneCurveBypassed;
+                    }
+                    if (nodeData.adjustments !== undefined) {
+                        node.adjustments = nodeData.adjustments;
+                    }
+                    if (nodeData.colorAdjustmentsBypassed !== undefined) {
+                        node.colorAdjustmentsBypassed = nodeData.colorAdjustmentsBypassed;
+                    }
+                    if (nodeData.colorBalance !== undefined) {
+                        node.colorBalance = nodeData.colorBalance;
+                    }
+                    if (nodeData.colorBalanceBypassed !== undefined) {
+                        node.colorBalanceBypassed = nodeData.colorBalanceBypassed;
+                    }
+                    
+                    // Invalidate WebGL cache if color correction properties changed
+                    const hasColorCorrections = nodeData.toneCurve !== undefined || 
+                                               nodeData.adjustments !== undefined || 
+                                               nodeData.colorBalance !== undefined ||
+                                               nodeData.toneCurveBypassed !== undefined ||
+                                               nodeData.colorAdjustmentsBypassed !== undefined ||
+                                               nodeData.colorBalanceBypassed !== undefined;
+
+                    if (hasColorCorrections) {
+                        node.needsGLUpdate = true;
+                        // Also invalidate the cache directly if renderer is available
+                        if (this.app.graphCanvas?.renderer?._invalidateCache) {
+                            this.app.graphCanvas.renderer._invalidateCache(node.id);
+                        }
+                        
+                        // Update color correction UI if this node is currently selected
+                        if (this.app.floatingColorCorrection && 
+                            this.app.floatingColorCorrection.currentNode && 
+                            this.app.floatingColorCorrection.currentNode.id === node.id) {
+                            this.app.floatingColorCorrection.updateUI();
+                        }
                     }
                 }
             }

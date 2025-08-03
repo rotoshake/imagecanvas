@@ -213,6 +213,9 @@ class AutoAlignmentManager {
                 positions, 
                 axis: this.autoAlignCommittedAxis 
             });
+            
+            // Update any parent groups to encompass the new arrangement
+            this.updateParentGroups(selectedNodes);
         } else {
             // No alignment was committed, so cancel the interaction
             if (window.app?.undoManager?.cancelInteraction) {
@@ -576,6 +579,9 @@ class AutoAlignmentManager {
                 positions, 
                 axis: 'grid' 
             });
+            
+            // Update any parent groups to encompass the new arrangement
+            this.updateParentGroups(selectedNodes);
         } else {
             // After animation completed - use current node positions
             const selectedNodes = this.selection.getSelectedNodes();
@@ -588,6 +594,9 @@ class AutoAlignmentManager {
                     positions, 
                     axis: 'grid' 
                 });
+                
+                // Update any parent groups to encompass the new arrangement
+                this.updateParentGroups(selectedNodes);
             } else {
                 if (window.app?.undoManager?.cancelInteraction) {
                     window.app.undoManager.cancelInteraction();
@@ -1211,6 +1220,42 @@ class AutoAlignmentManager {
         this.selection.invalidateBoundingBox();
         
         this.canvas.dirty_canvas = true;
+    }
+    
+    /**
+     * Update parent groups to encompass their child nodes after alignment
+     */
+    updateParentGroups(alignedNodes) {
+        // Find all groups in the graph
+        const groups = this.canvas.graph.nodes.filter(n => n.type === 'container/group');
+        const affectedGroups = new Set();
+        
+        // Check which groups contain any of the aligned nodes
+        for (const group of groups) {
+            for (const node of alignedNodes) {
+                if (group.childNodes && group.childNodes.has(node.id)) {
+                    affectedGroups.add(group);
+                    break;
+                }
+            }
+        }
+        
+        // Update bounds for each affected group
+        for (const group of affectedGroups) {
+            // Get the target bounds for expansion
+            const targetBounds = group.updateBounds(true); // expandOnly = true
+            
+            // Send resize command to sync the new bounds
+            if (window.app?.operationPipeline && targetBounds) {
+                const command = new window.NodeCommands.GroupNodeCommand({
+                    action: 'group_resize',
+                    groupId: group.id,
+                    size: [...targetBounds.size],
+                    position: [...targetBounds.pos]
+                });
+                window.app.operationPipeline.executeCommand(command);
+            }
+        }
     }
 }
 

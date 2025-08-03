@@ -266,9 +266,21 @@ class NavigationStateManager {
         this.isRestoring = true;
 
         // Apply state
+        console.log(`🔄 Applying navigation state: scale=${state.scale}x, offset=[${state.offset[0].toFixed(1)}, ${state.offset[1].toFixed(1)}]`);
         this.canvas.viewport.scale = state.scale;
         this.canvas.viewport.offset = [...state.offset];
         this.canvas.viewport.validateState();
+        
+        // Clear LOD cache to force recalculation with correct scale
+        if (this.canvas.renderer && this.canvas.renderer.lodCache) {
+            this.canvas.renderer.lodCache.clear();
+        }
+        
+        // Clear color correction render cache to force re-render at correct LOD
+        if (this.canvas.renderer && this.canvas.renderer.colorCorrectedCache) {
+            this.canvas.renderer.colorCorrectedCache.clear();
+            console.log(`🧹 Cleared color correction cache on navigation state restore`);
+        }
         
         // Trigger redraw
         this.canvas.dirty_canvas = true;
@@ -294,7 +306,7 @@ class NavigationStateManager {
             typeof state.offset[0] === 'number' &&
             typeof state.offset[1] === 'number' &&
             state.scale > 0 &&
-            state.scale <= 10 // Reasonable bounds
+            state.scale <= 20 // Match client-side MAX_SCALE from config
         );
     }
 

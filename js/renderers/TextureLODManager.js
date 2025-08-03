@@ -26,6 +26,7 @@ class TextureLODManager {
         this.uploadBudgetMs = options.uploadBudget || 2; // 2ms per frame
         this.canvas = options.canvas; // Canvas reference for viewport state checks
         this.maxFullResTextures = 10; // Allow more full-res textures since we have 1.5GB limit
+        this.qualityMultiplier = options.qualityMultiplier || 1.2; // Adjustable quality vs performance
         
         // Texture storage
         this.textureCache = new Map(); // hash -> { lodSize -> { texture, lastUsed, memorySize } }
@@ -92,41 +93,46 @@ class TextureLODManager {
         }
         
         
-        // Find best available texture
+        // Find best available texture - smallest that meets requirements
         let bestTexture = null;
-        let bestSize = 0;
+        let bestSize = Infinity;
+        let fallbackTexture = null;
+        let fallbackSize = 0;
         
+        // Iterate through all available textures
         for (const [lodSize, textureData] of nodeCache) {
-            if (lodSize === null || lodSize >= targetSize) {
-                // This LOD is good enough quality
-                bestTexture = textureData.texture;
-                bestSize = lodSize || Infinity;
-                
-                // console.log(`  → Found suitable texture: ${lodSize === null ? 'full' : lodSize + 'px'}`);
-                
-                // Update access order for LRU
-                this._markAccessed(hash, lodSize);
-                this.stats.cacheHits++;
-                break;
-            } else if (lodSize > bestSize) {
-                // Keep track of best available if no perfect match
-                bestTexture = textureData.texture;
-                bestSize = lodSize;
+            const currentSize = lodSize || Infinity; // null means full resolution
+            
+            if (currentSize >= targetSize) {
+                // This texture is large enough - check if it's better than current best
+                if (currentSize < bestSize) {
+                    bestTexture = textureData.texture;
+                    bestSize = currentSize;
+                }
+            } else {
+                // This texture is too small, but keep track of largest available
+                if (currentSize > fallbackSize) {
+                    fallbackTexture = textureData.texture;
+                    fallbackSize = currentSize;
+                }
             }
         }
         
-        if (!bestTexture) {
-            // console.log(`  → No texture found!`);
-        } else if (bestSize !== Infinity && bestSize < targetSize) {
-            // console.log(`  → Using best available: ${bestSize}px (requested ${Math.round(targetSize)}px)`);
-        }
+        // Use best match or fallback to largest available
+        let selectedTexture = bestTexture || fallbackTexture;
+        let selectedSize = bestTexture ? bestSize : fallbackSize;
         
-        if (bestTexture && bestSize > 0) {
-            this._markAccessed(hash, bestSize);
+        if (selectedTexture) {
+            const actualLodSize = selectedSize === Infinity ? null : selectedSize;
+            this._markAccessed(hash, actualLodSize);
             this.stats.cacheHits++;
+            
+            // Removed verbose texture size warnings
+        } else {
+            this.stats.cacheMisses++;
         }
         
-        return bestTexture;
+        return selectedTexture;
     }
     
     /**
@@ -670,34 +676,28 @@ class TextureLODManager {
         const targetSize = Math.max(screenWidth, screenHeight);
         
         // Quality multiplier - we want slightly higher res than screen size for quality
-        const qualityMultiplier = 1.2;
+        // This can be adjusted based on device performance or user preference
+        const qualityMultiplier = this.qualityMultiplier || 1.2;
         const desiredSize = targetSize * qualityMultiplier;
         
         // console.log(`🎯 LOD selection: targetSize=${Math.round(targetSize)}px (with DPR), desired=${Math.round(desiredSize)}px`);
         
         // Select appropriate LOD based on effective screen size (already includes DPR)
-        // These thresholds are designed for effective pixel counts
-        if (desiredSize <= 64) {
-            // console.log(`  → Selected: 64px (tiny)`);
+        // Smoother transitions with ~1.5x steps to reduce jarring quality jumps
+        if (desiredSize <= 80) {
             return 64;
-        } else if (desiredSize <= 128) {
-            // console.log(`  → Selected: 128px (small)`);
+        } else if (desiredSize <= 160) {
             return 128;
-        } else if (desiredSize <= 256) {
-            // console.log(`  → Selected: 256px (medium)`);
+        } else if (desiredSize <= 320) {
             return 256;
-        } else if (desiredSize <= 512) {
-            // console.log(`  → Selected: 512px (large)`);
+        } else if (desiredSize <= 640) {
             return 512;
-        } else if (desiredSize <= 1024) {
-            // console.log(`  → Selected: 1024px (xl)`);
+        } else if (desiredSize <= 1280) {
             return 1024;
-        } else if (desiredSize <= 2048) {
-            // console.log(`  → Selected: 2048px (xxl)`);
+        } else if (desiredSize <= 3000) {
             return 2048;
         } else {
             // For very large sizes, use full resolution
-            // console.log(`  → Selected: full resolution (desiredSize > 2048)`);
             return null;
         }
     }

@@ -56,6 +56,7 @@ import '../js/nodes/base-node.js';
 import '../js/nodes/image-node.js';
 import '../js/nodes/video-node.js';
 import '../js/nodes/text-node.js';
+import '../js/nodes/group-node.js';
 
 // 5) Node plugin system
 import '../js/core/NodePluginSystem.js';

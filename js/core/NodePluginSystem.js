@@ -223,6 +223,25 @@ class NodePluginSystem {
             },
             category: 'text'
         });
+        
+        // Group nodes
+        this.registerNodeType('container/group', {
+            factory: (properties) => {
+                const node = new GroupNode();
+                // Don't manually set properties here - let configure handle it
+                return node;
+            },
+            validator: (node) => {
+                return node instanceof GroupNode;
+            },
+            commands: ['group_create', 'group_add_node', 'group_remove_node', 'group_move', 'group_resize', 'group_toggle_collapsed', 'node_move', 'node_resize', 'node_delete', 'node_duplicate', 'node_property_update'],
+            properties: {
+                childNodes: [],
+                isCollapsed: false,
+                style: {}
+            },
+            category: 'container'
+        });
 
     }
     

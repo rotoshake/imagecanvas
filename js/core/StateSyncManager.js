@@ -93,7 +93,9 @@ class StateSyncManager {
             const undoableOperations = [
                 'node_move', 'node_resize', 'node_rotate', 'node_reset',
                 'node_delete', 'node_property_update', 'node_batch_property_update',
-                'node_create', 'node_duplicate', 'node_paste'
+                'node_create', 'node_duplicate', 'node_paste',
+                'group_create', 'group_add_node', 'group_remove_node', 'group_move', 
+                'group_resize', 'group_toggle_collapsed', 'group_update_style'
             ];
             
             if (undoableOperations.includes(command.type) && command.origin === 'local') {
@@ -121,11 +123,12 @@ class StateSyncManager {
                 }
             }
             
-            // 2. Apply optimistically if enabled
+            // 2. Apply optimistically if enabled and command supports it
             let localResult = null;
             let tempNodeIds = [];
             
-            if (this.optimisticEnabled && command.origin === 'local') {
+            if (this.optimisticEnabled && command.origin === 'local' && 
+                command.supportsOptimisticUpdate && command.supportsOptimisticUpdate()) {
                 const optimisticResult = await this.applyOptimistic(command);
                 const pending = this.pendingOperations.get(operationId);
                 pending.rollbackData = optimisticResult.rollbackData;
@@ -197,6 +200,8 @@ class StateSyncManager {
             const undoRequiredOperations = [
                 'node_create', 'node_delete', 'node_move', 'node_resize', 
                 'node_update', 'node_duplicate', 'node_paste', 'node_rotate',
+                'group_create', 'group_add_node', 'group_remove_node', 'group_move', 
+                'group_resize', 'group_toggle_collapsed', 'group_update_style',
                 'edge_create', 'edge_delete', 'edge_update'
             ];
             
@@ -872,6 +877,11 @@ class StateSyncManager {
         // Restore aspect ratio if available
         if (nodeData.aspectRatio !== undefined) {
             node.aspectRatio = nodeData.aspectRatio;
+        }
+        
+        // Call configure if the node has this method (for custom node setup)
+        if (typeof node.configure === 'function') {
+            node.configure(nodeData);
         }
         
         // Handle media nodes

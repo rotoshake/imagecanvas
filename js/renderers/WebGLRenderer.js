@@ -47,6 +47,8 @@ class WebGLRenderer {
             this.uContrast = this.gl.getUniformLocation(this.program, 'u_contrast');
             this.uSaturation = this.gl.getUniformLocation(this.program, 'u_saturation');
             this.uHue = this.gl.getUniformLocation(this.program, 'u_hue');
+            this.uTemperature = this.gl.getUniformLocation(this.program, 'u_temperature');
+            this.uTint = this.gl.getUniformLocation(this.program, 'u_tint');
             this.uCurvePoints = this.gl.getUniformLocation(this.program, 'u_curvePoints');
             this.uNumCurvePoints = this.gl.getUniformLocation(this.program, 'u_numCurvePoints');
             this.uHasToneCurve = this.gl.getUniformLocation(this.program, 'u_hasToneCurve');
@@ -581,21 +583,25 @@ class WebGLRenderer {
         
         // Send adjustment uniforms with validation (check bypass flag)
         // If using cached texture, set all adjustments to 0 since they're already applied
-        let brightness = 0, contrast = 0, saturation = 0, hue = 0;
+        let brightness = 0, contrast = 0, saturation = 0, hue = 0, temperature = 0, tint = 0;
         
         if (typeof usingCachedTexture === 'undefined' || !usingCachedTexture) {
             const bypassed = node.colorAdjustmentsBypassed;
-            const adj = (!bypassed && node.adjustments) ? node.adjustments : {brightness:0,contrast:0,saturation:0,hue:0};
+            const adj = (!bypassed && node.adjustments) ? node.adjustments : {brightness:0,contrast:0,saturation:0,hue:0,temperature:0,tint:0};
             brightness = bypassed ? 0 : (isNaN(adj.brightness) ? 0 : (adj.brightness || 0));
             contrast = bypassed ? 0 : (isNaN(adj.contrast) ? 0 : (adj.contrast || 0));
             saturation = bypassed ? 0 : (isNaN(adj.saturation) ? 0 : (adj.saturation || 0));
             hue = bypassed ? 0 : (isNaN(adj.hue) ? 0 : (adj.hue || 0));
+            temperature = bypassed ? 0 : (isNaN(adj.temperature) ? 0 : (adj.temperature || 0));
+            tint = bypassed ? 0 : (isNaN(adj.tint) ? 0 : (adj.tint || 0));
         }
         
         gl.uniform1f(this.uBrightness, brightness);
         gl.uniform1f(this.uContrast, contrast);
         gl.uniform1f(this.uSaturation, saturation);
         gl.uniform1f(this.uHue, hue);
+        gl.uniform1f(this.uTemperature, temperature);
+        gl.uniform1f(this.uTint, tint);
         
         // Opacity always 1.0 for cached renders
         gl.uniform1f(this.uOpacity, 1.0);
@@ -696,9 +702,32 @@ class WebGLRenderer {
         }
         
         // Need to render to cache
-        const vp = this.canvas.viewport;
-        const width = Math.ceil(node.size[0] * vp.scale * vp.dpr);
-        const height = Math.ceil(node.size[1] * vp.scale * vp.dpr);
+        // Use the same resolution as what the LOD system determined
+        let width, height;
+        if (currentLOD === null) {
+            // Full resolution - use actual image dimensions
+            width = node.originalWidth || node.img?.naturalWidth || 2048;
+            height = node.originalHeight || node.img?.naturalHeight || 2048;
+        } else {
+            // LOD texture - use LOD dimensions with proper aspect ratio
+            const originalWidth = node.originalWidth || node.img?.naturalWidth || currentLOD;
+            const originalHeight = node.originalHeight || node.img?.naturalHeight || currentLOD;
+            const aspectRatio = originalWidth / originalHeight;
+            
+            if (aspectRatio >= 1) {
+                // Landscape or square
+                width = currentLOD;
+                height = Math.round(currentLOD / aspectRatio);
+            } else {
+                // Portrait  
+                height = currentLOD;
+                width = Math.round(currentLOD * aspectRatio);
+            }
+        }
+        
+        if (window.DEBUG_LOD_STATUS) {
+            console.log(`🎯 Caching color correction: ${width}x${height} (LOD: ${currentLOD === null ? 'full' : currentLOD + 'px'})`);
+        }
         
         // Check memory limits
         const requiredMemory = width * height * 4;
@@ -804,6 +833,8 @@ class WebGLRenderer {
             uniform float u_contrast;
             uniform float u_saturation;
             uniform float u_hue; // degrees
+            uniform float u_temperature;
+            uniform float u_tint;
             uniform vec2 u_curvePoints[8]; // Up to 8 control points (x,y pairs)
             uniform int u_numCurvePoints;
             uniform float u_hasToneCurve;
@@ -990,6 +1021,23 @@ class WebGLRenderer {
                 hsv.y *= (1.0 + u_saturation);
                 hsv.x += u_hue / 360.0;
                 color.rgb = hsv2rgb(hsv);
+                
+                // Temperature adjustment (warm/cool)
+                // Positive values make warmer (more orange), negative make cooler (more blue)
+                if (u_temperature != 0.0) {
+                    float temp = u_temperature;
+                    color.r += temp * 0.1;
+                    color.b -= temp * 0.1;
+                }
+                
+                // Tint adjustment (magenta/green)
+                // Positive values add magenta, negative add green
+                if (u_tint != 0.0) {
+                    float tint = u_tint;
+                    color.r += tint * 0.05;
+                    color.g -= tint * 0.1;
+                    color.b += tint * 0.05;
+                }
                 
                 // Apply opacity
                 color.a *= u_opacity;
@@ -1217,8 +1265,22 @@ class WebGLRenderer {
         
         // Track what's being rendered on the node
         if (node.setLastRenderedResolution) {
-            // For now, we need to check what texture is being used by looking at the LOD cache
-            if (node.properties?.hash && this.lodManager) {
+            // Use the render info we tracked in drawNode
+            if (node._currentRenderInfo) {
+                const info = node._currentRenderInfo;
+                const lodLabel = info.lodSize === null ? 'full' : `${info.lodSize}px`;
+                node.setLastRenderedResolution(
+                    info.actualWidth || 0,
+                    info.actualHeight || 0,
+                    lodLabel
+                );
+                
+                // Notify properties panel of the change
+                if (window.propertiesInspector && window.propertiesInspector.isVisible) {
+                    window.propertiesInspector.scheduleNavigationUpdate();
+                }
+            } else if (node.properties?.hash && this.lodManager) {
+                // Fallback: try to find in LOD cache
                 const nodeCache = this.lodManager.textureCache.get(node.properties.hash);
                 if (nodeCache) {
                     // Find which texture is being used
@@ -1241,8 +1303,6 @@ class WebGLRenderer {
                         }
                     }
                     if (!found) {
-                        // Texture not found in cache, might be using node.img directly
-                        // Texture not found in cache, might be using node.img directly
                         // Check if this is the full resolution image texture
                         if (node.img && this.textureCache.has(node.img)) {
                             const imgTexture = this.textureCache.get(node.img);
@@ -1252,6 +1312,11 @@ class WebGLRenderer {
                                     node.img.naturalHeight,
                                     'full'
                                 );
+                                
+                                // Notify properties panel of the change
+                                if (window.propertiesInspector && window.propertiesInspector.isVisible) {
+                                    window.propertiesInspector.scheduleNavigationUpdate();
+                                }
                             }
                         }
                     }
@@ -1346,24 +1411,28 @@ class WebGLRenderer {
 
         // Send adjustment uniforms with validation (check bypass flag)
         // If using cached texture, set all adjustments to 0 since they're already applied
-        let brightness = 0, contrast = 0, saturation = 0, hue = 0;
+        let brightness = 0, contrast = 0, saturation = 0, hue = 0, temperature = 0, tint = 0;
         
         if (typeof usingCachedTexture === 'undefined' || !usingCachedTexture) {
             const bypassed = node.colorAdjustmentsBypassed;
-            const adj = (!bypassed && node.adjustments) ? node.adjustments : {brightness:0,contrast:0,saturation:0,hue:0};
+            const adj = (!bypassed && node.adjustments) ? node.adjustments : {brightness:0,contrast:0,saturation:0,hue:0,temperature:0,tint:0};
             brightness = bypassed ? 0 : (isNaN(adj.brightness) ? 0 : (adj.brightness || 0));
             contrast = bypassed ? 0 : (isNaN(adj.contrast) ? 0 : (adj.contrast || 0));
             saturation = bypassed ? 0 : (isNaN(adj.saturation) ? 0 : (adj.saturation || 0));
             hue = bypassed ? 0 : (isNaN(adj.hue) ? 0 : (adj.hue || 0));
+            temperature = bypassed ? 0 : (isNaN(adj.temperature) ? 0 : (adj.temperature || 0));
+            tint = bypassed ? 0 : (isNaN(adj.tint) ? 0 : (adj.tint || 0));
         }
         
         this.gl.uniform1f(this.uBrightness, brightness);
         this.gl.uniform1f(this.uContrast, contrast);
         this.gl.uniform1f(this.uSaturation, saturation);
         this.gl.uniform1f(this.uHue, hue);
+        this.gl.uniform1f(this.uTemperature, temperature);
+        this.gl.uniform1f(this.uTint, tint);
         
-        if (window.DEBUG_LOD_STATUS && node.type === 'media/video' && (brightness !== 0 || contrast !== 0 || saturation !== 0 || hue !== 0)) {
-            console.log(`🎨 Video color adjustments - B:${brightness} C:${contrast} S:${saturation} H:${hue}`);
+        if (window.DEBUG_LOD_STATUS && node.type === 'media/video' && (brightness !== 0 || contrast !== 0 || saturation !== 0 || hue !== 0 || temperature !== 0 || tint !== 0)) {
+            console.log(`🎨 Video color adjustments - B:${brightness} C:${contrast} S:${saturation} H:${hue} T:${temperature} Ti:${tint}`);
         }
         
         // Get opacity from gallery view manager if in gallery mode
@@ -1740,17 +1809,9 @@ class WebGLRenderer {
         const screenHeight = node.size[1] * vp.scale;
         const screenSize = Math.max(screenWidth, screenHeight);
         
-        // Debug LOD calculation (only log significant changes)
-        const lastDebug = this._lastLODDebug || {};
-        if (lastDebug.nodeId !== node.id || 
-            Math.abs(lastDebug.scale - vp.scale) > 0.1 ||
-            Math.abs(lastDebug.screenSize - screenSize) > 50) {
-            console.log(`📐 LOD calc for ${node.id}:
-  - Node size: ${node.size[0]}x${node.size[1]}
-  - Zoom scale: ${vp.scale.toFixed(2)}x
-  - Screen size: ${Math.round(screenWidth)}x${Math.round(screenHeight)} = ${Math.round(screenSize)}px
-  - DPR: ${dpr}`);
-            this._lastLODDebug = { nodeId: node.id, scale: vp.scale, screenSize };
+        // DEBUG: Log LOD calculation details on page load
+        if (window.DEBUG_LOD_STATUS) {
+            console.log(`🔍 LOD calc for ${node.id}: node=${node.size[0]}x${node.size[1]}, scale=${vp.scale.toFixed(2)}x, screen=${Math.round(screenWidth)}x${Math.round(screenHeight)}, size=${Math.round(screenSize)}`);
         }
         
         // For high DPI displays, we need to consider the full DPR to get the actual pixel count
@@ -1761,23 +1822,55 @@ class WebGLRenderer {
         const cachedLOD = this.lodCache.get(nodeId);
         const now = Date.now();
         
-        // Use cached LOD if screen size hasn't changed significantly (within 5%)
+        // Hysteresis for LOD switching to prevent flickering
+        const HYSTERESIS_FACTOR = 0.1; // 10% change required to switch LOD
         let optimalLOD = null;
-        if (cachedLOD && Math.abs(cachedLOD.screenSize - effectiveScreenSize) < effectiveScreenSize * 0.05 && 
-            now - cachedLOD.lastUpdate < 5000) { // Cache valid for 5 seconds
-            optimalLOD = cachedLOD.optimalLOD;
-        } else {
-            // Calculate new optimal LOD only once
-            optimalLOD = this.lodManager.getOptimalLOD(effectiveScreenSize, effectiveScreenSize);
+        
+        if (cachedLOD) {
+            // Check if screen size changed significantly
+            const sizeChange = Math.abs(cachedLOD.screenSize - effectiveScreenSize) / cachedLOD.screenSize;
             
-            // Cache the result
+            if (sizeChange < HYSTERESIS_FACTOR && now - cachedLOD.lastUpdate < 5000) {
+                // Keep using cached LOD - no significant change
+                optimalLOD = cachedLOD.optimalLOD;
+            } else {
+                // Calculate new LOD
+                const newOptimalLOD = this.lodManager.getOptimalLOD(effectiveScreenSize, effectiveScreenSize);
+                
+                // Apply hysteresis: only switch if it's a different LOD level
+                if (cachedLOD.optimalLOD === newOptimalLOD || 
+                    (cachedLOD.optimalLOD !== null && newOptimalLOD !== null && 
+                     Math.abs(cachedLOD.optimalLOD - newOptimalLOD) < cachedLOD.optimalLOD * 0.25)) {
+                    // Keep current LOD - change isn't significant enough
+                    optimalLOD = cachedLOD.optimalLOD;
+                } else {
+                    // Switch to new LOD
+                    console.log(`🔄 LOD change for ${node.id}: ${cachedLOD.optimalLOD === null ? 'full' : cachedLOD.optimalLOD + 'px'} → ${newOptimalLOD === null ? 'full' : newOptimalLOD + 'px'}`);
+                    optimalLOD = newOptimalLOD;
+                }
+                
+                // Update cache
+                this.lodCache.set(nodeId, {
+                    screenSize: effectiveScreenSize,
+                    optimalLOD,
+                    lastUpdate: now
+                });
+            }
+        } else {
+            // No cached LOD - calculate fresh
+            optimalLOD = this.lodManager.getOptimalLOD(effectiveScreenSize, effectiveScreenSize);
             this.lodCache.set(nodeId, {
                 screenSize: effectiveScreenSize,
                 optimalLOD,
                 lastUpdate: now
             });
             
-            // Debug: Only log when LOD actually changes (removed - using better logging above)
+            // DEBUG: Log fresh LOD calculation
+            if (window.DEBUG_LOD_STATUS) {
+                console.log(`🆕 Fresh LOD calc for ${node.id}: effective=${Math.round(effectiveScreenSize)}, optimal=${optimalLOD === null ? 'full' : optimalLOD + 'px'}, threshold=3000`);
+            }
+            
+            // Properties panel will be updated after rendering via post-render tracking
         }
         
         // Get best available texture from LOD manager or video element
@@ -1792,15 +1885,42 @@ class WebGLRenderer {
         } else if (this.lodManager && node.type === 'media/image') {
             // For image nodes, use LOD manager
             // First try to get the best texture for the current size
+            // Apply DPR to get effective pixel count
+            const effectiveWidth = screenWidth * dpr;
+            const effectiveHeight = screenHeight * dpr;
             texture = this.lodManager.getBestTexture(
                 node.properties.hash, 
-                screenWidth, 
-                screenHeight
+                effectiveWidth, 
+                effectiveHeight
             );
             
-            // If no texture at all, try to get ANY available texture to maintain framerate
-            if (!texture) {
-                texture = this.lodManager.getAnyAvailableTexture(node.properties.hash);
+            // DEBUG: Log texture selection
+            if (window.DEBUG_LOD_STATUS) {
+                console.log(`🖼️ Texture selection for ${node.id}: optimalLOD=${optimalLOD === null ? 'full' : optimalLOD + 'px'}, texture found=${!!texture}`);
+            }
+            
+            // If we want full resolution, prefer node.img over any LOD texture
+            if (optimalLOD === null) {
+                if (node.img && node.img.complete) {
+                    texture = this._ensureTexture(node.img);
+                    if (window.DEBUG_LOD_STATUS) {
+                        console.log(`🖼️ Forcing full res from node.img (ignoring LOD textures)`);
+                    }
+                } else {
+                    // Request full resolution
+                    this._requestTexture(node, screenWidth, screenHeight);
+                    if (window.DEBUG_LOD_STATUS) {
+                        console.log(`🖼️ Requested full res, no fallback`);
+                    }
+                    return false;
+                }
+            } else if (!texture) {
+                // For LOD textures, use normal fallback logic
+                this._requestTexture(node, screenWidth, screenHeight);
+                if (window.DEBUG_LOD_STATUS) {
+                    console.log(`🖼️ Requested ${optimalLOD}px texture, no fallback`);
+                }
+                return false;
             }
         
             
@@ -1826,8 +1946,8 @@ class WebGLRenderer {
                     textureSource: textureSource || texture,
                     lodSize: actualLOD,
                     screenWidth: Math.round(screenWidth / (this.canvas.viewport?.dpr || 1)),
-                    actualWidth: textureSource?.width || texture.width,
-                    actualHeight: textureSource?.height || texture.height,
+                    actualWidth: textureSource?.naturalWidth || textureSource?.width || actualLOD || 0,
+                    actualHeight: textureSource?.naturalHeight || textureSource?.height || actualLOD || 0,
                     isFullRes: actualLOD === null && textureSource === node.img
                 };
             }
@@ -1859,13 +1979,7 @@ class WebGLRenderer {
                         lastRequest.lodSize !== optimalLOD ||
                         now - lastRequest.timestamp > this.textureRequestCooldown) {
                         
-                        if (currentLOD === null) {
-                            console.log(`📥 Requesting texture switch: full res → ${optimalLOD}px`);
-                        } else if (optimalLOD === null) {
-                            console.log(`📥 Requesting texture switch: ${currentLOD}px → full res`);
-                        } else {
-                            console.log(`📥 Requesting texture switch: ${currentLOD}px → ${optimalLOD}px`);
-                        }
+                        // Removed verbose texture request logging
                         
                         // Update throttling cache
                         this.lastTextureRequest.set(nodeId, {
@@ -1911,21 +2025,8 @@ class WebGLRenderer {
                 this._requestTexture(node, screenWidth, screenHeight);
             }
             
-            // Special case: If node has color corrections, try to use the node's img element
-            // to prevent falling back to Canvas2D which might cause blending issues
-            if (this.nodeHasColorCorrection(node)) {
-                if (node.img && node.img.complete) {
-                    texture = this._ensureTexture(node.img);
-                    // When using node.img fallback, use the optimal LOD as the current LOD
-                    // This ensures proper cache keying even when LOD textures aren't loaded yet
-                    if (!currentLOD) {
-                        currentLOD = optimalLOD;
-                        if (window.DEBUG_LOD_STATUS) {
-                            console.log(`📌 Using optimal LOD ${optimalLOD} for cache key (fallback to node.img)`);
-                        }
-                    }
-                }
-            }
+            // Removed: Special case for color corrections that forced full resolution
+            // The LOD system now handles color-corrected images properly
             
             // Fall back to Canvas2D only if we have no other options
             if (!texture) {
@@ -1939,6 +2040,9 @@ class WebGLRenderer {
         
         // Track if we're using a cached texture with pre-applied corrections
         let usingCachedTexture = false;
+        
+        // Store the actual rendered LOD before we modify currentLOD for caching
+        const actualRenderedLOD = currentLOD;
         
         // Ensure we have a currentLOD for cache keying
         // If we couldn't determine the LOD from the texture, use the optimal LOD
@@ -1955,22 +2059,24 @@ class WebGLRenderer {
             if (node.type === 'media/video' && (!node.properties.paused || !node.video)) {
                 // Playing video - render normally
             } else {
-                // Try to get cached render
+                // Try to get cached render 
                 if (window.DEBUG_LOD_STATUS) {
-                    console.log(`🔍 Looking for cached render: node=${node.id}, LOD=${currentLOD}, texture=${texture}`);
+                    console.log(`🔍 Looking for cached render: node=${node.id}, actualLOD=${actualRenderedLOD}, optimalLOD=${optimalLOD}, texture=${texture}`);
                 }
-                const cachedTexture = this._getCachedOrRender(node, texture, currentLOD);
+                const cachedTexture = this._getCachedOrRender(node, texture, actualRenderedLOD);
                 if (cachedTexture) {
                     // Use cached texture instead of original
                     texture = cachedTexture;
                     usingCachedTexture = true;
                     if (window.DEBUG_LOD_STATUS) {
-                        console.log(`✓ Using cached texture for node ${node.id} at LOD ${currentLOD}`);
+                        console.log(`✓ Using cached texture for node ${node.id} at LOD ${actualRenderedLOD}`);
                     }
                     // Continue with normal rendering flow but with cached texture
                     // Note: Color corrections will be disabled in the shader since they're already baked in
-                } else if (window.DEBUG_LOD_STATUS) {
-                    console.log(`✗ No cached texture found for node ${node.id} at LOD ${currentLOD}`);
+                } else {
+                    if (window.DEBUG_LOD_STATUS) {
+                        console.log(`✗ No cached texture found for node ${node.id} at LOD ${actualRenderedLOD}`);
+                    }
                 }
             }
         }
@@ -2040,24 +2146,28 @@ class WebGLRenderer {
 
         // Send adjustment uniforms with validation (check bypass flag)
         // If using cached texture, set all adjustments to 0 since they're already applied
-        let brightness = 0, contrast = 0, saturation = 0, hue = 0;
+        let brightness = 0, contrast = 0, saturation = 0, hue = 0, temperature = 0, tint = 0;
         
         if (typeof usingCachedTexture === 'undefined' || !usingCachedTexture) {
             const bypassed = node.colorAdjustmentsBypassed;
-            const adj = (!bypassed && node.adjustments) ? node.adjustments : {brightness:0,contrast:0,saturation:0,hue:0};
+            const adj = (!bypassed && node.adjustments) ? node.adjustments : {brightness:0,contrast:0,saturation:0,hue:0,temperature:0,tint:0};
             brightness = bypassed ? 0 : (isNaN(adj.brightness) ? 0 : (adj.brightness || 0));
             contrast = bypassed ? 0 : (isNaN(adj.contrast) ? 0 : (adj.contrast || 0));
             saturation = bypassed ? 0 : (isNaN(adj.saturation) ? 0 : (adj.saturation || 0));
             hue = bypassed ? 0 : (isNaN(adj.hue) ? 0 : (adj.hue || 0));
+            temperature = bypassed ? 0 : (isNaN(adj.temperature) ? 0 : (adj.temperature || 0));
+            tint = bypassed ? 0 : (isNaN(adj.tint) ? 0 : (adj.tint || 0));
         }
         
         this.gl.uniform1f(this.uBrightness, brightness);
         this.gl.uniform1f(this.uContrast, contrast);
         this.gl.uniform1f(this.uSaturation, saturation);
         this.gl.uniform1f(this.uHue, hue);
+        this.gl.uniform1f(this.uTemperature, temperature);
+        this.gl.uniform1f(this.uTint, tint);
         
-        if (window.DEBUG_LOD_STATUS && node.type === 'media/video' && (brightness !== 0 || contrast !== 0 || saturation !== 0 || hue !== 0)) {
-            console.log(`🎨 Video color adjustments - B:${brightness} C:${contrast} S:${saturation} H:${hue}`);
+        if (window.DEBUG_LOD_STATUS && node.type === 'media/video' && (brightness !== 0 || contrast !== 0 || saturation !== 0 || hue !== 0 || temperature !== 0 || tint !== 0)) {
+            console.log(`🎨 Video color adjustments - B:${brightness} C:${contrast} S:${saturation} H:${hue} T:${temperature} Ti:${tint}`);
         }
         
         // Get opacity from gallery view manager if in gallery mode
@@ -2123,6 +2233,50 @@ class WebGLRenderer {
         // Draw
         this.gl.bindBuffer(this.gl.ELEMENT_ARRAY_BUFFER, this.indexBuffer);
         this.gl.drawElements(this.gl.TRIANGLES, 6, this.gl.UNSIGNED_SHORT, 0);
+
+        // Track what was actually rendered for properties panel (only update on LOD changes)
+        if (node.setLastRenderedResolution) {
+            // Use the actual rendered LOD, not the cache key
+            const actualLabel = actualRenderedLOD !== null ? actualRenderedLOD + 'px' : 'full';
+            const lastRendered = node.getLastRenderedResolution();
+            
+            // Only update if LOD has changed or if this is the first render for this node
+            if (!lastRendered || lastRendered.source !== actualLabel) {
+                if (actualRenderedLOD !== null) {
+                    // Calculate display dimensions based on LOD and aspect ratio
+                    const originalWidth = node.originalWidth || actualRenderedLOD;
+                    const originalHeight = node.originalHeight || actualRenderedLOD;
+                    const aspectRatio = originalWidth / originalHeight;
+                    
+                    let displayWidth, displayHeight;
+                    if (aspectRatio >= 1) {
+                        // Landscape or square
+                        displayWidth = actualRenderedLOD;
+                        displayHeight = Math.round(actualRenderedLOD / aspectRatio);
+                    } else {
+                        // Portrait
+                        displayHeight = actualRenderedLOD;
+                        displayWidth = Math.round(actualRenderedLOD * aspectRatio);
+                    }
+                    
+                    node.setLastRenderedResolution(displayWidth, displayHeight, actualLabel);
+                } else {
+                    // Using full resolution
+                    const originalWidth = node.originalWidth || node.img?.naturalWidth || 0;
+                    const originalHeight = node.originalHeight || node.img?.naturalHeight || 0;
+                    node.setLastRenderedResolution(originalWidth, originalHeight, 'full');
+                }
+                
+                // Only notify properties panel when LOD actually changes
+                if (window.propertiesInspector && window.propertiesInspector.isVisible) {
+                    window.propertiesInspector.scheduleNavigationUpdate();
+                }
+                
+                if (window.DEBUG_LOD_STATUS) {
+                    console.log(`🔄 LOD changed to ${actualLabel} for node ${node.id}`);
+                }
+            }
+        }
 
         // Clean up texture bindings after draw
         this.gl.activeTexture(this.gl.TEXTURE1);
@@ -2237,6 +2391,8 @@ class WebGLRenderer {
         gl.uniform1f(this.uContrast, 0);
         gl.uniform1f(this.uSaturation, 0);
         gl.uniform1f(this.uHue, 0);
+        gl.uniform1f(this.uTemperature, 0);
+        gl.uniform1f(this.uTint, 0);
         
         // Apply opacity
         let finalOpacity = opacity;
@@ -2360,6 +2516,8 @@ class WebGLRenderer {
                 lodSize,
                 optimalLOD,
                 screenWidth: Math.round(screenWidth/dpr),
+                actualWidth: textureSource?.naturalWidth || textureSource?.width || lodSize || 0,
+                actualHeight: textureSource?.naturalHeight || textureSource?.height || lodSize || 0,
                 dpr,
                 isFullRes: lodSize === null
             };
@@ -2784,6 +2942,7 @@ class WebGLRenderer {
             }
         }
     }
+    
 }
 
 if (typeof window !== 'undefined') {

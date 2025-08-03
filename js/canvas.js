@@ -141,7 +141,10 @@ class ImageCanvas {
                 nodes: new Map(),
                 offsets: new Map(),
                 isDuplication: false,  // Track if this drag is from duplication
-                hasMoved: false       // Track if actual movement occurred
+                hasMoved: false,       // Track if actual movement occurred
+                potentialGroup: null,  // Group that nodes might be added to
+                nodesOverGroup: new Set(), // Nodes currently over a group
+                draggedFromGroup: null // Group that nodes were dragged from (for removal)
             },
             resizing: {
                 active: false,
@@ -909,9 +912,46 @@ Mode: ${this.fpsTestMode}`;
         if (resizeHandle) {
             const nodes = this.selection.getSelectedNodes();
             if (nodes.length > 0) {
-                 window.app.undoManager.beginInteraction(nodes);
-                 const finalValues = nodes.map(n => n.originalAspect || 1);
-                 window.app.undoManager.endInteraction('node_reset', { resetAspectRatio: true, values: finalValues });
+                // Check if all selected nodes are groups
+                const allGroups = nodes.every(n => n.type === 'container/group');
+                
+                if (allGroups) {
+                    // For groups, animate to fit contents (shrinking allowed)
+                    for (const groupNode of nodes) {
+                        if (groupNode.updateBounds) {
+                            // Store current bounds for undo
+                            const oldBounds = {
+                                pos: [...groupNode.pos],
+                                size: [...groupNode.size]
+                            };
+                            
+                            // Update bounds with shrinking allowed (expandOnly = false)
+                            groupNode.updateBounds(false);
+                            
+                            // Animate to the new bounds
+                            if (groupNode.animateToBounds) {
+                                groupNode.animateToBounds(groupNode.pos[0], groupNode.pos[1], groupNode.size[0], groupNode.size[1]);
+                            }
+                            
+                            // Send resize command to sync
+                            // Use the actual new values after updateBounds
+                            if (window.app?.operationPipeline) {
+                                const command = new window.NodeCommands.GroupNodeCommand({
+                                    action: 'group_resize',
+                                    groupId: groupNode.id,
+                                    size: [...groupNode.size],
+                                    position: [...groupNode.pos]
+                                });
+                                window.app.operationPipeline.executeCommand(command);
+                            }
+                        }
+                    }
+                } else {
+                    // For non-group nodes, reset aspect ratio as before
+                    window.app.undoManager.beginInteraction(nodes);
+                    const finalValues = nodes.map(n => n.originalAspect || 1);
+                    window.app.undoManager.endInteraction('node_reset', { resetAspectRatio: true, values: finalValues });
+                }
             }
             return;
         }
@@ -927,8 +967,30 @@ Mode: ${this.fpsTestMode}`;
         }
         
         // Otherwise, check for node double-click
-        const node = this.handleDetector.getNodeAtPosition(...this.mouseState.graph, this.graph.nodes);
-        if (node) {
+        const result = this.handleDetector.getNodeAtPosition(...this.mouseState.graph, this.graph.nodes);
+        if (result) {
+            let node = result;
+            let interactionType = null;
+            
+            // Handle new format from group nodes
+            if (result.node && result.interactionType) {
+                node = result.node;
+                interactionType = result.interactionType;
+            }
+            
+            // Handle group-specific double-click actions
+            if (node.type === 'container/group') {
+                if (interactionType === 'titleBar') {
+                    this.startTitleEditing(node, e);
+                    return;
+                } else if (interactionType === 'collapseButton') {
+                    // Already handled in single click
+                    return;
+                }
+                // Note: groups only respond to title bar double-clicks
+                return;
+            }
+            
             // Check if this is a media node and we should enter gallery mode
             if (this.galleryViewManager && (node.type === 'media/image' || node.type === 'media/video')) {
                 // Don't enter gallery mode if we're clicking on the title area
@@ -1070,10 +1132,14 @@ Mode: ${this.fpsTestMode}`;
         
         // Alt+drag for node duplication
         if (e.button === 0 && e.altKey) {
-            const node = this.handleDetector.getNodeAtPosition(...this.mouseState.graph, this.graph.nodes);
-            if (node) {
-                this.startNodeDuplication(node, e);
-                return true;
+            const result = this.handleDetector.getNodeAtPosition(...this.mouseState.graph, this.graph.nodes);
+            if (result) {
+                const node = result.node || result;
+                // Only allow duplication of regular nodes, not groups
+                if (node.type !== 'container/group') {
+                    this.startNodeDuplication(node, e);
+                    return true;
+                }
             }
         }
         
@@ -1112,10 +1178,29 @@ Mode: ${this.fpsTestMode}`;
     handleNodeDrag(e) {
         if (e.button !== 0) return false;
         
-        const node = this.handleDetector.getNodeAtPosition(...this.mouseState.graph, this.graph.nodes);
-        if (node) {
-            this.startNodeDrag(node, e);
-            return true;
+        const result = this.handleDetector.getNodeAtPosition(...this.mouseState.graph, this.graph.nodes);
+        if (result) {
+            // Handle different interaction types for groups
+            if (result.node && result.interactionType) {
+                const { node, interactionType } = result;
+                
+                switch (interactionType) {
+                    case 'titleBar':
+                        this.startGroupTitleBarDrag(node, e);
+                        return true;
+                    case 'resizeHandle':
+                        this.startGroupResize(node, e);
+                        return true;
+                    case 'collapseButton':
+                        this.toggleGroupCollapsed(node);
+                        return true;
+                    // Note: removed 'background' case - groups only selectable via title bar
+                }
+            } else {
+                // Regular node
+                this.startNodeDrag(result, e);
+                return true;
+            }
         }
         return false;
     }
@@ -1181,6 +1266,19 @@ Mode: ${this.fpsTestMode}`;
         
         // Reset movement tracking
         this.interactionState.dragging.hasMoved = false;
+        
+        // Track if nodes are being dragged from a group
+        this.interactionState.dragging.draggedFromGroup = null;
+        const groups = this.graph.nodes.filter(n => n.type === 'container/group');
+        for (const group of groups) {
+            for (const selectedNode of nodesForInteraction) {
+                if (group.childNodes.has(selectedNode.id)) {
+                    this.interactionState.dragging.draggedFromGroup = group;
+                    break;
+                }
+            }
+            if (this.interactionState.dragging.draggedFromGroup) break;
+        }
         
         // Capture initial positions for undo before any movement
         this.interactionState.dragging.initialPositions = new Map();
@@ -1360,7 +1458,13 @@ Mode: ${this.fpsTestMode}`;
         } else if (this.interactionState.dragging.node) {
             this.updateNodeDrag();
         } else if (this.interactionState.resizing.active) {
-            this.updateResize(e);
+            // Check if we're resizing a group
+            const resizingNode = Array.from(this.interactionState.resizing.nodes)[0];
+            if (resizingNode && resizingNode.type === 'container/group') {
+                this.updateGroupResize(...this.mouseState.graph);
+            } else {
+                this.updateResize(e);
+            }
         } else if (this.interactionState.rotating.active) {
             this.updateRotation(e);
         } else if (this.interactionState.selecting.active) {
@@ -1381,21 +1485,46 @@ Mode: ${this.fpsTestMode}`;
     
     updateNodeDrag() {
         let moved = false;
+        const movedGroups = new Map(); // Track group movements for child updates
+        const draggedNodes = [];
+        
+        // First update positions
         for (const [nodeId, offset] of this.interactionState.dragging.offsets) {
             const node = this.graph.getNodeById(nodeId);
             if (node) {
+                const oldX = node.pos[0];
+                const oldY = node.pos[1];
                 const newX = this.mouseState.graph[0] + offset[0];
                 const newY = this.mouseState.graph[1] + offset[1];
                 
                 // Check if position actually changed (with small threshold to avoid floating point issues)
-                if (Math.abs(node.pos[0] - newX) > 0.01 || Math.abs(node.pos[1] - newY) > 0.01) {
+                if (Math.abs(oldX - newX) > 0.01 || Math.abs(oldY - newY) > 0.01) {
                     moved = true;
+                    
+                    // If this is a group node, track the movement delta
+                    if (node.type === 'container/group') {
+                        movedGroups.set(node, {
+                            deltaX: newX - oldX,
+                            deltaY: newY - oldY
+                        });
+                    }
                 }
                 
                 node.pos[0] = newX;
                 node.pos[1] = newY;
+                draggedNodes.push(node);
             }
         }
+        
+        // Move child nodes of any groups that were moved
+        for (const [groupNode, delta] of movedGroups) {
+            if (groupNode.moveChildNodes) {
+                groupNode.moveChildNodes(delta.deltaX, delta.deltaY);
+            }
+        }
+        
+        // Check if dragged nodes are over any groups (for add/remove detection)
+        this.updateGroupHoverStates(draggedNodes);
         
         // Track if any movement occurred
         if (moved) {
@@ -1801,6 +1930,237 @@ Mode: ${this.fpsTestMode}`;
     }
     
     // ===================================
+    // GROUP INTERACTION METHODS
+    // ===================================
+    
+    startGroupTitleBarDrag(groupNode, e) {
+        // Select the group if not already selected
+        if (!this.selection.isSelected(groupNode)) {
+            if (!e.shiftKey) {
+                this.selection.clear();
+            }
+            this.selection.selectNode(groupNode);
+        }
+        
+        // Use the standard dragging system
+        this.interactionState.dragging.node = groupNode;
+        this.interactionState.dragging.hasMoved = false;
+        
+        // Get all nodes that will be affected (selected groups and their children)
+        const nodesForInteraction = [];
+        const selectedNodes = this.selection.getSelectedNodes();
+        
+        for (const node of selectedNodes) {
+            nodesForInteraction.push(node);
+            
+            // If this is a group, also include all child nodes for undo tracking
+            if (node.type === 'container/group' && node.getChildNodes) {
+                const childNodes = node.getChildNodes();
+                for (const child of childNodes) {
+                    if (!nodesForInteraction.includes(child)) {
+                        nodesForInteraction.push(child);
+                    }
+                }
+            }
+        }
+        
+        if (nodesForInteraction.length > 0) {
+            window.app.undoManager.beginInteraction(nodesForInteraction);
+        }
+        
+        // Capture initial positions for undo before any movement
+        this.interactionState.dragging.initialPositions = new Map();
+        for (const node of nodesForInteraction) {
+            this.interactionState.dragging.initialPositions.set(
+                node.id, 
+                [...node.pos]
+            );
+        }
+        
+        // Calculate offsets only for the selected nodes (not children)
+        for (const selectedNode of selectedNodes) {
+            const offset = [
+                selectedNode.pos[0] - this.mouseState.graph[0],
+                selectedNode.pos[1] - this.mouseState.graph[1]
+            ];
+            this.interactionState.dragging.offsets.set(selectedNode.id, offset);
+        }
+        
+        this.dirty_canvas = true;
+    }
+    
+    startGroupResize(groupNode, e) {
+        // Select the group if not already selected
+        if (!this.selection.isSelected(groupNode)) {
+            this.selection.clear();
+            this.selection.selectNode(groupNode);
+        }
+        
+        this.interactionState.resizing.active = true;
+        this.interactionState.resizing.nodes = new Set([groupNode]);  // Use Set instead of array
+        this.interactionState.resizing.initial = new Map();
+        this.interactionState.resizing.initial.set(groupNode.id, {
+            pos: [...groupNode.pos],
+            size: [...groupNode.size]
+        });
+        
+        this.dirty_canvas = true;
+    }
+    
+    toggleGroupCollapsed(groupNode) {
+        if (window.app?.operationPipeline) {
+            const command = new window.NodeCommands.GroupNodeCommand({
+                action: 'group_toggle_collapsed',
+                groupId: groupNode.id
+            });
+            
+            window.app.operationPipeline.executeCommand(command);
+        } else {
+            // Fallback for non-collaborative mode
+            groupNode.toggleCollapsed();
+            this.dirty_canvas = true;
+        }
+    }
+    
+    
+    updateGroupResize(mouseX, mouseY) {
+        if (!this.interactionState.resizing.active) return;
+        
+        const groupNode = Array.from(this.interactionState.resizing.nodes)[0];
+        if (groupNode.type !== 'container/group') return;
+        
+        const initial = this.interactionState.resizing.initial.get(groupNode.id);
+        if (!initial) return;
+        
+        // Calculate new size from bottom-right corner
+        const newWidth = Math.max(groupNode.minSize[0], mouseX - groupNode.pos[0]);
+        const newHeight = Math.max(groupNode.minSize[1], mouseY - groupNode.pos[1]);
+        
+        console.log('🔧 updateGroupResize:', {
+            groupId: groupNode.id,
+            oldSize: [...groupNode.size],
+            newSize: [newWidth, newHeight],
+            minSize: groupNode.minSize,
+            mousePos: [mouseX, mouseY],
+            nodePos: groupNode.pos
+        });
+        
+        groupNode.size[0] = newWidth;
+        groupNode.size[1] = newHeight;
+        
+        groupNode.markDirty();
+        this.dirty_canvas = true;
+    }
+    
+    /**
+     * Update brightness effects when dragging nodes over groups
+     */
+    updateGroupHoverStates(draggedNodes) {
+        // Skip if we're dragging groups themselves
+        const isDraggingGroups = draggedNodes.some(n => n.type === 'container/group');
+        if (isDraggingGroups) return;
+        
+        // Find all groups in the graph
+        const groups = this.graph.nodes.filter(n => n.type === 'container/group');
+        
+        // Get current hover state
+        const previousGroup = this.interactionState.dragging.potentialGroup;
+        
+        // Check which group the node under the mouse is over
+        let targetGroup = null;
+        let nodeUnderMouse = null;
+        
+        // Find which dragged node is under the mouse cursor
+        const mousePos = this.mouseState.graph;
+        for (const node of draggedNodes) {
+            const nodeLeft = node.pos[0];
+            const nodeTop = node.pos[1];
+            const nodeRight = node.pos[0] + node.size[0];
+            const nodeBottom = node.pos[1] + node.size[1];
+            
+            if (mousePos[0] >= nodeLeft && mousePos[0] <= nodeRight &&
+                mousePos[1] >= nodeTop && mousePos[1] <= nodeBottom) {
+                nodeUnderMouse = node;
+                break;
+            }
+        }
+        
+        // If we found the node under mouse, check if it's over a group
+        if (nodeUnderMouse) {
+            for (const group of groups) {
+                // Skip collapsed groups
+                if (group.isCollapsed) continue;
+                
+                // Check if the node under mouse is over this group
+                if (group.shouldContainNode && group.shouldContainNode(nodeUnderMouse)) {
+                    targetGroup = group;
+                    break; // Use first matching group
+                }
+            }
+        }
+        
+        // If we found a target group, ALL dragged nodes will be added to it
+        const nodesOverGroup = targetGroup ? new Set(draggedNodes) : new Set();
+        
+        // Handle group changes with debouncing
+        if (targetGroup !== previousGroup) {
+            const now = Date.now();
+            
+            // Check if we can update (150ms delay between changes)
+            if (!this._lastGroupHoverChange || (now - this._lastGroupHoverChange) > 150) {
+                // Reset brightness for previous group
+                if (previousGroup && previousGroup.setBrightness) {
+                    previousGroup.setBrightness(1.0);
+                }
+                
+                // Set brightness for new group
+                if (targetGroup && targetGroup.setBrightness) {
+                    targetGroup.setBrightness(1.5);
+                }
+                
+                // Update state
+                this.interactionState.dragging.potentialGroup = targetGroup;
+                this.interactionState.dragging.nodesOverGroup = nodesOverGroup;
+                this._lastGroupHoverChange = now;
+            }
+        } else {
+            // Same group, just update the nodes set
+            this.interactionState.dragging.nodesOverGroup = nodesOverGroup;
+        }
+        
+        // Update state
+        if (targetGroup) {
+            this.interactionState.dragging.potentialGroup = targetGroup;
+            this.interactionState.dragging.nodesOverGroup = nodesOverGroup;
+            
+            // Brighten the GROUP that nodes are over
+            if (targetGroup.setBrightness) {
+                // Check if we're adding new nodes or removing existing ones
+                const hasNewNodes = Array.from(nodesOverGroup).some(node => !targetGroup.childNodes.has(node.id));
+                const hasExistingNodes = Array.from(nodesOverGroup).some(node => targetGroup.childNodes.has(node.id));
+                
+                if (hasNewNodes) {
+                    // Brighten more when adding new nodes
+                    console.log(`💡 Brightening group ${targetGroup.id} to 1.5 (adding nodes)`);
+                    targetGroup.setBrightness(1.5);
+                } else if (hasExistingNodes && this.interactionState.dragging.draggedFromGroup === targetGroup) {
+                    // Moderate brightness when potentially removing nodes
+                    console.log(`💡 Brightening group ${targetGroup.id} to 1.3 (potential removal)`);
+                    targetGroup.setBrightness(1.3);
+                }
+            }
+        }
+        
+        // Reset the original group brightness if nodes are being dragged away
+        if (this.interactionState.dragging.draggedFromGroup && 
+            this.interactionState.dragging.draggedFromGroup !== targetGroup &&
+            this.interactionState.dragging.draggedFromGroup.setBrightness) {
+            console.log(`💡 Resetting original group ${this.interactionState.dragging.draggedFromGroup.id} to 1.0`);
+            this.interactionState.dragging.draggedFromGroup.setBrightness(1.0);
+        }
+    }
+    
+    // ===================================
     // FINISH INTERACTIONS
     // ===================================
     
@@ -1857,11 +2217,116 @@ Mode: ${this.fpsTestMode}`;
                     });
                 }
             } else {
-                // Regular node move
-                const nodes = this.selection.getSelectedNodes();
-                if (nodes.length > 0) {
-                    const finalPositions = nodes.map(n => [...n.pos]);
-                    window.app.undoManager.endInteraction('node_move', { positions: finalPositions });
+                // Handle group assignment/removal before regular move
+                const potentialGroup = this.interactionState.dragging.potentialGroup;
+                const nodesOverGroup = this.interactionState.dragging.nodesOverGroup;
+                const draggedFromGroup = this.interactionState.dragging.draggedFromGroup;
+                
+                // Add nodes to group if dropped on one
+                if (potentialGroup && nodesOverGroup.size > 0) {
+                    // Collect nodes to add
+                    const nodesToAdd = [];
+                    for (const node of nodesOverGroup) {
+                        if (!potentialGroup.childNodes.has(node.id)) {
+                            nodesToAdd.push(node.id);
+                        }
+                    }
+                    
+                    if (nodesToAdd.length > 0) {
+                        // Temporarily disable bounds updates during batch operation
+                        const originalUpdateBounds = potentialGroup.updateBounds;
+                        potentialGroup.updateBounds = () => {}; // No-op
+                        
+                        // Add all nodes to the group
+                        const addPromises = [];
+                        for (const nodeId of nodesToAdd) {
+                            if (window.app?.operationPipeline) {
+                                const command = new window.NodeCommands.GroupNodeCommand({
+                                    action: 'group_add_node',
+                                    groupId: potentialGroup.id,
+                                    nodeId: nodeId
+                                });
+                                addPromises.push(window.app.operationPipeline.executeCommand(command));
+                            }
+                        }
+                        
+                        // Wait for all add operations to complete, then update bounds once
+                        Promise.all(addPromises).then(() => {
+                            // Restore original updateBounds method
+                            potentialGroup.updateBounds = originalUpdateBounds;
+                            
+                            // Now update bounds once for all added nodes (with animation)
+                            const targetBounds = potentialGroup.updateBounds(true);
+                            
+                            // Send single resize command to sync the new bounds
+                            if (window.app?.operationPipeline && targetBounds) {
+                                const command = new window.NodeCommands.GroupNodeCommand({
+                                    action: 'group_resize',
+                                    groupId: potentialGroup.id,
+                                    size: [...targetBounds.size],
+                                    position: [...targetBounds.pos]
+                                });
+                                window.app.operationPipeline.executeCommand(command);
+                            }
+                        });
+                    }
+                }
+                
+                // Remove nodes from group if dragged out
+                if (draggedFromGroup && !potentialGroup) {
+                    const draggedNodes = this.selection.getSelectedNodes();
+                    const removePromises = [];
+                    for (const node of draggedNodes) {
+                        if (draggedFromGroup.childNodes.has(node.id)) {
+                            // Remove node from group
+                            if (window.app?.operationPipeline) {
+                                const command = new window.NodeCommands.GroupNodeCommand({
+                                    action: 'group_remove_node',
+                                    groupId: draggedFromGroup.id,
+                                    nodeId: node.id
+                                });
+                                removePromises.push(window.app.operationPipeline.executeCommand(command));
+                            }
+                        }
+                    }
+                    
+                    // Don't update bounds when removing nodes - groups never shrink
+                }
+                
+                // Reset brightness for all groups
+                if (potentialGroup && potentialGroup.setBrightness) {
+                    potentialGroup.setBrightness(1.0);
+                }
+                if (draggedFromGroup && draggedFromGroup.setBrightness) {
+                    draggedFromGroup.setBrightness(1.0);
+                }
+                
+                // Regular node move - include child nodes if groups were moved
+                const selectedNodes = this.selection.getSelectedNodes();
+                const allMovedNodes = [];
+                
+                // Collect all nodes that were moved (selected + children of groups)
+                for (const node of selectedNodes) {
+                    allMovedNodes.push(node);
+                    
+                    // If this is a group, also include child nodes
+                    if (node.type === 'container/group' && node.getChildNodes) {
+                        const childNodes = node.getChildNodes();
+                        for (const child of childNodes) {
+                            if (!allMovedNodes.includes(child)) {
+                                allMovedNodes.push(child);
+                            }
+                        }
+                    }
+                }
+                
+                if (allMovedNodes.length > 0) {
+                    const nodeIds = allMovedNodes.map(n => n.id);
+                    const finalPositions = allMovedNodes.map(n => [...n.pos]);
+                    window.app.undoManager.endInteraction('node_move', { 
+                        nodeIds: nodeIds,
+                        positions: finalPositions 
+                    });
                 }
             }
         }
@@ -1869,15 +2334,54 @@ Mode: ${this.fpsTestMode}`;
         // Resize
         if (this.interactionState.resizing.active) {
             const nodes = Array.from(this.interactionState.resizing.nodes);
+            console.log('🔧 Finishing resize with nodes:', nodes.length, nodes.map(n => ({ id: n.id, type: n.type, size: n.size })));
+            
             if (nodes.length > 0) {
-                const nodeIds = nodes.map(n => n.id);
-                const finalSizes = nodes.map(n => [...n.size]);
-                const finalPositions = nodes.map(n => [...n.pos]);
-                window.app.undoManager.endInteraction('node_resize', { 
-                    nodeIds, 
-                    sizes: finalSizes, 
-                    positions: finalPositions 
-                });
+                // Check if we're resizing a single group node
+                if (nodes.length === 1 && nodes[0].type === 'container/group') {
+                    const groupNode = nodes[0];
+                    console.log('📐 Finishing group resize:', {
+                        groupId: groupNode.id,
+                        size: groupNode.size,
+                        position: groupNode.pos
+                    });
+                    
+                    // Use GroupNodeCommand for group resize
+                    if (window.app?.operationPipeline) {
+                        const command = new window.NodeCommands.GroupNodeCommand({
+                            action: 'group_resize',
+                            groupId: groupNode.id,
+                            size: [...groupNode.size],
+                            position: [...groupNode.pos]
+                        });
+                        
+                        window.app.operationPipeline.executeCommand(command);
+                    }
+                } else {
+                    // Regular node resize
+                    const nodeIds = nodes.map(n => n.id);
+                    const finalSizes = nodes.map(n => {
+                        // Ensure size is a valid array
+                        if (!n.size || !Array.isArray(n.size) || n.size.length !== 2) {
+                            console.error(`Invalid size for node ${n.id}:`, n.size, 'Node:', n);
+                            return [100, 100]; // Default size
+                        }
+                        return [...n.size];
+                    });
+                    const finalPositions = nodes.map(n => [...n.pos]);
+                    
+                    console.log('📐 Resize params:', {
+                        nodeIds,
+                        sizes: finalSizes,
+                        positions: finalPositions
+                    });
+                    
+                    window.app.undoManager.endInteraction('node_resize', { 
+                        nodeIds, 
+                        sizes: finalSizes, 
+                        positions: finalPositions 
+                    });
+                }
             }
         }
 
@@ -1885,9 +2389,11 @@ Mode: ${this.fpsTestMode}`;
         if (this.interactionState.rotating.active) {
             const nodes = Array.from(this.interactionState.rotating.nodes);
             if (nodes.length > 0) {
+                const nodeIds = nodes.map(n => n.id);
                 const finalRotations = nodes.map(n => n.rotation || 0);
                 const finalPositions = nodes.map(n => [...n.pos]);
                 window.app.undoManager.endInteraction('node_rotate', { 
+                    nodeIds,
                     angles: finalRotations, 
                     positions: finalPositions 
                 });
@@ -1899,6 +2405,9 @@ Mode: ${this.fpsTestMode}`;
         this.interactionState.dragging.offsets.clear();
         this.interactionState.dragging.hasMoved = false;
         this.interactionState.dragging.initialPositions = null;
+        this.interactionState.dragging.potentialGroup = null;
+        this.interactionState.dragging.nodesOverGroup.clear();
+        this.interactionState.dragging.draggedFromGroup = null;
         this.interactionState.resizing.active = false;
         this.interactionState.resizing.nodes.clear();
         this.interactionState.resizing.initial.clear();
@@ -1999,6 +2508,12 @@ Mode: ${this.fpsTestMode}`;
         }
         if (ctrl && key === 'd') {
             this.duplicateSelected();
+            return true;
+        }
+        
+        // Group selected nodes (or create empty group)
+        if (key === 'g' && !ctrl && !shift && !alt) {
+            this.createGroupFromSelected();
             return true;
         }
         
@@ -2581,6 +3096,83 @@ Mode: ${this.fpsTestMode}`;
     
     selectAll() {
         this.selection.selectAll(this.graph.nodes);
+    }
+    
+    createGroupFromSelected() {
+        const selected = this.selection.getSelectedNodes();
+        
+        // Allow creating empty groups
+        if (selected.length === 0) {
+            // Create empty group at mouse position or center of viewport
+            const mousePos = this.mouseState.graph || [0, 0];
+            const defaultSize = 200;
+            const titleBarHeight = 30;
+            
+            // Center the group on the mouse position
+            const groupX = mousePos[0] - defaultSize / 2;
+            const groupY = mousePos[1] - (defaultSize + titleBarHeight) / 2;
+            
+            // Execute group creation command
+            window.app.operationPipeline.execute('group_create', {
+                groupId: Date.now() + Math.floor(Math.random() * 1000),
+                bounds: {
+                    x: groupX,
+                    y: groupY,
+                    width: defaultSize,
+                    height: defaultSize + titleBarHeight
+                },
+                nodeIds: [] // Empty group
+            });
+            return;
+        }
+        
+        // Don't allow grouping if any selected nodes are already groups
+        const hasGroups = selected.some(node => node.type === 'container/group');
+        if (hasGroups) {
+            console.warn('Cannot create group: groups cannot contain other groups');
+            return;
+        }
+        
+        // Calculate bounding box of selected nodes
+        let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+        
+        for (const node of selected) {
+            const nodeMinX = node.pos[0];
+            const nodeMinY = node.pos[1];
+            const nodeMaxX = node.pos[0] + node.size[0];
+            const nodeMaxY = node.pos[1] + node.size[1];
+            
+            minX = Math.min(minX, nodeMinX);
+            minY = Math.min(minY, nodeMinY);
+            maxX = Math.max(maxX, nodeMaxX);
+            maxY = Math.max(maxY, nodeMaxY);
+        }
+        
+        // Calculate group position and size with padding
+        const padding = 20;
+        const titleBarHeight = 30;
+        const groupX = minX - padding;
+        const groupY = minY - padding - titleBarHeight;
+        const groupWidth = maxX - minX + (padding * 2);
+        const groupHeight = maxY - minY + (padding * 2) + titleBarHeight;
+        
+        // Create group through collaborative system
+        // Always use the collaborative path - optimistic updates will provide immediate feedback
+        if (window.app?.operationPipeline) {
+            const command = new window.NodeCommands.GroupNodeCommand({
+                action: 'group_create',
+                nodeIds: selected.map(node => node.id),
+                groupPos: [groupX, groupY],
+                groupSize: [groupWidth, groupHeight],
+                groupTitle: `Group ${this.graph.nodes.filter(n => n.type === 'container/group').length + 1}`
+            });
+            
+            window.app.operationPipeline.executeCommand(command);
+            
+            // Clear selection - the new group will be selected when optimistic update applies
+        } else {
+            console.warn('No operation pipeline available - group creation requires collaborative mode');
+        }
     }
     
     zoomToFit() {
@@ -3856,8 +4448,23 @@ Mode: ${this.fpsTestMode}`;
             window.memoryManager.performCleanup(visibleNodes, this.graph.nodes, this.viewport);
         }
         
-        // Draw all visible nodes
+        // Draw all visible nodes in layers: groups first, then regular nodes
+        
+        // First pass: draw group nodes (background layer)
         for (const node of visibleNodes) {
+            if (node.type !== 'container/group') continue;
+            
+            // In gallery mode, only draw the current node
+            if (this.galleryViewManager && this.galleryViewManager.shouldHideNode(node)) {
+                continue;
+            }
+            this.drawNode(ctx, node);
+        }
+        
+        // Second pass: draw regular nodes (foreground layer)
+        for (const node of visibleNodes) {
+            if (node.type === 'container/group') continue;
+            
             // In gallery mode, only draw the current node
             if (this.galleryViewManager && this.galleryViewManager.shouldHideNode(node)) {
                 continue;
@@ -4090,6 +4697,21 @@ Mode: ${this.fpsTestMode}`;
             }
         }
         
+        // Update brightness animation
+        if (node.updateBrightness && node.updateBrightness()) {
+            this.dirty_canvas = true; // Keep animating
+        }
+        
+        // Update group expansion animation
+        if (node.type === 'container/group' && node.updateAnimation && node.updateAnimation()) {
+            this.dirty_canvas = true; // Keep animating
+        }
+        
+        // Apply brightness effect
+        if (node.brightness && node.brightness !== 1.0) {
+            ctx.filter = `brightness(${node.brightness})`;
+        }
+        
         // Use animated position if available (priority order)
         let drawPos = node.pos;
         if (node._gridAnimPos) {
@@ -4109,7 +4731,15 @@ Mode: ${this.fpsTestMode}`;
         
         // Draw node content
         if (node.onDrawForeground) {
-            node.onDrawForeground(ctx);
+            // For group nodes, calculate screen-space dimensions before transform
+            if (node.type === 'container/group' && node.getScreenSpaceTitleBarHeightForViewport) {
+                const screenSpaceTitleBarHeight = node.getScreenSpaceTitleBarHeightForViewport(this.viewport);
+                const screenSpaceLineWidth = node.style.borderWidth / this.viewport.scale;
+                const screenSpaceFontSize = 12 / this.viewport.scale; // 12px target font size
+                node.onDrawForeground(ctx, screenSpaceTitleBarHeight, screenSpaceLineWidth, screenSpaceFontSize);
+            } else {
+                node.onDrawForeground(ctx);
+            }
         }
         
         // Draw title above the node (before selection, in node's coordinate space)
@@ -4163,8 +4793,10 @@ Mode: ${this.fpsTestMode}`;
         ctx.stroke();
         ctx.restore();
         
-        // Rotation handle (drawn in screen space)
-        this.drawRotationHandle(ctx, node);
+        // Rotation handle (drawn in screen space) - skip for group nodes
+        if (node.type !== 'container/group') {
+            this.drawRotationHandle(ctx, node);
+        }
     }
     
     drawRotationHandle(ctx, node) {

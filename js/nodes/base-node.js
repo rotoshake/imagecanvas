@@ -16,6 +16,12 @@ class BaseNode {
         this.originalAspect = 1;
         this.graph = null;
         this.loadingState = 'idle'; // idle, loading, loaded, error
+        
+        // Visual effects
+        this.brightness = 1.0; // 1.0 = normal, > 1.0 = brighter
+        this.targetBrightness = 1.0;
+        this.brightnessTransitionStart = null;
+        this.brightnessTransitionDuration = 200; // ms
     }
     
     // Validation methods
@@ -224,6 +230,46 @@ class BaseNode {
                 this.graph.canvas.dirty_canvas = true;
             }
         }
+    }
+    
+    /**
+     * Set target brightness with transition
+     * @param {number} brightness - Target brightness (1.0 = normal, > 1.0 = brighter)
+     */
+    setBrightness(brightness) {
+        if (this.targetBrightness !== brightness) {
+            this.targetBrightness = brightness;
+            this.brightnessTransitionStart = Date.now();
+            this.markDirty();
+        }
+    }
+    
+    /**
+     * Update brightness based on transition
+     * @returns {boolean} true if still transitioning
+     */
+    updateBrightness() {
+        if (this.brightness === this.targetBrightness) {
+            return false;
+        }
+        
+        const now = Date.now();
+        const elapsed = now - this.brightnessTransitionStart;
+        const progress = Math.min(elapsed / this.brightnessTransitionDuration, 1);
+        
+        // Smooth easing
+        const eased = 0.5 - Math.cos(progress * Math.PI) / 2;
+        
+        // Interpolate brightness
+        const startBrightness = this.brightness;
+        this.brightness = startBrightness + (this.targetBrightness - startBrightness) * eased;
+        
+        if (progress >= 1) {
+            this.brightness = this.targetBrightness;
+            return false;
+        }
+        
+        return true;
     }
     
     // Lifecycle methods (override in subclasses)

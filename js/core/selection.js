@@ -79,14 +79,34 @@ class SelectionManager {
         this.selectedNodes.clear();
         
         for (const node of nodes) {
-            const [nx, ny, nw, nh] = node.getBoundingBox();
-            
-            // Check if node intersects with selection rectangle
-            if (nx + nw > selectionBounds[0] && 
-                nx < selectionBounds[0] + selectionBounds[2] &&
-                ny + nh > selectionBounds[1] && 
-                ny < selectionBounds[1] + selectionBounds[3]) {
-                this.selectedNodes.set(node.id, node);
+            if (node.type === 'container/group') {
+                // For groups, only check if title bar intersects with selection
+                const titleBarHeight = node.screenSpaceTitleBarHeight || node.titleBarHeight || 30;
+                const titleBarBounds = [
+                    node.pos[0],
+                    node.pos[1],
+                    node.size[0],
+                    titleBarHeight
+                ];
+                
+                // Check if title bar intersects with selection rectangle
+                if (titleBarBounds[0] + titleBarBounds[2] > selectionBounds[0] && 
+                    titleBarBounds[0] < selectionBounds[0] + selectionBounds[2] &&
+                    titleBarBounds[1] + titleBarBounds[3] > selectionBounds[1] && 
+                    titleBarBounds[1] < selectionBounds[1] + selectionBounds[3]) {
+                    this.selectedNodes.set(node.id, node);
+                }
+            } else {
+                // For regular nodes, check full bounds
+                const [nx, ny, nw, nh] = node.getBoundingBox();
+                
+                // Check if node intersects with selection rectangle
+                if (nx + nw > selectionBounds[0] && 
+                    nx < selectionBounds[0] + selectionBounds[2] &&
+                    ny + nh > selectionBounds[1] && 
+                    ny < selectionBounds[1] + selectionBounds[3]) {
+                    this.selectedNodes.set(node.id, node);
+                }
             }
         }
         
