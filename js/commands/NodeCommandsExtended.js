@@ -8,17 +8,27 @@ class ResizeNodeCommand extends Command {
     }
     
     validate() {
-        const { nodeIds, sizes, positions } = this.params;
+        const { nodeIds, sizes, size, positions, position } = this.params;
         
         if (!nodeIds || !Array.isArray(nodeIds) || nodeIds.length === 0) {
             return { valid: false, error: 'Missing or invalid nodeIds' };
         }
         
-        if (!sizes || !Array.isArray(sizes) || sizes.length !== nodeIds.length) {
+        // Handle both plural (sizes) and singular (size) forms
+        let sizesArray = sizes;
+        if (!sizesArray && size && nodeIds.length === 1) {
+            // Convert singular form to plural for consistency
+            sizesArray = [size];
+            this.params.sizes = sizesArray;
+        }
+        
+        if (!sizesArray || !Array.isArray(sizesArray) || sizesArray.length !== nodeIds.length) {
             console.error('ResizeNodeCommand validation failed:', {
                 sizes,
-                sizesIsArray: Array.isArray(sizes),
-                sizesLength: sizes?.length,
+                size,
+                sizesArray,
+                sizesIsArray: Array.isArray(sizesArray),
+                sizesLength: sizesArray?.length,
                 nodeIds,
                 nodeIdsLength: nodeIds.length,
                 params: this.params
@@ -26,7 +36,15 @@ class ResizeNodeCommand extends Command {
             return { valid: false, error: 'Invalid sizes array' };
         }
         
-        if (positions && (!Array.isArray(positions) || positions.length !== nodeIds.length)) {
+        // Handle both plural (positions) and singular (position) forms
+        let positionsArray = positions;
+        if (!positionsArray && position && nodeIds.length === 1) {
+            // Convert singular form to plural for consistency
+            positionsArray = [position];
+            this.params.positions = positionsArray;
+        }
+        
+        if (positionsArray && (!Array.isArray(positionsArray) || positionsArray.length !== nodeIds.length)) {
             return { valid: false, error: 'Invalid positions array' };
         }
         
@@ -37,7 +55,9 @@ class ResizeNodeCommand extends Command {
         const { graph } = context;
         this.undoData = { 
             previousSizes: {},
-            previousPositions: {}
+            previousPositions: {},
+            previousAspectRatios: {},
+            previousLockedAspectRatios: {}
         };
 
         if (this.initialState) {
@@ -53,6 +73,8 @@ class ResizeNodeCommand extends Command {
             if (node) {
                 this.undoData.previousSizes[nodeId] = [...node.size];
                 this.undoData.previousPositions[nodeId] = [...node.pos];
+                this.undoData.previousAspectRatios[nodeId] = node.aspectRatio;
+                this.undoData.previousLockedAspectRatios[nodeId] = node.lockedAspectRatio;
             }
         });
         
@@ -104,6 +126,12 @@ class ResizeNodeCommand extends Command {
             // onResize() can interfere with non-uniform scaling by enforcing aspect ratios
         });
         
+        // Trigger canvas redraw
+        if (graph.canvas) {
+            graph.canvas.dirty_canvas = true;
+            graph.change();
+        }
+        
         this.executed = true;
         // // 
         return { success: true };
@@ -116,30 +144,41 @@ class ResizeNodeCommand extends Command {
             throw new Error('No undo data available');
         }
         
-        // Restore sizes
-        if (this.undoData.previousSizes) {
-            for (const [nodeId, size] of Object.entries(this.undoData.previousSizes)) {
-                const node = graph.getNodeById(nodeId);
-                if (node) {
-                    node.size[0] = size[0];
-                    node.size[1] = size[1];
-                    
-                    if (node.onResize) {
-                        node.onResize();
-                    }
-                }
+        // Restore all properties for each node
+        for (const nodeId of this.params.nodeIds) {
+            const node = graph.getNodeById(nodeId);
+            if (!node) continue;
+            
+            // Restore size
+            if (this.undoData.previousSizes[nodeId]) {
+                node.size[0] = this.undoData.previousSizes[nodeId][0];
+                node.size[1] = this.undoData.previousSizes[nodeId][1];
+            }
+            
+            // Restore position
+            if (this.undoData.previousPositions[nodeId]) {
+                node.pos[0] = this.undoData.previousPositions[nodeId][0];
+                node.pos[1] = this.undoData.previousPositions[nodeId][1];
+            }
+            
+            // Restore aspect ratios
+            if (this.undoData.previousAspectRatios[nodeId] !== undefined) {
+                node.aspectRatio = this.undoData.previousAspectRatios[nodeId];
+            }
+            if (this.undoData.previousLockedAspectRatios[nodeId] !== undefined) {
+                node.lockedAspectRatio = this.undoData.previousLockedAspectRatios[nodeId];
+            }
+            
+            // Call onResize to update any dependent properties
+            if (node.onResize) {
+                node.onResize();
             }
         }
         
-        // Restore positions
-        if (this.undoData.previousPositions) {
-            for (const [nodeId, pos] of Object.entries(this.undoData.previousPositions)) {
-                const node = graph.getNodeById(nodeId);
-                if (node) {
-                    node.pos[0] = pos[0];
-                    node.pos[1] = pos[1];
-                }
-            }
+        // Trigger canvas redraw
+        if (graph.canvas) {
+            graph.canvas.dirty_canvas = true;
+            graph.change();
         }
         
         return { success: true };

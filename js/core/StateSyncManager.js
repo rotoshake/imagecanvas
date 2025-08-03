@@ -1019,8 +1019,14 @@ class StateSyncManager {
                     delete node._alignmentCompletedAt;
                 }
                 // Still update other properties, just skip position
-                const { pos, ...otherData } = nodeData;
-                nodeData = otherData;
+                // For groups, also skip size updates
+                if (node.type === 'container/group' && nodeData.size) {
+                    const { pos, size, ...otherData } = nodeData;
+                    nodeData = otherData;
+                } else {
+                    const { pos, ...otherData } = nodeData;
+                    nodeData = otherData;
+                }
             } else if (forceUpdate && age < 2000) {
                 this.debugLog(2, `🔄 Allowing undo/redo position update for node ${node.id} despite recent alignment completion`);
             }

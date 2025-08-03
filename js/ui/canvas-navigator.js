@@ -15,6 +15,7 @@ class CanvasNavigator {
         
         this.createUI();
         this.setupEventListeners();
+        this.setupUserProfileListener();
     }
     
     /**
@@ -165,9 +166,8 @@ class CanvasNavigator {
             }
             
             .user-btn:hover {
-                background: #333;
-                color: #fff;
-                border-color: #555;
+                opacity: 0.85;
+                transform: scale(1.05);
             }
             
             .user-avatar {
@@ -518,13 +518,6 @@ class CanvasNavigator {
                     window.app.userProfilePanel.toggle();
                 }
             });
-            
-            // Listen for user profile changes
-            if (window.app?.userProfileSystem) {
-                window.app.userProfileSystem.addListener('userChanged', (user) => {
-                    this.updateUserAvatar(user);
-                });
-            }
         }
         
         // New canvas button
@@ -582,6 +575,11 @@ class CanvasNavigator {
             }
         }
         
+        // Update user avatar display
+        if (window.app?.userProfileSystem?.currentUser) {
+            this.updateUserAvatar(window.app.userProfileSystem.currentUser);
+        }
+        
         this.loadCanvases();
         this.updateDatabaseSize();
     }
@@ -594,15 +592,27 @@ class CanvasNavigator {
     
     updateUserAvatar(user) {
         const userAvatar = this.panel.querySelector('.user-avatar');
-        if (!userAvatar) return;
+        const userBtn = this.panel.querySelector('.user-btn');
+        if (!userAvatar || !userBtn) return;
         
         if (user) {
-            // Show user's first initial
+            // Show user's first initial with colored background
             userAvatar.textContent = user.username.charAt(0).toUpperCase();
-            userAvatar.style.color = window.app?.userProfileSystem?.getUserColor() || '#999';
+            const userColor = window.app?.userProfileSystem?.getUserColor() || '#4a90e2';
+            
+            // Style the button as a colored circle with initial
+            userBtn.style.background = userColor;
+            userBtn.style.color = '#fff';
+            userBtn.style.fontWeight = '600';
+            userBtn.style.border = `1px solid ${userColor}`;
+            userAvatar.style.color = '#fff';
         } else {
-            // Show default avatar
+            // Show default avatar for guest
             userAvatar.textContent = '👤';
+            userBtn.style.background = 'none';
+            userBtn.style.color = '#999';
+            userBtn.style.fontWeight = 'normal';
+            userBtn.style.border = '1px solid transparent';
             userAvatar.style.color = '#999';
         }
     }
@@ -2077,6 +2087,49 @@ class CanvasNavigator {
             // Create and show admin panel
             window.adminPanel = new AdminPanel(this);
             window.adminPanel.show();
+        }
+    }
+    
+    /**
+     * Setup user profile listener with retry mechanism
+     */
+    setupUserProfileListener() {
+        const trySetup = () => {
+            if (this.app?.userProfileSystem) {
+                // Remove any existing listener first to avoid duplicates
+                if (this._userChangedHandler) {
+                    this.app.userProfileSystem.removeListener('userChanged', this._userChangedHandler);
+                }
+                
+                // Create and store the handler
+                this._userChangedHandler = (user) => {
+                    this.updateUserAvatar(user);
+                };
+                
+                // Add the listener
+                this.app.userProfileSystem.addListener('userChanged', this._userChangedHandler);
+                
+                // Update avatar immediately if user is already logged in
+                if (this.app.userProfileSystem.currentUser) {
+                    this.updateUserAvatar(this.app.userProfileSystem.currentUser);
+                }
+                
+                return true;
+            }
+            return false;
+        };
+        
+        // Try immediately
+        if (!trySetup()) {
+            // If not available, retry periodically
+            const retryInterval = setInterval(() => {
+                if (trySetup()) {
+                    clearInterval(retryInterval);
+                }
+            }, 100);
+            
+            // Stop trying after 5 seconds
+            setTimeout(() => clearInterval(retryInterval), 5000);
         }
     }
 }

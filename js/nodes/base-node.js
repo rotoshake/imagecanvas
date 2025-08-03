@@ -238,6 +238,7 @@ class BaseNode {
      */
     setBrightness(brightness) {
         if (this.targetBrightness !== brightness) {
+            this.initialBrightness = this.brightness; // Store current brightness as start point
             this.targetBrightness = brightness;
             this.brightnessTransitionStart = Date.now();
             this.markDirty();
@@ -249,7 +250,7 @@ class BaseNode {
      * @returns {boolean} true if still transitioning
      */
     updateBrightness() {
-        if (this.brightness === this.targetBrightness) {
+        if (this.brightness === this.targetBrightness || !this.brightnessTransitionStart) {
             return false;
         }
         
@@ -257,17 +258,21 @@ class BaseNode {
         const elapsed = now - this.brightnessTransitionStart;
         const progress = Math.min(elapsed / this.brightnessTransitionDuration, 1);
         
+        if (progress >= 1) {
+            this.brightness = this.targetBrightness;
+            this.brightnessTransitionStart = null;
+            return false;
+        }
+        
         // Smooth easing
         const eased = 0.5 - Math.cos(progress * Math.PI) / 2;
         
-        // Interpolate brightness
-        const startBrightness = this.brightness;
-        this.brightness = startBrightness + (this.targetBrightness - startBrightness) * eased;
-        
-        if (progress >= 1) {
-            this.brightness = this.targetBrightness;
-            return false;
+        // Interpolate brightness - need to track initial brightness separately
+        if (!this.initialBrightness) {
+            this.initialBrightness = this.brightness;
         }
+        
+        this.brightness = this.initialBrightness + (this.targetBrightness - this.initialBrightness) * eased;
         
         return true;
     }

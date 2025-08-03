@@ -160,11 +160,15 @@ class ClientUndoManager {
         };
 
         nodes.forEach(node => {
+            if (!node) {
+                console.warn('Skipping undefined node in beginInteraction');
+                return;
+            }
             this.interactionInitialState.nodes.set(node.id, {
                 pos: [...node.pos],
                 size: [...node.size],
                 rotation: node.rotation || 0,
-                properties: JSON.parse(JSON.stringify(node.properties))
+                properties: JSON.parse(JSON.stringify(node.properties || {}))
             });
         });
 

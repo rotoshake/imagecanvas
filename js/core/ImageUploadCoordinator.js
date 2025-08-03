@@ -7,6 +7,7 @@ class ImageUploadCoordinator {
         this.app = app;
         this.pendingUploads = new Map(); // hash -> upload info
         this.uploadObservers = new Map(); // hash -> Set of callbacks
+        this.failedNodes = new Set(); // Track node IDs that failed after max retries
         
         // Post-upload sync management
         this.lastSyncTime = 0;
@@ -65,8 +66,32 @@ class ImageUploadCoordinator {
                 
                 return;
             }
-            console.log(`⚠️ No cached data URL found for hash ${hash.substring(0, 8)}... - upload cannot start`);
+            
+            // Schedule a retry - the cache might be populated soon
+            if (!node._uploadRetryCount) {
+                node._uploadRetryCount = 0;
+            }
+            
+            if (node._uploadRetryCount < 5) {
+                node._uploadRetryCount++;
+                const retryDelay = 500 * node._uploadRetryCount; // 500ms, 1s, 1.5s, 2s, 2.5s
+                
+                console.log(`⏳ Cache not ready for ${hash.substring(0, 8)}... - retry ${node._uploadRetryCount}/5 in ${retryDelay}ms`);
+                
+                setTimeout(() => {
+                    // Check if node still exists and needs upload
+                    if (this.app.graph.getNodeById(node.id) && !node.properties.serverUrl) {
+                        this.onImageNodeCreated(node);
+                    }
+                }, retryDelay);
+                return;
+            }
+            
+            // Max retries reached
+            console.warn(`⚠️ No cached data URL found for hash ${hash.substring(0, 8)}... after ${node._uploadRetryCount} retries`);
             console.log(`   Cache has data: ${!!cached}, URL starts with data: ${cached?.url?.startsWith('data:')}`);
+            // Mark this node as failed to avoid checking it again
+            this.failedNodes.add(node.id);
             return;
         }
         
@@ -366,7 +391,8 @@ class ImageUploadCoordinator {
             n.type === 'media/image' && 
             n.properties?.hash && 
             !n.properties?.serverUrl &&
-            !this.pendingUploads.has(n.properties.hash)
+            !this.pendingUploads.has(n.properties.hash) &&
+            !this.failedNodes.has(n.id)  // Skip nodes that failed after max retries
         );
         
         if (needsUpload.length > 0) {

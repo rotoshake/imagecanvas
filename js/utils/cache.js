@@ -261,6 +261,21 @@ class ThumbnailCache {
     
     // Store a thumbnail (with memory management)
     setThumbnail(hash, size, canvas) {
+        // Add detailed logging to debug rotation issue
+        console.log(`🔍 setThumbnail called: hash=${hash.substring(0, 8)}, size=${size}, canvas=${canvas.width}x${canvas.height}`);
+        
+        // Validate hash format to prevent corruption
+        if (!hash || typeof hash !== 'string' || hash.length < 8) {
+            console.error(`❌ Invalid hash provided to setThumbnail: ${hash}`);
+            return;
+        }
+        
+        // Validate canvas
+        if (!canvas || !canvas.width || !canvas.height) {
+            console.error(`❌ Invalid canvas provided to setThumbnail for ${hash.substring(0, 8)}`);
+            return;
+        }
+        
         if (!this.cache.has(hash)) {
             this.cache.set(hash, new Map());
             this.accessOrder.set(hash, Date.now());
@@ -275,10 +290,17 @@ class ThumbnailCache {
         }
         this.currentMemoryUsage += this._calculateCanvasMemory(canvas);
         
-        thumbnails.set(size, canvas);
+        // Clone the canvas to prevent external modifications
+        const clonedCanvas = document.createElement('canvas');
+        clonedCanvas.width = canvas.width;
+        clonedCanvas.height = canvas.height;
+        const ctx = clonedCanvas.getContext('2d');
+        ctx.drawImage(canvas, 0, 0);
+        
+        thumbnails.set(size, clonedCanvas);
         this._trackAccess(hash);
         this._notify(hash); // Notify subscribers that a new thumbnail is available
-        console.log(`📢 Notifying subscribers about new ${size}px thumbnail for ${hash.substring(0, 8)}`);
+        console.log(`📢 Stored ${size}px thumbnail (${clonedCanvas.width}x${clonedCanvas.height}) for ${hash.substring(0, 8)}`);
         
         // Also mark all image nodes with this hash as needing update
         if (window.app?.graph?.nodes) {
@@ -470,7 +492,7 @@ class ThumbnailCache {
             try {
                 const storedThumbnails = await window.indexedDBThumbnailStore.getThumbnails(hash);
                 if (storedThumbnails && Object.keys(storedThumbnails).length > 0) {
-                    console.log(`💾 Loading ${Object.keys(storedThumbnails).length} thumbnails from IndexedDB for ${hash.substring(0, 8)}`);
+                    // console.log(`💾 Loading ${Object.keys(storedThumbnails).length} thumbnails from IndexedDB for ${hash.substring(0, 8)}`);
                     
                     // Convert object to Map format with memory tracking
                     const thumbnailMap = new Map();
@@ -497,7 +519,7 @@ class ThumbnailCache {
                         window.imageProcessingProgress.updateThumbnailProgress(hash, 1);
                     }
                     
-                    console.log(`✅ Instant display: ${thumbnailMap.size} sizes loaded from persistent cache`);
+                    // console.log(`✅ Instant display: ${thumbnailMap.size} sizes loaded from persistent cache`);
                     return thumbnailMap;
                 }
             } catch (error) {
@@ -508,7 +530,7 @@ class ThumbnailCache {
         // 2. SECOND: Try to load from server thumbnails (no rebuilding needed)
         const serverThumbnails = await this._loadServerThumbnails(hash, sourceImage);
         if (serverThumbnails && serverThumbnails.size > 0) {
-            console.log(`🌐 Loading ${serverThumbnails.size} thumbnails from server for ${hash.substring(0, 8)}`);
+            // console.log(`🌐 Loading ${serverThumbnails.size} thumbnails from server for ${hash.substring(0, 8)}`);
             
             // Calculate memory for loaded thumbnails
             let loadedMemory = 0;
@@ -602,6 +624,13 @@ class ThumbnailCache {
     async _generateThumbnailsInternal(hash, sourceImage, progressCallback = null, priority = 'normal') {
         const thumbnails = new Map();
         this.cache.set(hash, thumbnails);
+        
+        // Store source dimensions for validation
+        const sourceDimensions = {
+            width: sourceImage.naturalWidth || sourceImage.width || sourceImage.videoWidth,
+            height: sourceImage.naturalHeight || sourceImage.height || sourceImage.videoHeight
+        };
+        console.log(`🎨 Generating thumbnails for ${hash.substring(0, 8)} from source ${sourceDimensions.width}x${sourceDimensions.height}`);
         
         // Phase 1: Generate priority thumbnails immediately (e.g., 64px)
         console.log(`🖼️ Generating priority thumbnails for ${hash.substring(0, 8)}... Sizes:`, this.prioritySizes);
@@ -753,8 +782,8 @@ class ThumbnailCache {
         }
 
         // Get original dimensions
-        const originalWidth = sourceImage.width || sourceImage.videoWidth;
-        const originalHeight = sourceImage.height || sourceImage.videoHeight;
+        const originalWidth = sourceImage.naturalWidth || sourceImage.width || sourceImage.videoWidth;
+        const originalHeight = sourceImage.naturalHeight || sourceImage.height || sourceImage.videoHeight;
         
         // Skip if original is smaller than or equal to target size
         // For example, a 300x300 image doesn't need a 512px thumbnail
@@ -781,14 +810,43 @@ class ThumbnailCache {
         
         // Create canvas with proper size from the start
         const canvas = document.createElement('canvas');
-        canvas.width = width;
-        canvas.height = height;
-        const ctx = canvas.getContext('2d');
         
-        // Simply draw the image - canvas starts transparent by default
-        ctx.imageSmoothingEnabled = true;
-        ctx.imageSmoothingQuality = CONFIG.THUMBNAILS.QUALITY;
-        ctx.drawImage(sourceImage, 0, 0, width, height);
+        // Check if the image might have EXIF orientation issues
+        // This happens when naturalWidth/Height differ from width/height
+        const hasOrientationIssue = sourceImage.naturalWidth && sourceImage.naturalHeight &&
+            ((sourceImage.naturalWidth !== sourceImage.width) || 
+             (sourceImage.naturalHeight !== sourceImage.height));
+        
+        if (hasOrientationIssue) {
+            // The browser has applied EXIF rotation to the display dimensions
+            // but drawImage might not respect it, so we need to handle it manually
+            console.log(`🔄 Detected potential EXIF orientation issue for thumbnail ${size}px`);
+            
+            // Create a temporary canvas at full resolution to properly capture orientation
+            const tempCanvas = document.createElement('canvas');
+            tempCanvas.width = sourceImage.width;
+            tempCanvas.height = sourceImage.height;
+            const tempCtx = tempCanvas.getContext('2d');
+            
+            // Draw at full size first to capture proper orientation
+            tempCtx.drawImage(sourceImage, 0, 0);
+            
+            // Now scale down from the properly oriented temp canvas
+            canvas.width = width;
+            canvas.height = height;
+            const ctx = canvas.getContext('2d');
+            ctx.imageSmoothingEnabled = true;
+            ctx.imageSmoothingQuality = CONFIG.THUMBNAILS.QUALITY;
+            ctx.drawImage(tempCanvas, 0, 0, width, height);
+        } else {
+            // No orientation issues detected, draw normally
+            canvas.width = width;
+            canvas.height = height;
+            const ctx = canvas.getContext('2d');
+            ctx.imageSmoothingEnabled = true;
+            ctx.imageSmoothingQuality = CONFIG.THUMBNAILS.QUALITY;
+            ctx.drawImage(sourceImage, 0, 0, width, height);
+        }
 
         return canvas;
     }
@@ -799,6 +857,11 @@ class ThumbnailCache {
         if (thumbnails.size === 0) return null;
         
         const targetSize = Math.max(targetWidth, targetHeight);
+        
+        // Add debug logging for rotation issue
+        if (window.DEBUG_THUMBNAILS) {
+            console.log(`🔍 getBestThumbnail: hash=${hash.substring(0, 8)}, target=${targetWidth}x${targetHeight}, targetSize=${targetSize}`);
+        }
         
         // Find the best thumbnail, prioritizing the smallest that meets quality needs
         for (let i = 0; i < this.thumbnailSizes.length; i++) {
@@ -811,6 +874,10 @@ class ThumbnailCache {
                 // Use a sliding scale: be more permissive for smaller targets
                 const qualityThreshold = targetSize <= 128 ? 0.5 : 0.8;
                 if (thumbnailSize >= targetSize * qualityThreshold) {
+                    // Debug check for rotation issue
+                    if (window.DEBUG_THUMBNAILS) {
+                        console.log(`🎯 Selected ${size}px thumbnail (${thumbnail.width}x${thumbnail.height}) for target ${targetWidth}x${targetHeight}`);
+                    }
                     return thumbnail;
                 }
             }
@@ -959,10 +1026,16 @@ class ThumbnailCache {
             const promise = this._loadSingleServerThumbnail(size, nameWithoutExt)
                 .then(canvas => {
                     if (canvas) {
+                        // Double-check that the canvas size makes sense for this thumbnail size
+                        const maxDim = Math.max(canvas.width, canvas.height);
+                        if (maxDim !== size) {
+                            console.warn(`⚠️ Server thumbnail size mismatch: expected ${size}px, got ${maxDim}px (${canvas.width}x${canvas.height})`);
+                        }
+                        
                         thumbnails.set(size, canvas);
                         this.currentMemoryUsage += this._calculateCanvasMemory(canvas);
                         loadedCount++;
-                        console.log(`✅ Loaded ${size}px server thumbnail for ${hash.substring(0, 8)}`);
+                        console.log(`✅ Loaded ${size}px server thumbnail (${canvas.width}x${canvas.height}) for ${hash.substring(0, 8)}`);
                     }
                 })
                 .catch(error => {
@@ -1043,6 +1116,11 @@ class ThumbnailCache {
             const promise = this._loadSingleServerThumbnail(size, nameWithoutExt)
                 .then(canvas => {
                     if (canvas) {
+                        // Verify dimensions before storing
+                        const maxDim = Math.max(canvas.width, canvas.height);
+                        if (maxDim !== size) {
+                            console.warn(`⚠️ Server thumbnail mismatch in _loadServerThumbnails: expected ${size}px, got ${canvas.width}x${canvas.height}`);
+                        }
                         thumbnails.set(size, canvas);
                         // Loaded server thumbnail
                     }
@@ -1073,6 +1151,7 @@ class ThumbnailCache {
             const result = await this._loadImageWithTimeout(thumbnailUrl, 10000); // 10 second timeout
             if (result) {
                 console.log(`✅ Loaded ${size}px thumbnail (${result.width}x${result.height})`);
+                
                 return result;
             } else {
                 console.log(`❌ Failed to load ${size}px thumbnail`);
@@ -1126,6 +1205,9 @@ class ThumbnailCache {
                     
                     // Draw image preserving alpha channel
                     ctx.drawImage(img, 0, 0);
+                    
+                    // Store the source URL on the canvas for debugging
+                    canvas._sourceUrl = url;
 
                     resolve(canvas);
                 } catch (error) {

@@ -2063,17 +2063,34 @@ class ImageCanvasServer {
                 try {
                     console.log('📊 Starting database deletion...');
                     
+                    // First, close all active connections from collaboration manager
+                    if (this.collaborationManager) {
+                        console.log('🔌 Disconnecting all active clients...');
+                        this.io.emit('server_shutdown', { reason: 'Database wipe in progress' });
+                        await new Promise(resolve => setTimeout(resolve, 100)); // Give clients time to disconnect
+                    }
+                    
                     // Check canvas count before deletion
                     const beforeCount = await this.db.get('SELECT COUNT(*) as count FROM canvases');
                     console.log(`📊 Canvases before wipe: ${beforeCount.count}`);
                     
-                    // Delete in correct order to avoid foreign key violations
-                    // Child tables first
-                    console.log('Deleting active_sessions...');
-                    await this.db.run('DELETE FROM active_sessions');
+                    // Set a shorter timeout for database operations
+                    await this.db.run('PRAGMA busy_timeout = 5000'); // 5 seconds
                     
-                    console.log('Deleting active_transactions...');
-                    await this.db.run('DELETE FROM active_transactions');
+                    // Disable foreign key constraints temporarily
+                    await this.db.run('PRAGMA foreign_keys = OFF');
+                    
+                    // Start a transaction for all deletions
+                    await this.db.run('BEGIN IMMEDIATE TRANSACTION');
+                    
+                    try {
+                        // Delete in correct order to avoid foreign key violations
+                        // Child tables first
+                        console.log('Deleting active_sessions...');
+                        await this.db.run('DELETE FROM active_sessions');
+                        
+                        console.log('Deleting active_transactions...');
+                        await this.db.run('DELETE FROM active_transactions');
                     
                     console.log('Deleting operations...');
                     await this.db.run('DELETE FROM operations');
@@ -2089,16 +2106,49 @@ class ImageCanvasServer {
                     
                     // Parent table last
                     console.log('Deleting canvases...');
-                    await this.db.run('DELETE FROM canvases');
+                    const deleteResult = await this.db.run('DELETE FROM canvases');
+                    console.log('Delete result:', deleteResult);
+                    
+                    // Delete users table if it exists
+                    try {
+                        console.log('Deleting users...');
+                        await this.db.run('DELETE FROM users');
+                    } catch (e) {
+                        // Users table might not exist
+                        console.log('Users table not found or already empty');
+                    }
                     
                     // Reset auto-increment counters
+                    console.log('Resetting auto-increment counters...');
                     await this.db.run("DELETE FROM sqlite_sequence");
                     
-                    // Vacuum to reclaim space
-                    await this.db.run('VACUUM');
+                    // Clear in-memory state as well
+                    if (this.collaborationManager && this.collaborationManager.stateManager) {
+                        console.log('Clearing in-memory canvas states...');
+                        this.collaborationManager.stateManager.canvasStates.clear();
+                        this.collaborationManager.stateManager.stateVersions.clear();
+                    }
                     
-                    // Force WAL checkpoint to ensure changes are written
-                    await this.db.run('PRAGMA wal_checkpoint(TRUNCATE)');
+                    // Skip VACUUM if database is large - it can take forever
+                    // Instead just checkpoint the WAL
+                    console.log('Checkpointing WAL...');
+                    try {
+                        await this.db.run('PRAGMA wal_checkpoint(TRUNCATE)');
+                    } catch (e) {
+                        console.warn('WAL checkpoint failed (non-critical):', e.message);
+                    }
+                    
+                        // Commit the transaction
+                        await this.db.run('COMMIT');
+                        console.log('✅ Transaction committed');
+                    } catch (txError) {
+                        // Rollback on error
+                        await this.db.run('ROLLBACK');
+                        throw txError;
+                    } finally {
+                        // Re-enable foreign key constraints
+                        await this.db.run('PRAGMA foreign_keys = ON');
+                    }
                     
                     // Check canvas count after deletion
                     const afterCount = await this.db.get('SELECT COUNT(*) as count FROM canvases');
@@ -2194,11 +2244,16 @@ class ImageCanvasServer {
                 }
                 
                 console.log('🏁 Database wipe complete');
+                
+                // Send response immediately
                 res.json({
                     success: true,
                     results,
                     message: 'Database wiped successfully'
                 });
+                
+                // Note: Collaboration manager will handle reconnections automatically
+                // when clients refresh their pages
                 
             } catch (error) {
                 console.error('❌ Database wipe error:', error);

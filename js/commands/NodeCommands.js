@@ -884,7 +884,7 @@ class GroupNodeCommand extends Command {
         switch (action) {
             case 'group_create':
                 const { nodeIds, groupPos, groupTitle } = this.params;
-                if (!nodeIds || !Array.isArray(nodeIds) || nodeIds.length === 0) {
+                if (!nodeIds || !Array.isArray(nodeIds)) {
                     return { valid: false, error: 'Missing or invalid nodeIds for group creation' };
                 }
                 if (!groupPos || !Array.isArray(groupPos) || groupPos.length !== 2) {

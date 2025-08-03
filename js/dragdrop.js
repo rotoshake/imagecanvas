@@ -496,12 +496,15 @@ class DragDropManager {
             await Promise.all(batch.map(async file => {
                 try {
                     // Calculate hash
+                    console.log(`🔢 Starting hash calculation for ${file.name}...`);
                     const hash = await window.fileHashCalculator.calculateHash(file);
                     hashResults.set(file, hash);
+                    console.log(`✅ Hash calculated and stored: ${hash.substring(0, 8)}... for ${file.name}`);
                     
                     // Cache the file data immediately for upload coordinator
                     // This prevents "No cached data URL found" errors
                     if (window.app?.imageResourceCache && !file.type.startsWith('video/')) {
+                        console.log(`📦 Caching data for upload: ${hash.substring(0, 8)}...`);
                         const reader = new FileReader();
                         const dataUrl = await new Promise((resolve, reject) => {
                             reader.onload = () => resolve(reader.result);
@@ -514,9 +517,11 @@ class DragDropManager {
                             originalFilename: file.name,
                             isLocal: true
                         });
+                        console.log(`✅ Data cached in imageResourceCache for ${hash.substring(0, 8)}...`);
                         
                         if (window.imageCache) {
                             window.imageCache.set(hash, dataUrl);
+                            console.log(`✅ Data also cached in imageCache for ${hash.substring(0, 8)}...`);
                         }
                     }
                     

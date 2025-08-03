@@ -75,6 +75,9 @@ class AutoAlignmentManager {
         this.autoAlignCommitPoint = [...startPos];
         this.autoAlignIsReorderMode = false;
         
+        // Auto-parent nodes to groups before alignment
+        this.autoParentNodesToGroups();
+        
         // Store original positions
         const selectedNodes = this.selection.getSelectedNodes();
         this.autoAlignOriginals = {};
@@ -200,17 +203,42 @@ class AutoAlignmentManager {
             const selectedNodes = this.selection.getSelectedNodes();
             const nodeIds = [];
             const positions = [];
+            const sizes = [];
+            
+            // Check if animation has completed - if so, use actual positions
+            const animationComplete = !this.autoAlignAnimating;
             
             for (const node of selectedNodes) {
-                if (this.autoAlignCommittedTargets[node.id]) {
-                    nodeIds.push(node.id);
-                    positions.push(this.autoAlignCommittedTargets[node.id]);
+                nodeIds.push(node.id);
+                
+                // Always use actual position when animation is complete
+                if (animationComplete) {
+                    positions.push([...node.pos]);
+                    if (node.type === 'container/group') {
+                        sizes.push([...node.size]);
+                    }
+                } else if (this.autoAlignCommittedTargets && this.autoAlignCommittedTargets[node.id]) {
+                    // Animation still running, use target position for regular nodes
+                    if (node.type === 'container/group') {
+                        // For groups, always use actual position/size during animation
+                        positions.push([...node.pos]);
+                        sizes.push([...node.size]);
+                    } else {
+                        positions.push(this.autoAlignCommittedTargets[node.id]);
+                    }
+                } else {
+                    // Fallback to actual position
+                    positions.push([...node.pos]);
+                    if (node.type === 'container/group') {
+                        sizes.push([...node.size]);
+                    }
                 }
             }
 
             window.app.undoManager.endInteraction('node_align', { 
                 nodeIds, 
-                positions, 
+                positions,
+                sizes: sizes.length > 0 ? sizes : undefined,
                 axis: this.autoAlignCommittedAxis 
             });
             
@@ -234,6 +262,19 @@ class AutoAlignmentManager {
         this.autoAlignCommittedAxis = null;
         this.autoAlignCommittedTargets = null;
         this.autoAlignCommittedDirection = null;
+        
+        // Clear alignment completion flags from groups after a delay
+        const nodesToClean = this.selection.getSelectedNodes().filter(n => n.type === 'container/group');
+        setTimeout(() => {
+            for (const node of nodesToClean) {
+                if (node._alignmentJustCompleted) {
+                    delete node._alignmentJustCompleted;
+                }
+            }
+        }, 1000);
+        
+        // Groups are now handled as part of the main animation
+        
         // Don't clear animation state - let the animation complete naturally
         // The animation needs these to continue running
         // They will be cleared by completeAnimation() when finished
@@ -251,10 +292,11 @@ class AutoAlignmentManager {
         // Reset accumulator when starting new animation for consistent timing
         this.accumulator = 0;
 
+        const selectedNodes = this.selection.getSelectedNodes();
+        
         // Store original positions if not already set
         if (!this.autoAlignOriginals) {
             this.autoAlignOriginals = {};
-            const selectedNodes = this.selection.getSelectedNodes();
             for (const node of selectedNodes) {
                 this.autoAlignOriginals[node.id] = [...node.pos];
             }
@@ -262,16 +304,16 @@ class AutoAlignmentManager {
         
         // Determine master order if not set
         if (!this.autoAlignMasterOrder) {
-            const selectedNodes = this.selection.getSelectedNodes();
             
             // Calculate bounding box
             let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
             for (const node of selectedNodes) {
                 const orig = this.autoAlignOriginals[node.id] || node.pos;
-                minX = Math.min(minX, orig[0]);
-                minY = Math.min(minY, orig[1]);
-                maxX = Math.max(maxX, orig[0] + node.size[0]);
-                maxY = Math.max(maxY, orig[1] + node.size[1]);
+                const effSize = this.getEffectiveSizeForAlignment(node);
+                minX = Math.min(minX, orig[0] + effSize.offsetX);
+                minY = Math.min(minY, orig[1] + effSize.offsetY);
+                maxX = Math.max(maxX, orig[0] + effSize.offsetX + effSize.width);
+                maxY = Math.max(maxY, orig[1] + effSize.offsetY + effSize.height);
             }
             
             const width = maxX - minX;
@@ -296,23 +338,32 @@ class AutoAlignmentManager {
         
         // Calculate center of selection
         let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
-        const selectedNodes = this.selection.getSelectedNodes();
         for (const node of selectedNodes) {
-            minX = Math.min(minX, node.pos[0]);
-            minY = Math.min(minY, node.pos[1]);
-            maxX = Math.max(maxX, node.pos[0] + node.size[0]);
-            maxY = Math.max(maxY, node.pos[1] + node.size[1]);
+            const effSize = this.getEffectiveSizeForAlignment(node);
+            minX = Math.min(minX, node.pos[0] + effSize.offsetX);
+            minY = Math.min(minY, node.pos[1] + effSize.offsetY);
+            maxX = Math.max(maxX, node.pos[0] + effSize.offsetX + effSize.width);
+            maxY = Math.max(maxY, node.pos[1] + effSize.offsetY + effSize.height);
         }
         const centerX = (minX + maxX) / 2;
         const centerY = (minY + maxY) / 2;
         this.autoAlignStart = [centerX, centerY];
         
-        // Initialize animation positions
-        for (const node of selectedNodes) {
+        // Initialize animation positions for ALL selected nodes (including groups)
+        const allSelectedNodes = this.selection.getSelectedNodes();
+        for (const node of allSelectedNodes) {
             if (!this.autoAlignAnimating || !node._animPos) {
                 node._animPos = [...node.pos];
             }
             node._animVel = [0, 0];
+            
+            // Initialize size animation for groups
+            if (node.type === 'container/group') {
+                if (!this.autoAlignAnimating || !node._animSize) {
+                    node._animSize = [...node.size];
+                }
+                node._animSizeVel = [0, 0];
+            }
         }
         
         // Calculate targets
@@ -324,12 +375,18 @@ class AutoAlignmentManager {
         }
 
         this.autoAlignAnimating = true;
-        this.autoAlignAnimNodes = selectedNodes;
+        // Include ALL nodes in animation (both regular nodes and groups)
+        this.autoAlignAnimNodes = allSelectedNodes;
         this.autoAlignAnimTargets = targets;
     }
     
     computeAutoAlignTargetsWithMasterOrder(axis) {
-        const selectedNodes = this.selection.getSelectedNodes();
+        const allSelectedNodes = this.selection.getSelectedNodes();
+        
+        // Separate groups from regular nodes
+        const groups = allSelectedNodes.filter(n => n.type === 'container/group');
+        const selectedNodes = allSelectedNodes.filter(n => n.type !== 'container/group');
+        
         const originals = this.autoAlignOriginals || {};
         const masterOrder = this.autoAlignMasterOrder || [];
         
@@ -350,20 +407,28 @@ class AutoAlignmentManager {
             let maxPos = -Infinity;
             
             for (const node of sortedNodes) {
+                const effSize = this.getEffectiveSizeForAlignment(node);
                 if (axis === 'horizontal') {
                     alignmentCoord += node.pos[1];
-                    minPos = Math.min(minPos, node.pos[0]);
-                    maxPos = Math.max(maxPos, node.pos[0] + node.size[0]);
+                    minPos = Math.min(minPos, node.pos[0] + effSize.offsetX);
+                    maxPos = Math.max(maxPos, node.pos[0] + effSize.offsetX + effSize.width);
                 } else {
                     alignmentCoord += node.pos[0];
-                    minPos = Math.min(minPos, node.pos[1]);
-                    maxPos = Math.max(maxPos, node.pos[1] + node.size[1]);
+                    minPos = Math.min(minPos, node.pos[1] + effSize.offsetY);
+                    maxPos = Math.max(maxPos, node.pos[1] + effSize.offsetY + effSize.height);
                 }
             }
             alignmentCoord /= sortedNodes.length;
             
-            // Calculate total size with new order
-            const totalSize = sortedNodes.reduce((sum, n) => sum + (axis === 'horizontal' ? n.size[0] : n.size[1]), 0);
+            // Calculate total size with new order using effective sizes
+            const effectiveSizes = new Map();
+            let totalSize = 0;
+            for (const node of sortedNodes) {
+                const effSize = this.getEffectiveSizeForAlignment(node);
+                effectiveSizes.set(node.id, effSize);
+                totalSize += axis === 'horizontal' ? effSize.width : effSize.height;
+            }
+            
             const gap = CONFIG.ALIGNMENT.DEFAULT_MARGIN;
             const totalLength = totalSize + gap * (sortedNodes.length - 1);
             
@@ -372,12 +437,15 @@ class AutoAlignmentManager {
             const targets = {};
             
             for (const node of sortedNodes) {
+                const effSize = effectiveSizes.get(node.id);
                 if (axis === 'horizontal') {
-                    targets[node.id] = [pos, alignmentCoord];
-                    pos += node.size[0] + gap;
+                    // Adjust for offset when dealing with groups
+                    targets[node.id] = [pos - effSize.offsetX, alignmentCoord];
+                    pos += effSize.width + gap;
                 } else {
-                    targets[node.id] = [alignmentCoord, pos];
-                    pos += node.size[1] + gap;
+                    // Adjust for offset when dealing with groups
+                    targets[node.id] = [alignmentCoord, pos - effSize.offsetY];
+                    pos += effSize.height + gap;
                 }
             }
             
@@ -392,7 +460,15 @@ class AutoAlignmentManager {
         }
         center /= sortedNodes.length;
         
-        const totalSize = sortedNodes.reduce((sum, n) => sum + (axis === 'horizontal' ? n.size[0] : n.size[1]), 0);
+        // Calculate total size using effective sizes
+        const effectiveSizes = new Map();
+        let totalSize = 0;
+        for (const node of sortedNodes) {
+            const effSize = this.getEffectiveSizeForAlignment(node);
+            effectiveSizes.set(node.id, effSize);
+            totalSize += axis === 'horizontal' ? effSize.width : effSize.height;
+        }
+        
         const gap = CONFIG.ALIGNMENT.DEFAULT_MARGIN;
         const totalLength = totalSize + gap * (sortedNodes.length - 1);
         const start = (axis === 'horizontal') ? 
@@ -402,12 +478,62 @@ class AutoAlignmentManager {
         let pos = start;
         const targets = {};
         for (const node of sortedNodes) {
+            const effSize = effectiveSizes.get(node.id);
             if (axis === 'horizontal') {
-                targets[node.id] = [pos, center];
-                pos += node.size[0] + gap;
+                // Adjust for offset when dealing with groups
+                targets[node.id] = [pos - effSize.offsetX, center];
+                pos += effSize.width + gap;
             } else {
-                targets[node.id] = [center, pos];
-                pos += node.size[1] + gap;
+                // Adjust for offset when dealing with groups
+                targets[node.id] = [center, pos - effSize.offsetY];
+                pos += effSize.height + gap;
+            }
+        }
+        
+        // Calculate group targets based on their children's target positions
+        if (groups.length > 0) {
+            // Get all nodes from the graph to find group children
+            const allNodes = this.canvas.graph?.nodes || [];
+            
+            for (const group of groups) {
+                // Get all child nodes of this group
+                const childNodes = [];
+                for (const childId of group.childNodes) {
+                    const child = allNodes.find(n => n.id === childId);
+                    if (child) childNodes.push(child);
+                }
+                
+                if (childNodes.length > 0) {
+                    // Calculate bounds based on child target positions
+                    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+                    
+                    for (const child of childNodes) {
+                        // Use target position if available, otherwise current position
+                        const targetPos = targets[child.id] || child.pos;
+                        const x = targetPos[0];
+                        const y = targetPos[1];
+                        
+                        minX = Math.min(minX, x);
+                        minY = Math.min(minY, y);
+                        maxX = Math.max(maxX, x + child.size[0]);
+                        maxY = Math.max(maxY, y + child.size[1]);
+                    }
+                    
+                    // Add padding to match group's internal padding
+                    const padding = 30;
+                    const titleBarHeight = 30;
+                    
+                    // Set group target to encompass all children
+                    targets[group.id] = [
+                        minX - padding,
+                        minY - padding - titleBarHeight
+                    ];
+                    
+                    // Store target size for the group (we'll need to handle this in animation)
+                    if (!group._targetSize) group._targetSize = [...group.size];
+                    group._targetSize[0] = Math.max(maxX - minX + (padding * 2), group.minSize[0]);
+                    group._targetSize[1] = Math.max(maxY - minY + (padding * 2) + titleBarHeight, group.minSize[1]);
+                }
             }
         }
         
@@ -458,6 +584,9 @@ class AutoAlignmentManager {
         this.gridAlignAnimNodes = null;
         this.gridAlignAnimTargets = null;
         
+        // Auto-parent nodes to groups before alignment
+        this.autoParentNodesToGroups();
+        
         window.app.undoManager.beginInteraction(this.selection.getSelectedNodes());
         return true;
     }
@@ -473,10 +602,16 @@ class AutoAlignmentManager {
         this.gridAlignBox = [ax, ay, bx, by];
         
         // Calculate grid parameters
-        const selectedNodes = this.selection.getSelectedNodes();
+        const allSelectedNodes = this.selection.getSelectedNodes();
+        
+        // Separate groups from regular nodes for size calculation
+        const groups = allSelectedNodes.filter(n => n.type === 'container/group');
+        const selectedNodes = allSelectedNodes.filter(n => n.type !== 'container/group');
+        
         let maxNodeWidth = 100;
         let maxNodeHeight = 100;
         if (selectedNodes.length > 0) {
+            // Only use non-group nodes for calculating cell size
             maxNodeWidth = Math.max(...selectedNodes.map(n => n.size[0]));
             maxNodeHeight = Math.max(...selectedNodes.map(n => n.size[1]));
         }
@@ -519,8 +654,9 @@ class AutoAlignmentManager {
             let minDist = Infinity;
             let closestNode = null;
             for (const node of availableNodes) {
-                const nx = node.pos[0] + node.size[0] / 2;
-                const ny = node.pos[1] + node.size[1] / 2;
+                const effSize = this.getEffectiveSizeForAlignment(node);
+                const nx = node.pos[0] + effSize.offsetX + effSize.width / 2;
+                const ny = node.pos[1] + effSize.offsetY + effSize.height / 2;
                 const dist = (nx - gridTarget.cx) ** 2 + (ny - gridTarget.cy) ** 2;
                 if (dist < minDist) {
                     minDist = dist;
@@ -528,28 +664,84 @@ class AutoAlignmentManager {
                 }
             }
             if (closestNode) {
-                // Center node in cell
-                const w = closestNode.size[0], h = closestNode.size[1];
-                const finalTx = gridTarget.tx + (cellWidth - w) / 2;
-                const finalTy = gridTarget.ty + (cellHeight - h) / 2;
+                // Center node in cell using effective size
+                const effSize = this.getEffectiveSizeForAlignment(closestNode);
+                const w = effSize.width, h = effSize.height;
+                const finalTx = gridTarget.tx + (cellWidth - w) / 2 - effSize.offsetX;
+                const finalTy = gridTarget.ty + (cellHeight - h) / 2 - effSize.offsetY;
                 targets[closestNode.id] = [finalTx, finalTy];
                 availableNodes.splice(availableNodes.indexOf(closestNode), 1);
             }
         }
         
-        // Start animation
-        this.gridAlignAnimNodes = selectedNodes;
+        // Calculate group targets based on their children's target positions
+        if (groups.length > 0) {
+            // Get all nodes from the graph to find group children
+            const allNodes = this.canvas.graph?.nodes || [];
+            
+            for (const group of groups) {
+                // Get all child nodes of this group
+                const childNodes = [];
+                for (const childId of group.childNodes) {
+                    const child = allNodes.find(n => n.id === childId);
+                    if (child) childNodes.push(child);
+                }
+                
+                if (childNodes.length > 0) {
+                    // Calculate bounds based on child target positions
+                    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+                    
+                    for (const child of childNodes) {
+                        // Use target position if available, otherwise current position
+                        const targetPos = targets[child.id] || child.pos;
+                        const x = targetPos[0];
+                        const y = targetPos[1];
+                        
+                        minX = Math.min(minX, x);
+                        minY = Math.min(minY, y);
+                        maxX = Math.max(maxX, x + child.size[0]);
+                        maxY = Math.max(maxY, y + child.size[1]);
+                    }
+                    
+                    // Add padding to match group's internal padding
+                    const padding = 30;
+                    const titleBarHeight = 30;
+                    
+                    // Set group target to encompass all children
+                    targets[group.id] = [
+                        minX - padding,
+                        minY - padding - titleBarHeight
+                    ];
+                    
+                    // Store target size for the group
+                    if (!group._targetSize) group._targetSize = [...group.size];
+                    group._targetSize[0] = Math.max(maxX - minX + (padding * 2), group.minSize[0]);
+                    group._targetSize[1] = Math.max(maxY - minY + (padding * 2) + titleBarHeight, group.minSize[1]);
+                }
+            }
+        }
+        
+        // Start animation - include ALL nodes (both regular and groups)
+        this.gridAlignAnimNodes = allSelectedNodes;
         this.gridAlignAnimTargets = targets;
         // Also store a backup copy for finishGridAlign in case animation completes first
         this.gridAlignFinalTargets = { ...targets };
 
         if (!this.gridAlignAnimating) {
-            for (const node of selectedNodes) {
+            for (const node of allSelectedNodes) {
                 node._gridAnimPos = [...node.pos];
                 node._gridAnimVel = [0, 0];
+                
+                // Initialize size animation for groups
+                if (node.type === 'container/group') {
+                    node._gridAnimSize = [...node.size];
+                    node._gridAnimSizeVel = [0, 0];
+                }
             }
             this.gridAlignAnimating = true;
         }
+        
+        // Groups are now included in the main animation with computed targets
         
         this.canvas.dirty_canvas = true;
     }
@@ -566,17 +758,42 @@ class AutoAlignmentManager {
             const selectedNodes = this.selection.getSelectedNodes();
             const nodeIds = [];
             const positions = [];
+            const sizes = [];
+            
+            // Check if animation has completed
+            const animationComplete = !this.gridAlignAnimating;
 
             for (const node of selectedNodes) {
-                if (targetsForSave[node.id]) {
-                    nodeIds.push(node.id);
-                    positions.push(targetsForSave[node.id]);
+                nodeIds.push(node.id);
+                
+                // Always use actual position when animation is complete
+                if (animationComplete) {
+                    positions.push([...node.pos]);
+                    if (node.type === 'container/group') {
+                        sizes.push([...node.size]);
+                    }
+                } else if (targetsForSave && targetsForSave[node.id]) {
+                    // Animation still running, use target position for regular nodes
+                    if (node.type === 'container/group') {
+                        // For groups, always use actual position/size during animation
+                        positions.push([...node.pos]);
+                        sizes.push([...node.size]);
+                    } else {
+                        positions.push(targetsForSave[node.id]);
+                    }
+                } else {
+                    // Fallback to actual position
+                    positions.push([...node.pos]);
+                    if (node.type === 'container/group') {
+                        sizes.push([...node.size]);
+                    }
                 }
             }
 
             window.app.undoManager.endInteraction('node_align', { 
                 nodeIds, 
-                positions, 
+                positions,
+                sizes: sizes.length > 0 ? sizes : undefined,
                 axis: 'grid' 
             });
             
@@ -659,6 +876,8 @@ class AutoAlignmentManager {
                 } else {
                     this.updateStandardAnimation(this.fixedTimestep, this.autoAlignAnimNodes, this.autoAlignAnimTargets, false);
                 }
+                
+                // Groups are now animated along with regular nodes
             }
             
             // Update grid-align animations with fixed timestep
@@ -671,6 +890,8 @@ class AutoAlignmentManager {
                 } else {
                     this.updateStandardAnimation(this.fixedTimestep, this.gridAlignAnimNodes, this.gridAlignAnimTargets, true);
                 }
+                
+                // Groups are now animated along with regular nodes
             }
             
             this.accumulator -= this.fixedTimestep;
@@ -795,6 +1016,10 @@ class AutoAlignmentManager {
                 node[prevPosKey][1] = node[posKey][1];
             }
             
+            // Store the old position for group children movement
+            const oldX = node[posKey][0];
+            const oldY = node[posKey][1];
+            
             let done = true;
             for (let i = 0; i < 2; i++) {
                 let x = node[posKey][i], v = node[velKey][i], t = target[i];
@@ -808,10 +1033,44 @@ class AutoAlignmentManager {
                 if (Math.abs(t - x) > CONFIG.ALIGNMENT.ANIMATION_THRESHOLD || Math.abs(v) > CONFIG.ALIGNMENT.ANIMATION_THRESHOLD) done = false;
             }
             
+            // Handle group size animation
+            if (node.type === 'container/group' && node._targetSize) {
+                const sizeKey = isGridAlign ? '_gridAnimSize' : '_animSize';
+                const sizeVelKey = isGridAlign ? '_gridAnimSizeVel' : '_animSizeVel';
+                
+                if (!node[sizeKey]) node[sizeKey] = [...node.size];
+                if (!node[sizeVelKey]) node[sizeVelKey] = [0, 0];
+                
+                // Animate size with same spring physics
+                for (let i = 0; i < 2; i++) {
+                    let s = node[sizeKey][i], v = node[sizeVelKey][i], t = node._targetSize[i];
+                    let k = CONFIG.ALIGNMENT.SPRING_K, d = CONFIG.ALIGNMENT.SPRING_D;
+                    let ds = t - s;
+                    let as = k * ds - d * v;
+                    v += as * deltaTime;
+                    s += v * deltaTime;
+                    node[sizeVelKey][i] = v;
+                    node[sizeKey][i] = s;
+                    if (Math.abs(t - s) > CONFIG.ALIGNMENT.ANIMATION_THRESHOLD || Math.abs(v) > CONFIG.ALIGNMENT.ANIMATION_THRESHOLD) done = false;
+                }
+            }
+            
+            
             if (done) {
                 node[posKey][0] = target[0];
                 node[posKey][1] = target[1];
                 node[velKey] = [0, 0];
+                
+                // For groups, also finalize size
+                if (node.type === 'container/group' && node._targetSize) {
+                    const sizeKey = isGridAlign ? '_gridAnimSize' : '_animSize';
+                    const sizeVelKey = isGridAlign ? '_gridAnimSizeVel' : '_animSizeVel';
+                    if (node[sizeKey]) {
+                        node[sizeKey][0] = node._targetSize[0];
+                        node[sizeKey][1] = node._targetSize[1];
+                        node[sizeVelKey] = [0, 0];
+                    }
+                }
                 
                 // Don't snap positions during drag - let animation complete naturally
                 // This was causing positions to be set prematurely
@@ -874,6 +1133,10 @@ class AutoAlignmentManager {
                     node[prevPosKey][1] = node[posKey][1];
                 }
                 
+                // Store the old position for group children movement
+                const oldX = node[posKey][0];
+                const oldY = node[posKey][1];
+                
                 let done = true;
                 for (let i = 0; i < 2; i++) {
                     let x = node[posKey][i], v = node[velKey][i], t = target[i];
@@ -886,10 +1149,12 @@ class AutoAlignmentManager {
                     if (Math.abs(t - x) > threshold || Math.abs(v) > threshold) done = false;
                 }
                 
+                
                 if (done) {
                     node[posKey][0] = target[0];
                     node[posKey][1] = target[1];
                     node[velKey] = [0, 0];
+                    
                     
                     // Don't snap positions during drag - let animation complete naturally
                 } else {
@@ -933,6 +1198,8 @@ class AutoAlignmentManager {
         return needsRedraw;
     }
     
+    
+    
     // ===================================
     // ANIMATION COMPLETION
     // ===================================
@@ -954,6 +1221,22 @@ class AutoAlignmentManager {
                 node[posKey][0] = node.pos[0];
                 node[posKey][1] = node.pos[1];
                 
+                // For groups, also update size
+                if (node.type === 'container/group') {
+                    const sizeKey = isGridAlign ? '_gridAnimSize' : '_animSize';
+                    if (node[sizeKey]) {
+                        node.size[0] = node[sizeKey][0];
+                        node.size[1] = node[sizeKey][1];
+                        
+                        // Clear target size
+                        delete node._targetSize;
+                        
+                        // Mark that this group just completed alignment animation
+                        // This prevents updateBounds from recalculating immediately
+                        node._alignmentJustCompleted = Date.now();
+                    }
+                }
+                
                 nodeIds.push(node.id);
                 finalPositions.push([...node.pos]);
             }
@@ -965,6 +1248,15 @@ class AutoAlignmentManager {
             for (const node of animNodes) {
                 delete node[posKey];
                 delete node[velKey];
+                
+                // Clear group-specific animation properties
+                if (node.type === 'container/group') {
+                    const sizeKey = isGridAlign ? '_gridAnimSize' : '_animSize';
+                    const sizeVelKey = isGridAlign ? '_gridAnimSizeVel' : '_animSizeVel';
+                    delete node[sizeKey];
+                    delete node[sizeVelKey];
+                    // Don't clear _alignmentJustCompleted yet - let it protect the bounds
+                }
             }
             
             // Clear WebGL cache
@@ -982,7 +1274,7 @@ class AutoAlignmentManager {
         });
         
         // Mark nodes as having completed animation to prevent server updates from interfering
-        if (isGridAlign && animNodes.length > 0) {
+        if (animNodes.length > 0) {
             const completionTime = Date.now();
             animNodes.forEach(node => {
                 node._alignmentCompletedAt = completionTime;
@@ -1059,6 +1351,10 @@ class AutoAlignmentManager {
                     delete node._gridAnimPos;
                     delete node._gridAnimVel;
                     delete node._gridPrevPos;
+                    hadAnimProps = true;
+                }
+                if (node._sizeAnimVel) {
+                    delete node._sizeAnimVel;
                     hadAnimProps = true;
                 }
                 // Also clean up the alignment completion flag if it's old
@@ -1223,6 +1519,22 @@ class AutoAlignmentManager {
     }
     
     /**
+     * Get the effective size of a node for alignment purposes
+     * For now, we use the node's actual size for all nodes including groups
+     * This avoids complexity with moving children during alignment
+     */
+    getEffectiveSizeForAlignment(node) {
+        // Use the node's actual size - simpler and avoids issues with child positioning
+        return {
+            width: node.size[0],
+            height: node.size[1],
+            offsetX: 0,
+            offsetY: 0
+        };
+    }
+    
+    
+    /**
      * Update parent groups to encompass their child nodes after alignment
      */
     updateParentGroups(alignedNodes) {
@@ -1230,8 +1542,14 @@ class AutoAlignmentManager {
         const groups = this.canvas.graph.nodes.filter(n => n.type === 'container/group');
         const affectedGroups = new Set();
         
-        // Check which groups contain any of the aligned nodes
+        // Only update groups that weren't part of the alignment selection
         for (const group of groups) {
+            // Skip if this group was in the aligned nodes
+            if (alignedNodes.includes(group)) continue;
+            
+            // Skip if this group is being animated or just completed animation
+            if (group._animPos || group._gridAnimPos || group._animSize || group._gridAnimSize || group._alignmentJustCompleted) continue;
+            
             for (const node of alignedNodes) {
                 if (group.childNodes && group.childNodes.has(node.id)) {
                     affectedGroups.add(group);
@@ -1242,8 +1560,8 @@ class AutoAlignmentManager {
         
         // Update bounds for each affected group
         for (const group of affectedGroups) {
-            // Get the target bounds for expansion
-            const targetBounds = group.updateBounds(true); // expandOnly = true
+            // Get the target bounds - allow shrinking to fit all children
+            const targetBounds = group.updateBounds(false); // expandOnly = false
             
             // Send resize command to sync the new bounds
             if (window.app?.operationPipeline && targetBounds) {
@@ -1254,6 +1572,63 @@ class AutoAlignmentManager {
                     position: [...targetBounds.pos]
                 });
                 window.app.operationPipeline.executeCommand(command);
+            }
+        }
+    }
+    
+    /**
+     * Auto-parent nodes to groups when groups are selected
+     * If groups and non-group nodes are selected together, add the non-group nodes to the groups
+     */
+    autoParentNodesToGroups() {
+        const selectedNodes = this.selection.getSelectedNodes();
+        const groups = selectedNodes.filter(n => n.type === 'container/group');
+        const nonGroups = selectedNodes.filter(n => n.type !== 'container/group');
+        
+        // If we have both groups and non-groups selected
+        if (groups.length > 0 && nonGroups.length > 0) {
+            // Find the best group for each non-group node (closest or largest)
+            for (const node of nonGroups) {
+                // Find the group whose center is closest to this node
+                let bestGroup = null;
+                let bestDistance = Infinity;
+                
+                for (const group of groups) {
+                    const groupCenterX = group.pos[0] + group.size[0] / 2;
+                    const groupCenterY = group.pos[1] + group.size[1] / 2;
+                    const nodeCenterX = node.pos[0] + node.size[0] / 2;
+                    const nodeCenterY = node.pos[1] + node.size[1] / 2;
+                    
+                    const distance = Math.sqrt(
+                        Math.pow(groupCenterX - nodeCenterX, 2) + 
+                        Math.pow(groupCenterY - nodeCenterY, 2)
+                    );
+                    
+                    if (distance < bestDistance) {
+                        bestDistance = distance;
+                        bestGroup = group;
+                    }
+                }
+                
+                // Add node to the best group if not already in it
+                if (bestGroup && !bestGroup.childNodes.has(node.id)) {
+                    bestGroup.addChildNode(node.id, true); // skipBoundsUpdate = true
+                    
+                    // Send command to sync with server
+                    if (window.app?.operationPipeline) {
+                        const command = new window.NodeCommands.GroupNodeCommand({
+                            action: 'group_add_node',
+                            groupId: bestGroup.id,
+                            nodeId: node.id
+                        });
+                        window.app.operationPipeline.executeCommand(command);
+                    }
+                }
+            }
+            
+            // Update bounds for all groups after adding nodes
+            for (const group of groups) {
+                group.updateBounds(true); // expandOnly = true to accommodate new nodes
             }
         }
     }

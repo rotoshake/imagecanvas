@@ -42,7 +42,11 @@ class ImageNode extends BaseNode {
         
         // Color balance (non-destructive, used by WebGL renderer)
         this.colorBalance = null; // Will be initialized when first used
-        this.colorBalanceBypassed = false;
+        this.colorBalanceBypassed = true; // Bypass by default for performance
+        
+        // Bypass flags for all color correction operations
+        this.toneCurveBypassed = true; // Bypass tone curve by default
+        this.colorAdjustmentsBypassed = true; // Bypass adjustments by default
 
         this.needsGLUpdate = false; // flag for renderer cache
 

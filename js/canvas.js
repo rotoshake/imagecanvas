@@ -15,7 +15,7 @@ class ImageCanvas {
         
         // Core systems
         this.viewport = new ViewportManager(canvas, this);
-        this.selection = new SelectionManager();
+        this.selection = new SelectionManager(this.viewport);
         this.handleDetector = new HandleDetector(this.viewport, this.selection);
         this.animationSystem = new AnimationSystem();
         this.alignmentManager = new AutoAlignmentManager(this);
@@ -26,6 +26,7 @@ class ImageCanvas {
         this.mouseState = this.createMouseState();
         this.interactionState = this.createInteractionState();
         this._renderLoopId = null; // Track render loop to prevent duplicates
+        this._animatingGroups = new Set(); // Track groups that are currently animating
         
         // Performance
         this.frameCounter = 0;
@@ -335,6 +336,7 @@ class ImageCanvas {
             
             const hasActiveAlignment = this.alignmentManager && this.alignmentManager.isAnimating();
             const hasActiveViewportAnimation = this.viewport && this.viewport.isAnimating;
+            const hasGroupAnimations = this._animatingGroups.size > 0;
             
             if (hasVideoUpdates) {
                 shouldDraw = true;
@@ -347,6 +349,10 @@ class ImageCanvas {
             if (hasActiveViewportAnimation) {
                 shouldDraw = true;
                 renderReasons.push('viewport');
+            }
+            if (hasGroupAnimations) {
+                shouldDraw = true;
+                renderReasons.push('group-resize');
             }
             if (hasActiveAnimations) {
                 shouldDraw = true;
@@ -369,7 +375,8 @@ class ImageCanvas {
                                          hasActiveAlignment || 
                                          hasActiveViewportAnimation || 
                                          hasVideoUpdates ||
-                                         activelyLoadingNodes.size > 0;
+                                         activelyLoadingNodes.size > 0 ||
+                                         hasGroupAnimations;
             
             if (needsContinuousUpdates || this.dirty_canvas || this.dirty_nodes.size > 0) {
                 this._renderLoopId = requestAnimationFrame(renderFrame);
@@ -1238,6 +1245,12 @@ Mode: ${this.fpsTestMode}`;
                 this.selection.deselectNode(node);
                 // If we just deselected the only node, there's nothing to drag
                 if (this.selection.isEmpty()) {
+                    // Clean up drag state
+                    this.interactionState.dragging.active = false;
+                    this.interactionState.dragging.node = null;
+                    this.interactionState.dragging.offsets.clear();
+                    this.interactionState.dragging.hasMoved = false;
+                    this.interactionState.dragging.initialPositions = null;
                     return;
                 }
                 // Use another selected node as the drag reference
@@ -1264,7 +1277,8 @@ Mode: ${this.fpsTestMode}`;
             window.app.undoManager.beginInteraction(nodesForInteraction);
         }
         
-        // Reset movement tracking
+        // Set drag state
+        this.interactionState.dragging.active = true;
         this.interactionState.dragging.hasMoved = false;
         
         // Track if nodes are being dragged from a group
@@ -1524,7 +1538,10 @@ Mode: ${this.fpsTestMode}`;
         }
         
         // Check if dragged nodes are over any groups (for add/remove detection)
-        this.updateGroupHoverStates(draggedNodes);
+        // Only update if we have dragged nodes and moved
+        if (draggedNodes.length > 0 && moved) {
+            this.updateGroupHoverStates(draggedNodes);
+        }
         
         // Track if any movement occurred
         if (moved) {
@@ -1934,16 +1951,39 @@ Mode: ${this.fpsTestMode}`;
     // ===================================
     
     startGroupTitleBarDrag(groupNode, e) {
-        // Select the group if not already selected
-        if (!this.selection.isSelected(groupNode)) {
-            if (!e.shiftKey) {
-                this.selection.clear();
+        // Handle shift-click for selection toggle
+        if (e.shiftKey) {
+            if (this.selection.isSelected(groupNode)) {
+                // Shift-click on selected group: deselect it
+                this.selection.deselectNode(groupNode);
+                // If we just deselected the only node, there's nothing to drag
+                if (this.selection.isEmpty()) {
+                    // Still need to set up drag state to prevent issues
+                    this.interactionState.dragging.active = false;
+                    this.interactionState.dragging.node = null;
+                    this.interactionState.dragging.offsets.clear();
+                    this.interactionState.dragging.hasMoved = false;
+                    this.interactionState.dragging.initialPositions = null;
+                    return;
+                }
+                // Use another selected node as the drag reference
+                const selectedNodes = this.selection.getSelectedNodes();
+                this.interactionState.dragging.node = selectedNodes[0];
+            } else {
+                // Shift-click on unselected group: add to selection
+                this.selection.selectNode(groupNode, true);
+                this.interactionState.dragging.node = groupNode;
             }
-            this.selection.selectNode(groupNode);
+        } else {
+            // Regular click: select only this group if not already selected
+            if (!this.selection.isSelected(groupNode)) {
+                this.selection.clear();
+                this.selection.selectNode(groupNode);
+            }
+            this.interactionState.dragging.node = groupNode;
         }
         
-        // Use the standard dragging system
-        this.interactionState.dragging.node = groupNode;
+        this.interactionState.dragging.active = true;
         this.interactionState.dragging.hasMoved = false;
         
         // Get all nodes that will be affected (selected groups and their children)
@@ -1964,13 +2004,16 @@ Mode: ${this.fpsTestMode}`;
             }
         }
         
-        if (nodesForInteraction.length > 0) {
-            window.app.undoManager.beginInteraction(nodesForInteraction);
+        // Filter out any undefined nodes before passing to undo manager
+        const validNodes = nodesForInteraction.filter(n => n != null);
+        if (validNodes.length > 0) {
+            window.app.undoManager.beginInteraction(validNodes);
         }
         
         // Capture initial positions for undo before any movement
         this.interactionState.dragging.initialPositions = new Map();
         for (const node of nodesForInteraction) {
+            if (!node) continue; // Skip undefined nodes (deleted children)
             this.interactionState.dragging.initialPositions.set(
                 node.id, 
                 [...node.pos]
@@ -2036,14 +2079,6 @@ Mode: ${this.fpsTestMode}`;
         const newWidth = Math.max(groupNode.minSize[0], mouseX - groupNode.pos[0]);
         const newHeight = Math.max(groupNode.minSize[1], mouseY - groupNode.pos[1]);
         
-        console.log('🔧 updateGroupResize:', {
-            groupId: groupNode.id,
-            oldSize: [...groupNode.size],
-            newSize: [newWidth, newHeight],
-            minSize: groupNode.minSize,
-            mousePos: [mouseX, mouseY],
-            nodePos: groupNode.pos
-        });
         
         groupNode.size[0] = newWidth;
         groupNode.size[1] = newHeight;
@@ -2141,11 +2176,9 @@ Mode: ${this.fpsTestMode}`;
                 
                 if (hasNewNodes) {
                     // Brighten more when adding new nodes
-                    console.log(`💡 Brightening group ${targetGroup.id} to 1.5 (adding nodes)`);
                     targetGroup.setBrightness(1.5);
                 } else if (hasExistingNodes && this.interactionState.dragging.draggedFromGroup === targetGroup) {
                     // Moderate brightness when potentially removing nodes
-                    console.log(`💡 Brightening group ${targetGroup.id} to 1.3 (potential removal)`);
                     targetGroup.setBrightness(1.3);
                 }
             }
@@ -2224,11 +2257,16 @@ Mode: ${this.fpsTestMode}`;
                 
                 // Add nodes to group if dropped on one
                 if (potentialGroup && nodesOverGroup.size > 0) {
-                    // Collect nodes to add
+                    // Collect nodes to add and existing nodes that moved
                     const nodesToAdd = [];
+                    const existingNodesMoved = [];
+                    
                     for (const node of nodesOverGroup) {
                         if (!potentialGroup.childNodes.has(node.id)) {
                             nodesToAdd.push(node.id);
+                        } else {
+                            // This is an existing child that was moved within the group
+                            existingNodesMoved.push(node);
                         }
                     }
                     
@@ -2266,9 +2304,28 @@ Mode: ${this.fpsTestMode}`;
                                     size: [...targetBounds.size],
                                     position: [...targetBounds.pos]
                                 });
-                                window.app.operationPipeline.executeCommand(command);
+                                window.app.operationPipeline.executeCommand(command).catch(error => {
+                                    console.error('Failed to sync group resize:', error);
+                                });
                             }
                         });
+                    } else if (existingNodesMoved.length > 0) {
+                        // No new nodes to add, but existing nodes were moved within the group
+                        // Check if the group needs to expand to accommodate the new positions
+                        const targetBounds = potentialGroup.updateBounds(true);
+                        
+                        // If bounds changed, sync with server
+                        if (window.app?.operationPipeline && targetBounds) {
+                            const command = new window.NodeCommands.GroupNodeCommand({
+                                action: 'group_resize',
+                                groupId: potentialGroup.id,
+                                size: [...targetBounds.size],
+                                position: [...targetBounds.pos]
+                            });
+                            window.app.operationPipeline.executeCommand(command).catch(error => {
+                                console.error('Failed to sync group resize after rearrangement:', error);
+                            });
+                        }
                     }
                 }
                 
@@ -2334,17 +2391,10 @@ Mode: ${this.fpsTestMode}`;
         // Resize
         if (this.interactionState.resizing.active) {
             const nodes = Array.from(this.interactionState.resizing.nodes);
-            console.log('🔧 Finishing resize with nodes:', nodes.length, nodes.map(n => ({ id: n.id, type: n.type, size: n.size })));
-            
             if (nodes.length > 0) {
                 // Check if we're resizing a single group node
                 if (nodes.length === 1 && nodes[0].type === 'container/group') {
                     const groupNode = nodes[0];
-                    console.log('📐 Finishing group resize:', {
-                        groupId: groupNode.id,
-                        size: groupNode.size,
-                        position: groupNode.pos
-                    });
                     
                     // Use GroupNodeCommand for group resize
                     if (window.app?.operationPipeline) {
@@ -2401,6 +2451,7 @@ Mode: ${this.fpsTestMode}`;
         }
 
         // Reset all interaction states
+        this.interactionState.dragging.active = false;
         this.interactionState.dragging.node = null;
         this.interactionState.dragging.offsets.clear();
         this.interactionState.dragging.hasMoved = false;
@@ -3112,17 +3163,20 @@ Mode: ${this.fpsTestMode}`;
             const groupX = mousePos[0] - defaultSize / 2;
             const groupY = mousePos[1] - (defaultSize + titleBarHeight) / 2;
             
-            // Execute group creation command
-            window.app.operationPipeline.execute('group_create', {
-                groupId: Date.now() + Math.floor(Math.random() * 1000),
-                bounds: {
-                    x: groupX,
-                    y: groupY,
-                    width: defaultSize,
-                    height: defaultSize + titleBarHeight
-                },
-                nodeIds: [] // Empty group
-            });
+            // Create group through collaborative system using GroupNodeCommand
+            if (window.app?.operationPipeline) {
+                const command = new window.NodeCommands.GroupNodeCommand({
+                    action: 'group_create',
+                    nodeIds: [], // Empty group
+                    groupPos: [groupX, groupY],
+                    groupSize: [defaultSize, defaultSize + titleBarHeight],
+                    groupTitle: `Group ${this.graph.nodes.filter(n => n.type === 'container/group').length + 1}`
+                });
+                
+                window.app.operationPipeline.executeCommand(command);
+            } else {
+                console.warn('No operation pipeline available - group creation requires collaborative mode');
+            }
             return;
         }
         
@@ -4486,8 +4540,9 @@ Mode: ${this.fpsTestMode}`;
             this.uiCtx.translate(this.viewport.offset[0], this.viewport.offset[1]);
             this.uiCtx.scale(this.viewport.scale, this.viewport.scale);
 
-            // Only draw selection if not in gallery view mode
-            if (!this.galleryViewManager || !this.galleryViewManager.active) {
+            // Only draw selection if not in gallery view mode and not during alignment animation
+            if ((!this.galleryViewManager || !this.galleryViewManager.active) &&
+                (!this.alignmentManager || (!this.alignmentManager.isActive() && !this.alignmentManager.isAnimating()))) {
                 const selectedNodes = this.selection.getSelectedNodes();
                 for (const node of selectedNodes) {
                     // replicate transform logic from drawNode
@@ -4702,9 +4757,15 @@ Mode: ${this.fpsTestMode}`;
             this.dirty_canvas = true; // Keep animating
         }
         
-        // Update group expansion animation
-        if (node.type === 'container/group' && node.updateAnimation && node.updateAnimation()) {
-            this.dirty_canvas = true; // Keep animating
+        // Update group expansion animation - only check if registered as animating
+        if (node.type === 'container/group' && this._animatingGroups.has(node.id)) {
+            const stillAnimating = node.updateAnimation();
+            if (stillAnimating) {
+                this.dirty_canvas = true; // Keep animating
+            } else {
+                // Animation finished, remove from set
+                this._animatingGroups.delete(node.id);
+            }
         }
         
         // Apply brightness effect
@@ -4721,6 +4782,21 @@ Mode: ${this.fpsTestMode}`;
         }
         
         ctx.translate(drawPos[0], drawPos[1]);
+        
+        // Use animated size for groups if available
+        let drawSize = node.size;
+        if (node.type === 'container/group') {
+            if (node._gridAnimSize) {
+                drawSize = node._gridAnimSize;
+            } else if (node._animSize) {
+                drawSize = node._animSize;
+            }
+            // Temporarily update node size for rendering
+            if (drawSize !== node.size) {
+                node._originalSize = node.size;
+                node.size = drawSize;
+            }
+        }
         
         // Apply rotation
         if (node.rotation) {
@@ -4752,12 +4828,18 @@ Mode: ${this.fpsTestMode}`;
         
         // Draw selection and handles (hide during alignment and gallery mode)
         if (this.selection.isSelected(node) && 
-            (!this.alignmentManager || !this.alignmentManager.isActive()) &&
+            (!this.alignmentManager || (!this.alignmentManager.isActive() && !this.alignmentManager.isAnimating())) &&
             (!this.galleryViewManager || this.galleryViewManager.shouldRenderSelectionUI())) {
             this.drawNodeSelection(ctx, node);
         }
         
         ctx.restore();
+        
+        // Restore original size if it was temporarily changed for groups
+        if (node.type === 'container/group' && node._originalSize) {
+            node.size = node._originalSize;
+            delete node._originalSize;
+        }
     }
     
     drawNodeSelection(ctx, node) {
@@ -4922,7 +5004,7 @@ Mode: ${this.fpsTestMode}`;
         
         // Draw multi-selection bounding box (hide during alignment)
         if (this.selection.size() > 1 && 
-            (!this.alignmentManager || !this.alignmentManager.isActive())) {
+            (!this.alignmentManager || (!this.alignmentManager.isActive() && !this.alignmentManager.isAnimating()))) {
             this.drawSelectionBoundingBox(ctx);
         }
         

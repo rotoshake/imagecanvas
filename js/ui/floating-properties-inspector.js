@@ -1600,15 +1600,15 @@ class FloatingPropertiesInspector {
         input.addEventListener('focus', () => {
             this.focusedInputs.add(input.id);
             originalValue = input.value; // Store value when focus starts
-            window.app.undoManager.beginInteraction(Array.from(this.currentNodes.values()));
         });
         
         input.addEventListener('blur', () => {
             this.focusedInputs.delete(input.id);
-            // Commit change on blur
+            // Commit change on blur if value changed
             const finalValue = input.value;
             if (finalValue !== originalValue) {
-                window.app.undoManager.endInteraction('node_property_update', { property: prop, value: finalValue });
+                // updateNodeProperty will handle the undo/redo through transactions
+                this.updateNodeProperty(prop, finalValue);
             }
         });
         
@@ -1683,15 +1683,15 @@ class FloatingPropertiesInspector {
         input.addEventListener('focus', () => {
             this.focusedInputs.add(input.id);
             originalValue = input.value; // Store value when focus starts
-            window.app.undoManager.beginInteraction(Array.from(this.currentNodes.values()));
         });
         
         input.addEventListener('blur', () => {
             this.focusedInputs.delete(input.id);
-            // Commit change on blur
+            // Commit change on blur if value changed
             const finalValue = parseFloat(input.value) || 0;
             if (finalValue.toFixed(2) !== parseFloat(originalValue).toFixed(2)) {
-                window.app.undoManager.endInteraction('node_property_update', { property: prop, value: finalValue });
+                // updateNodeProperty will handle the undo/redo through transactions
+                this.updateNodeProperty(prop, finalValue);
             }
         });
         

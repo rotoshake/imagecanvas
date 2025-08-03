@@ -44,12 +44,12 @@ class VideoNode extends BaseNode {
         
         // Tone curve data
         this.toneCurve = null;
-        this.toneCurveBypassed = false;
-        this.colorAdjustmentsBypassed = false;
+        this.toneCurveBypassed = true; // Bypass by default for performance
+        this.colorAdjustmentsBypassed = true; // Bypass adjustments by default
         
         // Color balance (non-destructive, used by WebGL renderer)
         this.colorBalance = null; // Will be initialized when first used
-        this.colorBalanceBypassed = false;
+        this.colorBalanceBypassed = true; // Bypass by default for performance
         
         this.needsGLUpdate = false; // flag for renderer cache
         

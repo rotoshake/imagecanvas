@@ -3,7 +3,8 @@
 // ===================================
 
 class SelectionManager {
-    constructor() {
+    constructor(viewport) {
+        this.viewport = viewport;
         this.selectedNodes = new Map();
         this.selectionRect = null;
         this.callbacks = new Set();
@@ -81,7 +82,11 @@ class SelectionManager {
         for (const node of nodes) {
             if (node.type === 'container/group') {
                 // For groups, only check if title bar intersects with selection
-                const titleBarHeight = node.screenSpaceTitleBarHeight || node.titleBarHeight || 30;
+                // Get the viewport-aware title bar height
+                const titleBarHeight = (node.getScreenSpaceTitleBarHeightForViewport && this.viewport) ? 
+                    node.getScreenSpaceTitleBarHeightForViewport(this.viewport) : 
+                    (node.titleBarHeight || 30);
+                
                 const titleBarBounds = [
                     node.pos[0],
                     node.pos[1],

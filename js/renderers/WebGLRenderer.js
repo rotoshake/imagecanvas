@@ -1845,7 +1845,7 @@ class WebGLRenderer {
                     optimalLOD = cachedLOD.optimalLOD;
                 } else {
                     // Switch to new LOD
-                    console.log(`🔄 LOD change for ${node.id}: ${cachedLOD.optimalLOD === null ? 'full' : cachedLOD.optimalLOD + 'px'} → ${newOptimalLOD === null ? 'full' : newOptimalLOD + 'px'}`);
+                    // console.log(`🔄 LOD change for ${node.id}: ${cachedLOD.optimalLOD === null ? 'full' : cachedLOD.optimalLOD + 'px'} → ${newOptimalLOD === null ? 'full' : newOptimalLOD + 'px'}`);
                     optimalLOD = newOptimalLOD;
                 }
                 

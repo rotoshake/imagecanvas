@@ -340,6 +340,22 @@ class CanvasStateManager {
         changes.deletedNodes = deletedNodes;
         
         state.nodes = remaining;
+        
+        // Clean up references in groups
+        for (const node of state.nodes) {
+            if (node.type === 'container/group' && node.properties && node.properties.childNodes) {
+                const originalLength = node.properties.childNodes.length;
+                node.properties.childNodes = node.properties.childNodes.filter(
+                    childId => !toDelete.has(childId)
+                );
+                
+                // Mark group as updated if children were removed
+                if (node.properties.childNodes.length !== originalLength) {
+                    changes.updated.push(node);
+                }
+            }
+        }
+        
         // Always return changes, even if empty - operation still succeeded
         return changes;
     }
@@ -891,7 +907,7 @@ class CanvasStateManager {
         
         // Group operation validators
         validators.set('group_create', (op, state) => {
-            if (!op.params.nodeIds || !Array.isArray(op.params.nodeIds) || op.params.nodeIds.length === 0) {
+            if (!op.params.nodeIds || !Array.isArray(op.params.nodeIds)) {
                 return { valid: false, error: 'Missing or invalid nodeIds for group creation' };
             }
             if (!op.params.groupPos || !Array.isArray(op.params.groupPos) || op.params.groupPos.length !== 2) {

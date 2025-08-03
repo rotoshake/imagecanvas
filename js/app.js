@@ -1106,6 +1106,7 @@ if (document.readyState === 'loading') {
 document.addEventListener('keydown', async (e) => {
     if (e.ctrlKey && e.shiftKey && e.key === 'Delete') {
         e.preventDefault();
+        console.log('🗑️ Database wipe shortcut triggered');
         
         // Create confirmation dialog
         const backdrop = document.createElement('div');
@@ -1173,6 +1174,7 @@ document.addEventListener('keydown', async (e) => {
         
         backdrop.appendChild(dialog);
         document.body.appendChild(backdrop);
+        console.log('🗑️ Database wipe dialog created and added to DOM');
         
         // Handle dialog actions
         const cancelBtn = document.getElementById('wipe-cancel');
@@ -1258,29 +1260,44 @@ document.addEventListener('keydown', async (e) => {
                 
                 // 2. Call server endpoint to wipe database
                 console.log('🗄️ Wiping server database...');
+                confirmBtn.textContent = 'Wiping database...';
                 
                 // Add timeout to prevent infinite hanging
                 const controller = new AbortController();
-                const timeoutId = setTimeout(() => controller.abort(), 60000); // 60 second timeout
+                const timeoutId = setTimeout(() => {
+                    controller.abort();
+                    console.error('Database wipe timed out after 30 seconds');
+                }, 30000); // 30 second timeout (reduced from 60)
                 
-                const response = await fetch(`${CONFIG.SERVER.API_BASE}/debug/wipe-database`, {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json'
-                    },
-                    body: JSON.stringify({
-                        confirm: true,
-                        includeFiles: true
-                    }),
-                    signal: controller.signal
-                }).finally(() => clearTimeout(timeoutId));
-                
-                if (!response.ok) {
-                    throw new Error(`Server wipe failed: ${response.status}`);
+                try {
+                    const response = await fetch(`${CONFIG.SERVER.API_BASE}/debug/wipe-database`, {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json'
+                        },
+                        body: JSON.stringify({
+                            confirm: true,
+                            includeFiles: true
+                        }),
+                        signal: controller.signal
+                    });
+                    
+                    clearTimeout(timeoutId);
+                    
+                    if (!response.ok) {
+                        const errorText = await response.text();
+                        throw new Error(`Server wipe failed: ${response.status} - ${errorText}`);
+                    }
+                    
+                    const result = await response.json();
+                    console.log('✅ Server wipe complete:', result);
+                } catch (fetchError) {
+                    clearTimeout(timeoutId);
+                    if (fetchError.name === 'AbortError') {
+                        throw new Error('Database wipe timed out - the operation may still be running on the server. Please wait a moment and refresh the page.');
+                    }
+                    throw fetchError;
                 }
-                
-                const result = await response.json();
-                console.log('✅ Server wipe complete:', result);
                 
                 // 3. Show success and reload
                 confirmBtn.textContent = 'Complete! Reloading...';

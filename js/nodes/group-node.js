@@ -10,7 +10,7 @@ class GroupNode extends BaseNode {
         this.isCollapsed = false;
         this.collapsedSize = [200, 40]; // Size when collapsed (width, height of title bar)
         this.expandedSize = [300, 200]; // Minimum expanded size
-        this.padding = 20; // Padding around child nodes
+        this.padding = 30; // Padding around child nodes - increased for better visual spacing
         this.titleBarHeight = 30; // Fallback height
         this.screenSpaceTitleBarHeight = 20; // Target screen-space height in pixels
         
@@ -19,6 +19,9 @@ class GroupNode extends BaseNode {
             this.size = [...this.expandedSize];
         }
         
+        // Track already warned about deleted nodes
+        this._warnedDeletedNodes = new Set();
+        
         // Animation properties
         this.animatedPos = null;
         this.animatedSize = null;
@@ -26,6 +29,7 @@ class GroupNode extends BaseNode {
         this.targetSize = null;
         this.animationStartTime = null;
         this.animationDuration = 200; // ms - same as brightness transitions
+        this.isAnimating = false;
         
         // Visual styling
         this.style = {
@@ -66,7 +70,7 @@ class GroupNode extends BaseNode {
      * Configure the group node from server data
      */
     configure(data) {
-        console.log('🔧 GroupNode.configure called with:', data);
+        // console.log('🔧 GroupNode.configure called with:', data);
         
         // Call parent configure if it exists
         if (super.configure) {
@@ -79,9 +83,9 @@ class GroupNode extends BaseNode {
             for (const nodeId of data.properties.childNodes) {
                 this.childNodes.add(nodeId);
             }
-            console.log(`✅ Loaded ${this.childNodes.size} child nodes:`, Array.from(this.childNodes));
+            // console.log(`✅ Loaded ${this.childNodes.size} child nodes:`, Array.from(this.childNodes));
         } else {
-            console.log('⚠️ No childNodes in properties:', data.properties);
+            // console.log('⚠️ No childNodes in properties:', data.properties);
         }
         
         // Restore other group-specific properties
@@ -118,7 +122,8 @@ class GroupNode extends BaseNode {
             nodeId = nodeId.id;
         }
         this.childNodes.delete(nodeId);
-        // Don't update bounds when removing (keep current size)
+        // Update bounds to fit remaining children
+        this.updateBounds(false); // expandOnly = false to allow shrinking
         this.markDirty();
     }
     
@@ -148,11 +153,9 @@ class GroupNode extends BaseNode {
      */
     getChildNodes() {
         if (!this.graph) {
-            console.log('⚠️ getChildNodes: No graph reference! Will try global graph...');
-            // Try to find the graph through the global app
+            // Try to find the graph through the global app - this is normal during initialization
             const globalGraph = window.app?.graph;
             if (!globalGraph) {
-                console.log('❌ No global graph found either!');
                 return [];
             }
             // Use the global graph
@@ -161,13 +164,19 @@ class GroupNode extends BaseNode {
                 .map(id => {
                     const node = globalGraph.getNodeById(id);
                     if (!node) {
-                        console.log(`⚠️ Child node ${id} not found in global graph!`);
+                        if (!this._warnedDeletedNodes.has(id)) {
+                            console.warn(`⚠️ Group ${this.id}: Child node ${id} not found in global graph - it may have been deleted`);
+                            this._warnedDeletedNodes.add(id);
+                        }
+                        // Remove the deleted node from our childNodes set
+                        this.childNodes.delete(id);
+                        this._needsChildNodeSync = true;
                     }
                     return node;
                 })
                 .filter(node => node !== null);
             
-            console.log(`📦 getChildNodes (via global): ${childNodeIds.length} IDs -> ${childNodeObjects.length} nodes found`);
+            // console.log(`📦 getChildNodes (via global): ${childNodeIds.length} IDs -> ${childNodeObjects.length} nodes found`);
             return childNodeObjects;
         }
         
@@ -176,14 +185,52 @@ class GroupNode extends BaseNode {
             .map(id => {
                 const node = this.graph.getNodeById(id);
                 if (!node) {
-                    console.log(`⚠️ Child node ${id} not found in graph!`);
+                    if (!this._warnedDeletedNodes.has(id)) {
+                        console.warn(`⚠️ Group ${this.id}: Child node ${id} not found in graph - it may have been deleted`);
+                        this._warnedDeletedNodes.add(id);
+                    }
+                    // Remove the deleted node from our childNodes set
+                    this.childNodes.delete(id);
+                    this._needsChildNodeSync = true;
                 }
                 return node;
             })
             .filter(node => node !== null);
         
-        console.log(`📦 getChildNodes: ${childNodeIds.length} IDs -> ${childNodeObjects.length} nodes found`);
+        // console.log(`📦 getChildNodes: ${childNodeIds.length} IDs -> ${childNodeObjects.length} nodes found`);
+        
+        // Sync cleaned child nodes back to server if needed
+        // Delay sync to avoid triggering during initial load or rapid updates
+        if (this._needsChildNodeSync && !this._syncScheduled) {
+            this._syncScheduled = true;
+            setTimeout(() => {
+                this.syncChildNodesToServer();
+                this._syncScheduled = false;
+            }, 1000);
+        }
+        
         return childNodeObjects;
+    }
+    
+    /**
+     * Sync cleaned child nodes back to server
+     */
+    syncChildNodesToServer() {
+        if (!this._needsChildNodeSync) return;
+        
+        // Send update command to sync child nodes
+        if (window.app?.operationPipeline) {
+            const command = new window.NodeCommands.NodePropertyCommand({
+                nodeId: this.id,
+                property: 'childNodes',
+                value: Array.from(this.childNodes)
+            });
+            window.app.operationPipeline.executeCommand(command);
+            
+            console.log(`📤 Synced cleaned child nodes for group ${this.id}`);
+        }
+        
+        this._needsChildNodeSync = false;
     }
     
     /**
@@ -241,7 +288,7 @@ class GroupNode extends BaseNode {
      * @param {boolean} expandOnly - If true, only expands, never shrinks
      * @returns {{pos: number[], size: number[]}} The target bounds (for server sync)
      */
-    updateBounds(expandOnly = false) {
+    updateBounds(expandOnly = false, useTargetPositions = false) {
         if (this.isCollapsed) {
             this.size = [...this.collapsedSize];
             return {
@@ -250,8 +297,23 @@ class GroupNode extends BaseNode {
             };
         }
         
+        // Don't update bounds immediately after alignment animation completes
+        if (this._alignmentJustCompleted) {
+            const timeSinceCompletion = Date.now() - this._alignmentJustCompleted;
+            if (timeSinceCompletion < 1000) { // 1 second grace period
+                return {
+                    pos: [...this.pos],
+                    size: [...this.size]
+                };
+            } else {
+                // Clear the flag after grace period
+                delete this._alignmentJustCompleted;
+            }
+        }
+        
+        
         const childNodes = this.getChildNodes();
-        console.log(`📐 updateBounds: Group ${this.id} has ${childNodes.length} children`);
+        // console.log(`📐 updateBounds: Group ${this.id} has ${childNodes.length} children`);
         
         if (childNodes.length === 0) {
             // Don't shrink to default size if expandOnly is true
@@ -270,6 +332,12 @@ class GroupNode extends BaseNode {
         for (const node of childNodes) {
             if (node === this) continue; // Skip self to avoid recursion
             
+            // Skip null/undefined nodes
+            if (!node || !node.pos || !node.size) {
+                console.warn(`⚠️ Skipping invalid child node in group ${this.id}`);
+                continue;
+            }
+            
             const nodeMinX = node.pos[0];
             const nodeMinY = node.pos[1];
             const nodeMaxX = node.pos[0] + node.size[0];
@@ -281,7 +349,16 @@ class GroupNode extends BaseNode {
             maxY = Math.max(maxY, nodeMaxY);
         }
         
-        console.log(`📐 Child bounds: min(${minX}, ${minY}) max(${maxX}, ${maxY})`);
+        // console.log(`📐 Child bounds: min(${minX}, ${minY}) max(${maxX}, ${maxY})`);
+        
+        // If no valid child nodes were found, keep current size
+        if (!isFinite(minX) || !isFinite(minY) || !isFinite(maxX) || !isFinite(maxY)) {
+            console.warn(`⚠️ No valid child nodes found for group ${this.id}`);
+            return {
+                pos: [...this.pos],
+                size: [...this.size]
+            };
+        }
         
         // Calculate new bounds with padding
         const titleBarHeight = this.titleBarHeight; // Use fallback for bounds calculation
@@ -306,10 +383,16 @@ class GroupNode extends BaseNode {
             const finalWidth = finalRight - finalLeft;
             const finalHeight = finalBottom - finalTop;
             
-            console.log(`📐 Expand only - animating to: pos[${finalLeft}, ${finalTop}] size[${finalWidth}, ${finalHeight}]`);
+            // console.log(`📐 Expand only - animating to: pos[${finalLeft}, ${finalTop}] size[${finalWidth}, ${finalHeight}]`);
             
-            // Start animation to new bounds WITHOUT immediately setting pos/size
-            this.animateToBounds(finalLeft, finalTop, finalWidth, finalHeight);
+            // Check if we're being animated by alignment system
+            if (this._animPos || this._gridAnimPos || this._animSize || this._gridAnimSize) {
+                // Don't interfere with alignment animation
+                // Just return the calculated bounds without animating
+            } else {
+                // Start animation to new bounds WITHOUT immediately setting pos/size
+                this.animateToBounds(finalLeft, finalTop, finalWidth, finalHeight);
+            }
             
             // Return target bounds for server sync
             return {
@@ -317,20 +400,32 @@ class GroupNode extends BaseNode {
                 size: [finalWidth, finalHeight]
             };
         } else {
-            // Update position and size (original behavior - for initial creation)
-            console.log(`📐 Old bounds: pos[${this.pos[0]}, ${this.pos[1]}] size[${this.size[0]}, ${this.size[1]}]`);
+            // Animate to new bounds for smooth transition
+            // console.log(`📐 Animating from: pos[${this.pos[0]}, ${this.pos[1]}] size[${this.size[0]}, ${this.size[1]}]`);
+            // console.log(`📐 Animating to: pos[${newX}, ${newY}] size[${newWidth}, ${newHeight}]`);
             
-            this.pos[0] = newX;
-            this.pos[1] = newY;
-            this.size[0] = newWidth;
-            this.size[1] = newHeight;
+            // Check if bounds actually changed
+            const boundsChanged = 
+                Math.abs(this.pos[0] - newX) > 0.1 ||
+                Math.abs(this.pos[1] - newY) > 0.1 ||
+                Math.abs(this.size[0] - newWidth) > 0.1 ||
+                Math.abs(this.size[1] - newHeight) > 0.1;
             
-            console.log(`📐 New bounds: pos[${this.pos[0]}, ${this.pos[1]}] size[${this.size[0]}, ${this.size[1]}]`);
+            if (boundsChanged) {
+                // Check if we're being animated by alignment system
+                if (this._animPos || this._gridAnimPos || this._animSize || this._gridAnimSize) {
+                    // Don't interfere with alignment animation
+                    // Just return the calculated bounds without animating
+                } else {
+                    // Start animation to new bounds
+                    this.animateToBounds(newX, newY, newWidth, newHeight);
+                }
+            }
             
-            // Return current bounds
+            // Return target bounds
             return {
-                pos: [this.pos[0], this.pos[1]],
-                size: [this.size[0], this.size[1]]
+                pos: [newX, newY],
+                size: [newWidth, newHeight]
             };
         }
     }
@@ -367,6 +462,14 @@ class GroupNode extends BaseNode {
         // Start/restart animation
         this.animationStartTime = Date.now();
         
+        // Register this group as animating
+        // Try to get canvas reference from graph or use global app
+        let canvas = this.graph?.canvas || window.app?.graphCanvas;
+        
+        if (canvas?._animatingGroups) {
+            canvas._animatingGroups.add(this.id);
+        }
+        
         // Mark dirty to trigger redraws during animation
         this.markDirty();
     }
@@ -377,8 +480,12 @@ class GroupNode extends BaseNode {
      */
     updateAnimation() {
         if (!this.animationStartTime || !this.targetPos || !this.targetSize) {
+            this.isAnimating = false;
             return false;
         }
+        
+        // Mark as animating to prevent position sync conflicts
+        this.isAnimating = true;
         
         const now = Date.now();
         const elapsed = now - this.animationStartTime;
@@ -387,7 +494,8 @@ class GroupNode extends BaseNode {
         // Cubic ease-out (same as other animations)
         const eased = 1 - Math.pow(1 - progress, 3);
         
-        // Interpolate position
+        // Interpolate position - update silently without triggering sync
+        const oldPos = [...this.pos];
         this.pos[0] = this.animatedPos[0] + (this.targetPos[0] - this.animatedPos[0]) * eased;
         this.pos[1] = this.animatedPos[1] + (this.targetPos[1] - this.animatedPos[1]) * eased;
         
@@ -408,6 +516,16 @@ class GroupNode extends BaseNode {
             this.animatedSize = null;
             this.targetPos = null;
             this.targetSize = null;
+            this.isAnimating = false;
+            
+            // Unregister from animating groups
+            let canvas = this.graph?.canvas || window.app?.graphCanvas;
+            if (canvas?._animatingGroups) {
+                canvas._animatingGroups.delete(this.id);
+            }
+            
+            // Log completion for debugging
+            // console.log(`Group ${this.id} animation complete at pos[${this.pos[0]}, ${this.pos[1]}]`);
             
             return false;
         }
@@ -432,15 +550,15 @@ class GroupNode extends BaseNode {
      * Move all child nodes by the given offset
      */
     moveChildNodes(deltaX, deltaY) {
-        console.log(`🚀 moveChildNodes called with delta: ${deltaX}, ${deltaY}`);
-        console.log(`   Group ${this.id} has ${this.childNodes.size} child IDs:`, Array.from(this.childNodes));
+        // console.log(`🚀 moveChildNodes called with delta: ${deltaX}, ${deltaY}`);
+        // console.log(`   Group ${this.id} has ${this.childNodes.size} child IDs:`, Array.from(this.childNodes));
         
         const childNodes = this.getChildNodes();
-        console.log(`   Found ${childNodes.length} actual child nodes`);
+        // console.log(`   Found ${childNodes.length} actual child nodes`);
         
         for (const node of childNodes) {
             if (node === this) continue; // Skip self
-            console.log(`   Moving child ${node.id} from [${node.pos[0]}, ${node.pos[1]}]`);
+            // console.log(`   Moving child ${node.id} from [${node.pos[0]}, ${node.pos[1]}]`);
             node.pos[0] += deltaX;
             node.pos[1] += deltaY;
             node.markDirty();
@@ -516,9 +634,13 @@ class GroupNode extends BaseNode {
         // Draw title bar
         this.drawTitleBar(ctx, actualTitleBarHeight, actualLineWidth, actualFontSize);
         
-        // Draw resize handles (only if expanded and selected)
+        // Draw resize handles (only if expanded and selected and not animating)
         if (!this.isCollapsed && this.graph?.canvas?.selection?.isSelected(this)) {
-            this.drawResizeHandles(ctx, actualLineWidth);
+            // Check if alignment is animating
+            const alignmentManager = this.graph?.canvas?.alignmentManager;
+            if (!alignmentManager || (!alignmentManager.isActive() && !alignmentManager.isAnimating())) {
+                this.drawResizeHandles(ctx, actualLineWidth);
+            }
         }
         
         // Draw child count indicator if collapsed
