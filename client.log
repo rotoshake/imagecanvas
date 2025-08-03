@@ -112,3 +112,735 @@ Re-optimizing dependencies because lockfile has changed
 9:44:49 PM [vite] page reload js/canvas.js
 9:48:24 PM [vite] page reload js/renderers/TextureLODManager.js
 9:49:02 PM [vite] page reload js/utils/cache.js
+10:03:40 PM [vite] page reload js/utils/config.js
+10:03:42 PM [vite] page reload js/utils/config.js
+10:06:20 PM [vite] page reload js/ui/canvas-navigator.js
+10:06:21 PM [vite] page reload js/ui/canvas-navigator.js
+10:06:53 PM [vite] page reload js/ui/canvas-navigator.js
+10:06:53 PM [vite] page reload js/ui/canvas-navigator.js
+10:07:05 PM [vite] page reload js/ui/canvas-navigator.js
+10:07:34 PM [vite] page reload js/ui/floating-color-correction.js
+10:07:41 PM [vite] page reload js/renderers/WebGLRenderer.js
+10:09:37 PM [vite] page reload js/ui/canvas-navigator.js
+10:09:37 PM [vite] page reload js/ui/canvas-navigator.js
+10:10:02 PM [vite] page reload js/canvas.js
+10:10:02 PM [vite] page reload js/canvas.js
+10:11:49 PM [vite] page reload js/utils/config.js
+10:11:50 PM [vite] page reload js/utils/config.js
+10:13:43 PM [vite] page reload js/utils/config.js
+10:13:43 PM [vite] page reload js/utils/config.js
+10:13:51 PM [vite] page reload js/canvas.js
+10:14:19 PM [vite] page reload js/utils/config.js
+10:14:24 PM [vite] page reload js/utils/config.js
+10:14:26 PM [vite] page reload js/utils/config.js
+10:18:52 PM [vite] page reload js/renderers/WebGLRenderer.js
+10:19:03 PM [vite] page reload js/renderers/WebGLRenderer.js
+10:21:43 PM [vite] page reload js/nodes/image-node.js
+10:21:43 PM [vite] page reload js/nodes/image-node.js
+10:22:08 PM [vite] page reload js/commands/NodeCommands.js
+10:22:14 PM [vite] page reload js/commands/NodeCommands.js
+10:22:19 PM [vite] page reload js/commands/NodeCommands.js
+10:22:40 PM [vite] page reload js/nodes/image-node.js
+10:22:40 PM [vite] page reload js/nodes/image-node.js
+10:23:02 PM [vite] page reload js/ui/floating-color-correction.js
+10:23:08 PM [vite] page reload js/ui/floating-color-correction.js
+10:24:17 PM [vite] page reload js/ui/floating-color-correction.js
+10:24:27 PM [vite] page reload js/ui/components/spline-curve-editor.js
+10:24:37 PM [vite] page reload js/ui/components/spline-curve-editor.js
+10:24:47 PM [vite] page reload js/ui/components/spline-curve-editor.js
+10:29:13 PM [vite] page reload .scratch/test-color-wheel.html
+10:29:13 PM [vite] page reload .scratch/test-color-wheel.html
+10:31:13 PM [vite] page reload .scratch/test-color-balance-three-way.html
+10:31:29 PM [vite] page reload js/ui/floating-color-correction.js
+10:31:36 PM [vite] page reload js/commands/NodeCommands.js
+10:31:41 PM [vite] page reload js/commands/NodeCommands.js
+10:31:47 PM [vite] page reload js/commands/NodeCommands.js
+10:32:59 PM [vite] page reload js/ui/floating-color-correction.js
+10:33:08 PM [vite] page reload js/ui/floating-color-correction.js
+10:36:27 PM [vite] page reload .scratch/test-color-balance-three-way.html
+10:36:39 PM [vite] page reload .scratch/test-color-balance-three-way.html
+10:36:58 PM [vite] page reload .scratch/test-color-balance-three-way.html
+10:52:44 PM [vite] page reload js/renderers/WebGLRenderer.js
+10:52:44 PM [vite] page reload js/ui/components/spline-curve-editor.js
+10:52:44 PM [vite] page reload js/ui/canvas-navigator.js
+10:52:44 PM [vite] page reload js/canvas.js
+10:52:44 PM [vite] page reload .scratch/test-color-wheel.html
+10:52:44 PM [vite] page reload js/commands/NodeCommands.js
+10:52:44 PM [vite] page reload js/nodes/image-node.js
+10:52:44 PM [vite] page reload js/ui/floating-color-correction.js
+10:52:44 PM [vite] page reload js/utils/config.js
+10:52:44 PM [vite] page reload .scratch/test-color-balance-three-way.html
+10:56:43 PM [vite] page reload js/nodes/image-node.js
+10:57:37 PM [vite] page reload js/nodes/image-node.js
+10:57:37 PM [vite] page reload js/nodes/image-node.js
+10:57:43 PM [vite] page reload js/nodes/image-node.js
+10:57:43 PM [vite] page reload js/nodes/image-node.js
+10:57:51 PM [vite] page reload js/ui/floating-color-correction.js
+10:57:58 PM [vite] page reload js/ui/floating-color-correction.js
+10:58:01 PM [vite] page reload js/ui/floating-color-correction.js
+10:58:05 PM [vite] page reload js/ui/floating-color-correction.js
+11:00:08 PM [vite] page reload .scratch/test-color-balance-three-way.html
+11:05:30 PM [vite] page reload .scratch/test-color-balance-v2.html
+11:08:51 PM [vite] page reload .scratch/test-color-balance-with-preview.html
+11:08:59 PM [vite] page reload js/ui/components/color-balance-wheel.js
+11:09:00 PM [vite] page reload .scratch/test-color-balance-with-preview.html
+11:14:41 PM [vite] page reload .scratch/test-color-balance-improved.html
+11:15:16 PM [vite] page reload js/ui/components/color-balance-wheel.js
+11:20:35 PM [vite] page reload js/ui/components/color-balance-wheel.js
+11:20:40 PM [vite] page reload js/ui/components/color-balance-wheel.js
+11:21:33 PM [vite] page reload js/ui/components/color-balance-wheel.js
+11:22:10 PM [vite] page reload js/ui/components/color-balance-wheel.js
+11:23:33 PM [vite] page reload js/ui/components/color-balance-wheel.js
+11:24:38 PM [vite] page reload js/ui/components/color-balance-wheel.js
+11:24:57 PM [vite] page reload js/ui/components/color-balance-wheel.js
+11:25:58 PM [vite] page reload .scratch/test-gradient-ring.html
+11:27:11 PM [vite] page reload js/ui/components/color-balance-wheel.js
+11:29:15 PM [vite] page reload .scratch/test-color-balance-simple.html
+11:29:32 PM [vite] Internal server error: Failed to parse source for import analysis because the content contains invalid JS syntax. If you are using JSX, make sure to name the file with the .jsx or .tsx extension.
+  Plugin: vite:import-analysis
+  File: /Users/marcsteinberg/Documents/Projects/ImageCanvas/js/ui/components/color-balance-wheel.js?v=4:1:1
+  1  |  /**
+     |  ^
+  2  |   * Color Balance Wheel Component
+  3  |   * Similar to DaVinci Resolve's color wheels for shadows, midtones, and highlights
+      at TransformPluginContext._formatError (file:///Users/marcsteinberg/Documents/Projects/ImageCanvas/node_modules/vite/dist/node/chunks/dep-C6uTJdX2.js:49258:41)
+      at TransformPluginContext.error (file:///Users/marcsteinberg/Documents/Projects/ImageCanvas/node_modules/vite/dist/node/chunks/dep-C6uTJdX2.js:49253:16)
+      at TransformPluginContext.transform (file:///Users/marcsteinberg/Documents/Projects/ImageCanvas/node_modules/vite/dist/node/chunks/dep-C6uTJdX2.js:64243:14)
+      at async PluginContainer.transform (file:///Users/marcsteinberg/Documents/Projects/ImageCanvas/node_modules/vite/dist/node/chunks/dep-C6uTJdX2.js:49099:18)
+      at async loadAndTransform (file:///Users/marcsteinberg/Documents/Projects/ImageCanvas/node_modules/vite/dist/node/chunks/dep-C6uTJdX2.js:51977:27)
+      at async viteTransformMiddleware (file:///Users/marcsteinberg/Documents/Projects/ImageCanvas/node_modules/vite/dist/node/chunks/dep-C6uTJdX2.js:62105:24)
+11:29:35 PM [vite] Internal server error: Failed to parse source for import analysis because the content contains invalid JS syntax. If you are using JSX, make sure to name the file with the .jsx or .tsx extension.
+  Plugin: vite:import-analysis
+  File: /Users/marcsteinberg/Documents/Projects/ImageCanvas/js/ui/components/color-balance-wheel.js?v=4:1:1
+  1  |  /**
+     |  ^
+  2  |   * Color Balance Wheel Component
+  3  |   * Similar to DaVinci Resolve's color wheels for shadows, midtones, and highlights
+      at TransformPluginContext._formatError (file:///Users/marcsteinberg/Documents/Projects/ImageCanvas/node_modules/vite/dist/node/chunks/dep-C6uTJdX2.js:49258:41)
+      at TransformPluginContext.error (file:///Users/marcsteinberg/Documents/Projects/ImageCanvas/node_modules/vite/dist/node/chunks/dep-C6uTJdX2.js:49253:16)
+      at TransformPluginContext.transform (file:///Users/marcsteinberg/Documents/Projects/ImageCanvas/node_modules/vite/dist/node/chunks/dep-C6uTJdX2.js:64243:14)
+      at async PluginContainer.transform (file:///Users/marcsteinberg/Documents/Projects/ImageCanvas/node_modules/vite/dist/node/chunks/dep-C6uTJdX2.js:49099:18)
+      at async loadAndTransform (file:///Users/marcsteinberg/Documents/Projects/ImageCanvas/node_modules/vite/dist/node/chunks/dep-C6uTJdX2.js:51977:27)
+      at async viteTransformMiddleware (file:///Users/marcsteinberg/Documents/Projects/ImageCanvas/node_modules/vite/dist/node/chunks/dep-C6uTJdX2.js:62105:24)
+11:29:53 PM [vite] page reload js/ui/components/color-balance-wheel.js
+11:29:57 PM [vite] page reload js/ui/components/color-balance-wheel.js
+11:36:42 PM [vite] page reload .scratch/test-color-balance-simple.html
+11:40:45 PM [vite] page reload .scratch/test-color-balance-simple.html
+11:40:51 PM [vite] page reload .scratch/test-color-balance-simple.html
+11:41:33 PM [vite] page reload .scratch/test-color-balance-simple.html
+11:44:15 PM [vite] page reload .scratch/test-color-balance-simple.html
+11:44:25 PM [vite] page reload .scratch/test-color-balance-simple.html
+11:44:34 PM [vite] page reload .scratch/test-color-balance-simple.html
+11:45:31 PM [vite] page reload .scratch/test-color-balance-simple.html
+11:45:38 PM [vite] page reload .scratch/test-color-balance-simple.html
+11:47:06 PM [vite] page reload .scratch/test-color-balance-simple.html
+11:47:53 PM [vite] page reload .scratch/test-color-balance-simple.html
+11:49:35 PM [vite] page reload .scratch/test-color-balance-simple.html
+11:49:47 PM [vite] page reload .scratch/test-color-balance-simple.html
+11:50:41 PM [vite] page reload .scratch/test-color-balance-improved.html
+11:50:53 PM [vite] page reload .scratch/test-color-balance-improved.html
+11:51:06 PM [vite] page reload .scratch/test-color-balance-improved.html
+11:52:22 PM [vite] page reload .scratch/test-color-balance-improved.html
+11:55:27 PM [vite] page reload .scratch/test-color-balance-improved.html
+11:55:45 PM [vite] page reload .scratch/test-color-balance-improved.html
+11:59:42 PM [vite] page reload .scratch/test-color-balance-improved.html
+11:59:47 PM [vite] page reload .scratch/test-color-balance-improved.html
+11:59:59 PM [vite] page reload .scratch/test-color-balance-improved.html
+12:00:12 AM [vite] page reload .scratch/test-color-balance-improved.html
+12:00:16 AM [vite] page reload .scratch/test-color-balance-improved.html
+12:01:33 AM [vite] page reload .scratch/test-color-balance-improved.html
+12:01:54 AM [vite] page reload .scratch/test-color-balance-improved.html
+12:02:11 AM [vite] page reload .scratch/test-color-balance-improved.html
+12:05:25 AM [vite] page reload .scratch/test-color-balance-improved.html
+12:05:35 AM [vite] page reload .scratch/test-color-balance-improved.html
+12:10:32 AM [vite] page reload .scratch/test-color-balance-improved.html
+12:11:00 AM [vite] page reload .scratch/test-color-balance-improved.html
+12:12:27 AM [vite] page reload .scratch/test-color-balance-simple.html
+12:13:16 AM [vite] page reload .scratch/test-color-balance-improved.html
+12:13:26 AM [vite] page reload .scratch/test-color-balance-improved.html
+12:13:34 AM [vite] page reload .scratch/test-color-balance-simple.html
+12:13:43 AM [vite] page reload .scratch/test-color-balance-improved.html
+12:13:47 AM [vite] page reload .scratch/test-color-balance-improved.html
+12:14:08 AM [vite] page reload .scratch/test-color-balance-improved.html
+12:14:17 AM [vite] page reload .scratch/test-color-balance-improved.html
+12:14:25 AM [vite] page reload .scratch/test-color-balance-simple.html
+12:17:50 AM [vite] page reload .scratch/test-color-balance-improved.html
+12:19:35 AM [vite] page reload .scratch/test-color-balance-improved.html
+12:23:45 AM [vite] page reload .scratch/test-color-balance-improved.html
+12:23:46 AM [vite] page reload .scratch/test-color-balance-improved.html
+12:23:51 AM [vite] page reload .scratch/test-color-balance-improved.html
+12:23:54 AM [vite] page reload .scratch/test-color-balance-improved.html
+12:25:36 AM [vite] page reload .scratch/test-color-balance-improved.html
+12:34:38 AM [vite] page reload .scratch/test-color-balance-improved.html
+12:36:09 AM [vite] page reload .scratch/test-color-balance-improved.html
+12:41:55 AM [vite] page reload js/core/ThumbnailRequestCoordinator.js
+12:42:20 AM [vite] page reload js/nodes/image-node.js
+12:42:20 AM [vite] page reload js/nodes/image-node.js
+12:43:19 AM [vite] page reload js/nodes/image-node.js
+12:43:19 AM [vite] page reload js/nodes/image-node.js
+12:43:48 AM [vite] page reload js/core/StateSyncManager.js
+12:44:36 AM [vite] page reload js/renderers/TextureLODManager.js
+12:44:53 AM [vite] page reload js/ui/floating-color-correction.js
+12:45:20 AM [vite] page reload js/ui/floating-color-correction.js
+12:45:20 AM [vite] Pre-transform error: Failed to parse source for import analysis because the content contains invalid JS syntax. If you are using JSX, make sure to name the file with the .jsx or .tsx extension.
+12:45:20 AM [vite] Internal server error: Failed to parse source for import analysis because the content contains invalid JS syntax. If you are using JSX, make sure to name the file with the .jsx or .tsx extension.
+  Plugin: vite:import-analysis
+  File: /Users/marcsteinberg/Documents/Projects/ImageCanvas/js/ui/floating-color-correction.js:926:7
+  925|          }
+  926|      }
+  927|  }
+     |  ^
+  928|  
+  929|  if (typeof module !== 'undefined' && module.exports) {
+      at TransformPluginContext._formatError (file:///Users/marcsteinberg/Documents/Projects/ImageCanvas/node_modules/vite/dist/node/chunks/dep-C6uTJdX2.js:49258:41)
+      at TransformPluginContext.error (file:///Users/marcsteinberg/Documents/Projects/ImageCanvas/node_modules/vite/dist/node/chunks/dep-C6uTJdX2.js:49253:16)
+      at TransformPluginContext.transform (file:///Users/marcsteinberg/Documents/Projects/ImageCanvas/node_modules/vite/dist/node/chunks/dep-C6uTJdX2.js:64243:14)
+      at async PluginContainer.transform (file:///Users/marcsteinberg/Documents/Projects/ImageCanvas/node_modules/vite/dist/node/chunks/dep-C6uTJdX2.js:49099:18)
+      at async loadAndTransform (file:///Users/marcsteinberg/Documents/Projects/ImageCanvas/node_modules/vite/dist/node/chunks/dep-C6uTJdX2.js:51977:27)
+      at async viteTransformMiddleware (file:///Users/marcsteinberg/Documents/Projects/ImageCanvas/node_modules/vite/dist/node/chunks/dep-C6uTJdX2.js:62105:24)
+12:45:26 AM [vite] page reload js/ui/floating-color-correction.js
+12:46:00 AM [vite] page reload js/nodes/image-node.js
+12:46:11 AM [vite] page reload js/renderers/TextureLODManager.js
+12:46:13 AM [vite] page reload js/ui/floating-color-correction.js
+12:46:13 AM [vite] page reload js/core/StateSyncManager.js
+12:46:15 AM [vite] page reload js/nodes/image-node.js
+12:46:40 AM [vite] page reload js/utils/state.js
+12:46:40 AM [vite] page reload js/utils/state.js
+12:46:51 AM [vite] page reload js/utils/state.js
+12:46:51 AM [vite] page reload js/utils/state.js
+12:47:57 AM [vite] page reload js/ui/floating-color-correction.js
+12:48:32 AM [vite] page reload js/ui/floating-color-correction.js
+12:48:40 AM [vite] page reload js/ui/floating-color-correction.js
+12:48:46 AM [vite] page reload js/ui/floating-color-correction.js
+12:49:25 AM [vite] page reload js/ui/floating-color-correction.js
+12:49:51 AM [vite] page reload js/ui/floating-color-correction.js
+12:50:07 AM [vite] page reload js/ui/floating-color-correction.js
+12:50:44 AM [vite] page reload js/nodes/image-node.js
+12:50:44 AM [vite] page reload js/nodes/image-node.js
+12:50:56 AM [vite] page reload js/ui/floating-color-correction.js
+12:51:05 AM [vite] page reload js/ui/floating-color-correction.js
+12:52:29 AM [vite] page reload js/nodes/image-node.js
+12:52:29 AM [vite] page reload js/nodes/image-node.js
+12:52:36 AM [vite] page reload js/ui/floating-color-correction.js
+12:56:02 AM [vite] page reload js/renderers/WebGLRenderer.js
+12:57:05 AM [vite] page reload js/ui/floating-color-correction.js
+12:58:57 AM [vite] page reload js/renderers/WebGLRenderer.js
+1:03:02 AM [vite] page reload js/renderers/WebGLRenderer.js
+1:03:20 AM [vite] page reload js/ui/floating-color-correction.js
+1:03:40 AM [vite] page reload js/ui/floating-color-correction.js
+1:03:46 AM [vite] page reload js/ui/floating-color-correction.js
+1:03:52 AM [vite] page reload js/ui/floating-color-correction.js
+1:04:02 AM [vite] page reload js/ui/floating-color-correction.js
+1:04:58 AM [vite] page reload js/ui/floating-color-correction.js
+1:05:33 AM [vite] page reload js/ui/floating-color-correction.js
+1:06:01 AM [vite] page reload js/renderers/WebGLRenderer.js
+1:07:09 AM [vite] page reload js/renderers/WebGLRenderer.js
+1:07:19 AM [vite] page reload js/renderers/WebGLRenderer.js
+1:07:28 AM [vite] page reload js/renderers/WebGLRenderer.js
+1:07:36 AM [vite] page reload js/ui/components/spline-curve-editor.js
+1:07:45 AM [vite] page reload js/ui/floating-color-correction.js
+1:07:53 AM [vite] page reload js/ui/floating-color-correction.js
+1:09:46 AM [vite] page reload js/renderers/WebGLRenderer.js
+1:09:57 AM [vite] page reload js/renderers/WebGLRenderer.js
+1:10:04 AM [vite] page reload js/renderers/WebGLRenderer.js
+1:10:26 AM [vite] page reload js/renderers/WebGLRenderer.js
+1:10:29 AM [vite] page reload js/utils/state.js
+1:10:31 AM [vite] page reload js/renderers/WebGLRenderer.js
+1:10:31 AM [vite] page reload js/nodes/image-node.js
+1:10:31 AM [vite] page reload js/ui/components/spline-curve-editor.js
+1:10:32 AM [vite] page reload js/ui/floating-color-correction.js
+1:10:33 AM [vite] page reload js/renderers/WebGLRenderer.js
+1:11:13 AM [vite] page reload js/renderers/WebGLRenderer.js
+1:11:18 AM [vite] page reload js/renderers/WebGLRenderer.js
+1:11:27 AM [vite] page reload js/ui/components/spline-curve-editor.js
+1:11:33 AM [vite] page reload js/ui/components/spline-curve-editor.js
+1:12:43 AM [vite] page reload js/renderers/WebGLRenderer.js
+1:13:41 AM [vite] page reload js/renderers/WebGLRenderer.js
+1:13:54 AM [vite] page reload js/renderers/WebGLRenderer.js
+1:14:15 AM [vite] page reload js/renderers/WebGLRenderer.js
+1:15:08 AM [vite] page reload js/renderers/WebGLRenderer.js
+1:16:59 AM [vite] page reload js/ui/components/spline-curve-editor.js
+1:17:03 AM [vite] page reload js/ui/components/spline-curve-editor.js
+1:17:17 AM [vite] page reload js/ui/components/spline-curve-editor.js
+1:17:27 AM [vite] page reload js/ui/components/spline-curve-editor.js
+1:17:31 AM [vite] page reload js/ui/components/spline-curve-editor.js
+1:17:43 AM [vite] page reload js/ui/components/spline-curve-editor.js
+1:17:52 AM [vite] page reload js/ui/components/spline-curve-editor.js
+1:18:02 AM [vite] page reload js/ui/components/spline-curve-editor.js
+1:18:14 AM [vite] page reload js/ui/components/spline-curve-editor.js
+1:18:24 AM [vite] page reload js/ui/components/spline-curve-editor.js
+1:18:41 AM [vite] page reload js/ui/floating-color-correction.js
+1:18:51 AM [vite] page reload js/ui/floating-color-correction.js
+1:18:57 AM [vite] page reload js/ui/floating-color-correction.js
+1:19:00 AM [vite] page reload js/ui/floating-color-correction.js
+1:19:02 AM [vite] page reload js/ui/floating-color-correction.js
+1:19:11 AM [vite] page reload js/ui/floating-color-correction.js
+9:49:56 AM [vite] page reload js/core/StateSyncManager.js
+9:50:02 AM [vite] page reload js/core/StateSyncManager.js
+9:50:04 AM [vite] page reload js/core/StateSyncManager.js
+9:50:55 AM [vite] page reload js/ui/components/color-balance-wheel.js
+9:51:23 AM [vite] page reload js/core/StateSyncManager.js
+9:52:11 AM [vite] page reload js/ui/components/color-balance-wheel.js
+9:52:27 AM [vite] page reload js/ui/floating-color-correction.js
+9:52:42 AM [vite] page reload js/ui/floating-color-correction.js
+9:55:12 AM [vite] page reload js/ui/floating-color-correction.js
+9:55:36 AM [vite] page reload src/main.js
+9:55:39 AM [vite] page reload src/main.js
+9:57:01 AM [vite] page reload js/renderers/WebGLRenderer.js
+9:57:22 AM [vite] page reload js/renderers/WebGLRenderer.js
+9:57:36 AM [vite] page reload js/renderers/WebGLRenderer.js
+9:57:40 AM [vite] page reload js/renderers/WebGLRenderer.js
+9:57:52 AM [vite] page reload js/renderers/WebGLRenderer.js
+9:58:56 AM [vite] page reload js/renderers/WebGLRenderer.js
+9:59:55 AM [vite] page reload js/renderers/WebGLRenderer.js
+10:19:12 AM [vite] page reload js/ui/floating-color-correction.js
+10:19:21 AM [vite] page reload js/ui/floating-color-correction.js
+10:19:41 AM [vite] page reload js/ui/floating-color-correction.js
+10:20:06 AM [vite] page reload js/ui/floating-color-correction.js
+10:24:52 AM [vite] page reload js/ui/floating-color-correction.js
+10:25:27 AM [vite] page reload js/ui/floating-color-correction.js
+10:25:48 AM [vite] page reload js/ui/floating-color-correction.js
+10:25:51 AM [vite] page reload js/ui/floating-color-correction.js
+10:26:00 AM [vite] page reload js/ui/floating-color-correction.js
+10:26:09 AM [vite] page reload js/ui/floating-color-correction.js
+10:26:24 AM [vite] page reload js/ui/floating-color-correction.js
+10:26:32 AM [vite] page reload js/ui/floating-color-correction.js
+10:26:46 AM [vite] page reload js/ui/floating-color-correction.js
+10:26:56 AM [vite] page reload js/ui/components/color-balance-wheel.js
+10:27:04 AM [vite] page reload js/ui/floating-color-correction.js
+10:33:03 AM [vite] page reload js/renderers/WebGLRenderer.js
+10:33:27 AM [vite] page reload js/renderers/WebGLRenderer.js
+10:33:55 AM [vite] page reload js/renderers/WebGLRenderer.js
+10:34:35 AM [vite] page reload js/renderers/WebGLRenderer.js
+10:34:45 AM [vite] page reload js/ui/floating-color-correction.js
+10:34:56 AM [vite] page reload js/ui/floating-color-correction.js
+10:35:13 AM [vite] page reload js/ui/floating-color-correction.js
+10:35:22 AM [vite] page reload js/ui/floating-color-correction.js
+10:35:31 AM [vite] page reload js/ui/floating-color-correction.js
+10:35:42 AM [vite] page reload js/ui/floating-color-correction.js
+10:35:57 AM [vite] page reload js/renderers/WebGLRenderer.js
+10:36:05 AM [vite] page reload js/ui/floating-color-correction.js
+10:36:14 AM [vite] page reload js/ui/floating-color-correction.js
+10:36:20 AM [vite] page reload js/ui/floating-color-correction.js
+10:54:41 AM [vite] page reload js/renderers/WebGLRenderer.js
+10:55:27 AM [vite] page reload js/renderers/WebGLRenderer.js
+10:55:31 AM [vite] page reload js/renderers/WebGLRenderer.js
+10:58:28 AM [vite] page reload js/ui/floating-color-correction.js
+10:58:40 AM [vite] page reload js/ui/floating-color-correction.js
+10:58:54 AM [vite] page reload js/ui/floating-color-correction.js
+10:59:16 AM [vite] page reload js/ui/floating-color-correction.js
+11:00:13 AM [vite] page reload js/ui/floating-color-correction.js
+11:00:37 AM [vite] page reload js/ui/floating-color-correction.js
+11:01:18 AM [vite] page reload js/ui/floating-color-correction.js
+11:02:52 AM [vite] page reload js/ui/floating-color-correction.js
+11:05:13 AM [vite] page reload js/ui/floating-color-correction.js
+11:05:37 AM [vite] page reload js/ui/floating-color-correction.js
+11:06:19 AM [vite] page reload js/ui/floating-color-correction.js
+11:06:30 AM [vite] page reload js/ui/floating-color-correction.js
+11:06:39 AM [vite] page reload js/ui/floating-color-correction.js
+11:07:03 AM [vite] page reload js/ui/floating-color-correction.js
+11:07:29 AM [vite] page reload js/ui/floating-color-correction.js
+11:08:35 AM [vite] page reload js/ui/floating-color-correction.js
+11:11:20 AM [vite] page reload js/ui/floating-color-correction.js
+11:11:29 AM [vite] page reload js/ui/floating-color-correction.js
+11:11:39 AM [vite] page reload js/ui/floating-color-correction.js
+11:12:06 AM [vite] page reload js/ui/floating-color-correction.js
+11:12:23 AM [vite] page reload js/ui/floating-color-correction.js
+12:47:27 PM [vite] page reload js/ui/floating-color-correction.js
+12:47:34 PM [vite] page reload js/ui/floating-color-correction.js
+12:47:57 PM [vite] page reload js/ui/floating-color-correction.js
+12:48:00 PM [vite] page reload js/ui/floating-color-correction.js
+12:49:52 PM [vite] page reload js/ui/floating-color-correction.js
+12:52:24 PM [vite] page reload js/ui/floating-color-correction.js
+12:53:05 PM [vite] page reload js/renderers/WebGLRenderer.js
+12:55:55 PM [vite] page reload js/renderers/WebGLRenderer.js
+1:05:03 PM [vite] page reload js/renderers/WebGLRenderer.js
+1:05:25 PM [vite] page reload js/ui/components/color-balance-wheel.js
+1:05:27 PM [vite] page reload js/renderers/WebGLRenderer.js
+1:06:52 PM [vite] page reload js/ui/components/color-balance-wheel.js
+1:07:04 PM [vite] page reload js/renderers/WebGLRenderer.js
+1:07:26 PM [vite] page reload js/renderers/WebGLRenderer.js
+1:07:35 PM [vite] page reload js/ui/floating-color-correction.js
+1:13:51 PM [vite] page reload js/ui/components/color-balance-wheel.js
+1:14:00 PM [vite] page reload js/renderers/WebGLRenderer.js
+1:14:07 PM [vite] page reload js/ui/floating-color-correction.js
+1:14:26 PM [vite] page reload js/renderers/WebGLRenderer.js
+1:14:27 PM [vite] page reload js/ui/floating-color-correction.js
+1:16:04 PM [vite] page reload js/ui/components/color-balance-wheel.js
+1:16:49 PM [vite] page reload js/renderers/WebGLRenderer.js
+1:16:59 PM [vite] page reload js/ui/floating-color-correction.js
+1:22:25 PM [vite] page reload js/renderers/WebGLRenderer.js
+1:23:03 PM [vite] page reload js/renderers/WebGLRenderer.js
+1:26:56 PM [vite] page reload js/ui/floating-color-correction.js
+1:27:13 PM [vite] page reload js/ui/floating-color-correction.js
+1:27:25 PM [vite] page reload js/ui/floating-color-correction.js
+1:27:48 PM [vite] page reload js/renderers/WebGLRenderer.js
+1:28:23 PM [vite] page reload js/renderers/WebGLRenderer.js
+1:29:09 PM [vite] page reload js/renderers/WebGLRenderer.js
+1:29:12 PM [vite] page reload js/renderers/WebGLRenderer.js
+1:30:09 PM [vite] page reload .scratch/test-cached-rendering.html
+1:30:09 PM [vite] page reload .scratch/test-cached-rendering.html
+1:32:24 PM [vite] page reload js/renderers/WebGLRenderer.js
+1:32:34 PM [vite] page reload js/renderers/WebGLRenderer.js
+1:33:10 PM [vite] page reload js/renderers/WebGLRenderer.js
+1:33:47 PM [vite] page reload js/renderers/WebGLRenderer.js
+1:34:31 PM [vite] page reload js/renderers/WebGLRenderer.js
+1:35:16 PM [vite] page reload js/renderers/WebGLRenderer.js
+1:36:04 PM [vite] page reload js/ui/floating-color-correction.js
+1:36:59 PM [vite] page reload .scratch/test-color-balance-unified.html
+1:36:59 PM [vite] page reload .scratch/test-color-balance-unified.html
+1:39:02 PM [vite] page reload js/renderers/WebGLRenderer.js
+1:39:11 PM [vite] page reload js/renderers/WebGLRenderer.js
+1:39:39 PM [vite] page reload js/renderers/WebGLRenderer.js
+1:39:47 PM [vite] page reload js/renderers/WebGLRenderer.js
+1:41:05 PM [vite] page reload js/renderers/WebGLRenderer.js
+1:41:20 PM [vite] page reload js/renderers/WebGLRenderer.js
+1:41:44 PM [vite] page reload js/renderers/WebGLRenderer.js
+1:41:55 PM [vite] page reload js/renderers/WebGLRenderer.js
+1:44:55 PM [vite] page reload js/renderers/WebGLRenderer.js
+1:45:10 PM [vite] page reload js/renderers/WebGLRenderer.js
+1:46:13 PM [vite] page reload js/renderers/WebGLRenderer.js
+3:44:22 PM [vite] page reload js/renderers/WebGLRenderer.js
+3:44:39 PM [vite] page reload js/renderers/WebGLRenderer.js
+3:44:46 PM [vite] page reload js/renderers/WebGLRenderer.js
+3:44:53 PM [vite] page reload js/renderers/WebGLRenderer.js
+3:45:10 PM [vite] page reload js/renderers/WebGLRenderer.js
+3:49:04 PM [vite] page reload .scratch/test-coordinate-system.html
+3:49:04 PM [vite] page reload .scratch/test-coordinate-system.html
+3:49:28 PM [vite] page reload js/renderers/WebGLRenderer.js
+3:49:43 PM [vite] page reload js/ui/floating-color-correction.js
+3:54:07 PM [vite] page reload js/renderers/WebGLRenderer.js
+3:54:20 PM [vite] page reload js/renderers/WebGLRenderer.js
+3:54:28 PM [vite] page reload js/ui/floating-color-correction.js
+3:54:37 PM [vite] page reload js/ui/floating-color-correction.js
+4:15:13 PM [vite] page reload js/ui/components/color-balance-wheel.js
+4:15:26 PM [vite] page reload js/ui/components/color-balance-wheel.js
+4:15:38 PM [vite] page reload js/ui/components/color-balance-wheel.js
+4:15:48 PM [vite] page reload js/ui/components/color-balance-wheel.js
+4:16:19 PM [vite] page reload js/renderers/WebGLRenderer.js
+4:16:23 PM [vite] page reload js/renderers/WebGLRenderer.js
+4:16:42 PM [vite] page reload js/ui/floating-color-correction.js
+4:18:03 PM [vite] page reload js/ui/components/color-balance-wheel.js
+4:19:13 PM [vite] page reload js/ui/components/color-balance-wheel.js
+4:20:15 PM [vite] page reload js/ui/components/color-balance-wheel.js
+4:38:29 PM [vite] page reload js/ui/components/color-balance-wheel.js
+4:41:17 PM [vite] page reload js/ui/components/color-balance-wheel.js
+4:41:22 PM [vite] page reload js/ui/components/color-balance-wheel.js
+4:41:29 PM [vite] page reload js/ui/components/color-balance-wheel.js
+4:45:08 PM [vite] page reload js/ui/components/color-balance-wheel.js
+4:50:17 PM [vite] page reload .scratch/test-color-balance-behavior.html
+4:50:17 PM [vite] page reload .scratch/test-color-balance-behavior.html
+4:50:26 PM [vite] page reload .scratch/test-color-balance-behavior.html
+4:51:03 PM [vite] page reload js/renderers/WebGLRenderer.js
+4:51:25 PM [vite] page reload js/ui/floating-color-correction.js
+4:52:19 PM [vite] page reload .scratch/test-wheel-behavior-debug.html
+4:52:19 PM [vite] page reload .scratch/test-wheel-behavior-debug.html
+4:52:33 PM [vite] page reload .scratch/test-wheel-behavior-debug.html
+7:27:30 PM [vite] page reload .scratch/test-wheel-behavior-debug.html
+7:29:19 PM [vite] page reload .scratch/test-color-positions.html
+7:29:19 PM [vite] page reload .scratch/test-color-positions.html
+7:29:42 PM [vite] page reload .scratch/test-color-positions.html
+7:30:59 PM [vite] page reload .scratch/verify-brightness-differences.html
+7:31:08 PM [vite] page reload .scratch/verify-brightness-differences.html
+7:31:20 PM [vite] page reload .scratch/verify-brightness-differences.html
+7:38:24 PM [vite] page reload .scratch/debug-coordinate-transform.html
+7:39:07 PM [vite] page reload .scratch/debug-coordinate-transform.html
+7:39:30 PM [vite] page reload js/renderers/WebGLRenderer.js
+7:40:11 PM [vite] page reload js/renderers/WebGLRenderer.js
+7:40:21 PM [vite] page reload js/ui/floating-color-correction.js
+7:40:39 PM [vite] page reload js/ui/floating-color-correction.js
+7:41:24 PM [vite] page reload .scratch/test-fixed-behavior.html
+7:41:51 PM [vite] page reload .scratch/test-fixed-behavior.html
+7:44:26 PM [vite] page reload js/ui/floating-color-correction.js
+7:44:26 PM [vite] Pre-transform error: Failed to parse source for import analysis because the content contains invalid JS syntax. If you are using JSX, make sure to name the file with the .jsx or .tsx extension.
+7:44:26 PM [vite] Internal server error: Failed to parse source for import analysis because the content contains invalid JS syntax. If you are using JSX, make sure to name the file with the .jsx or .tsx extension.
+  Plugin: vite:import-analysis
+  File: /Users/marcsteinberg/Documents/Projects/ImageCanvas/js/ui/floating-color-correction.js:1575:7
+  1574|          }
+  1575|      }
+  1576|  }
+     |  ^
+  1577|  
+  1578|  if (typeof module !== 'undefined' && module.exports) {
+      at TransformPluginContext._formatError (file:///Users/marcsteinberg/Documents/Projects/ImageCanvas/node_modules/vite/dist/node/chunks/dep-C6uTJdX2.js:49258:41)
+      at TransformPluginContext.error (file:///Users/marcsteinberg/Documents/Projects/ImageCanvas/node_modules/vite/dist/node/chunks/dep-C6uTJdX2.js:49253:16)
+      at TransformPluginContext.transform (file:///Users/marcsteinberg/Documents/Projects/ImageCanvas/node_modules/vite/dist/node/chunks/dep-C6uTJdX2.js:64243:14)
+      at async PluginContainer.transform (file:///Users/marcsteinberg/Documents/Projects/ImageCanvas/node_modules/vite/dist/node/chunks/dep-C6uTJdX2.js:49099:18)
+      at async loadAndTransform (file:///Users/marcsteinberg/Documents/Projects/ImageCanvas/node_modules/vite/dist/node/chunks/dep-C6uTJdX2.js:51977:27)
+      at async viteTransformMiddleware (file:///Users/marcsteinberg/Documents/Projects/ImageCanvas/node_modules/vite/dist/node/chunks/dep-C6uTJdX2.js:62105:24)
+7:44:37 PM [vite] page reload js/ui/floating-color-correction.js
+7:44:45 PM [vite] page reload js/ui/floating-color-correction.js
+7:47:31 PM [vite] page reload js/ui/floating-color-correction.js
+7:49:15 PM [vite] page reload js/ui/floating-color-correction.js
+7:50:08 PM [vite] page reload js/ui/floating-color-correction.js
+7:51:35 PM [vite] page reload js/ui/floating-color-correction.js
+7:51:41 PM [vite] page reload js/ui/floating-color-correction.js
+7:52:48 PM [vite] page reload js/ui/floating-color-correction.js
+7:53:30 PM [vite] page reload js/ui/floating-color-correction.js
+7:55:06 PM [vite] page reload js/ui/floating-color-correction.js
+7:55:11 PM [vite] page reload js/ui/floating-color-correction.js
+7:57:23 PM [vite] page reload js/ui/floating-color-correction.js
+8:03:22 PM [vite] page reload js/ui/floating-color-correction.js
+8:04:28 PM [vite] page reload js/ui/floating-color-correction.js
+8:05:36 PM [vite] page reload js/ui/floating-color-correction.js
+8:05:41 PM [vite] page reload js/ui/floating-color-correction.js
+8:13:01 PM [vite] page reload js/ui/components/color-balance-wheel.js
+8:13:07 PM [vite] page reload js/ui/components/color-balance-wheel.js
+8:13:13 PM [vite] page reload js/ui/components/color-balance-wheel.js
+8:13:22 PM [vite] page reload js/ui/floating-color-correction.js
+8:13:33 PM [vite] page reload js/ui/floating-color-correction.js
+8:13:38 PM [vite] page reload js/ui/floating-color-correction.js
+8:13:41 PM [vite] page reload js/ui/floating-color-correction.js
+8:15:09 PM [vite] page reload js/ui/floating-color-correction.js
+8:15:12 PM [vite] page reload js/ui/floating-color-correction.js
+8:15:30 PM [vite] page reload js/ui/floating-color-correction.js
+8:15:32 PM [vite] page reload js/ui/floating-color-correction.js
+8:15:47 PM [vite] page reload js/ui/floating-color-correction.js
+8:15:49 PM [vite] page reload js/ui/floating-color-correction.js
+8:16:00 PM [vite] page reload js/ui/floating-color-correction.js
+8:16:01 PM [vite] page reload js/ui/floating-color-correction.js
+8:16:08 PM [vite] page reload js/ui/floating-color-correction.js
+8:16:21 PM [vite] page reload js/ui/floating-color-correction.js
+8:16:31 PM [vite] page reload js/ui/floating-color-correction.js
+8:16:43 PM [vite] page reload js/ui/floating-color-correction.js
+8:16:46 PM [vite] page reload js/ui/floating-color-correction.js
+8:18:55 PM [vite] page reload js/ui/floating-color-correction.js
+8:22:35 PM [vite] page reload js/renderers/WebGLRenderer.js
+8:22:41 PM [vite] page reload js/renderers/WebGLRenderer.js
+8:22:51 PM [vite] page reload js/renderers/WebGLRenderer.js
+8:23:05 PM [vite] page reload js/ui/floating-color-correction.js
+8:23:06 PM [vite] page reload js/ui/floating-color-correction.js
+8:23:07 PM [vite] page reload js/ui/floating-color-correction.js
+8:23:09 PM [vite] page reload js/ui/floating-color-correction.js
+8:23:10 PM [vite] page reload js/ui/floating-color-correction.js
+8:23:24 PM [vite] page reload js/ui/floating-color-correction.js
+8:23:27 PM [vite] page reload js/ui/floating-color-correction.js
+8:23:34 PM [vite] page reload js/ui/floating-color-correction.js
+8:23:34 PM [vite] Pre-transform error: Failed to parse source for import analysis because the content contains invalid JS syntax. If you are using JSX, make sure to name the file with the .jsx or .tsx extension.
+8:23:34 PM [vite] Internal server error: Failed to parse source for import analysis because the content contains invalid JS syntax. If you are using JSX, make sure to name the file with the .jsx or .tsx extension.
+  Plugin: vite:import-analysis
+  File: /Users/marcsteinberg/Documents/Projects/ImageCanvas/js/ui/floating-color-correction.js:1604:2
+  1602|  if (typeof window !== 'undefined') {
+  1603|      window.FloatingColorCorrection = FloatingColorCorrection;
+  1604|  }
+     |   ^
+      at TransformPluginContext._formatError (file:///Users/marcsteinberg/Documents/Projects/ImageCanvas/node_modules/vite/dist/node/chunks/dep-C6uTJdX2.js:49258:41)
+      at TransformPluginContext.error (file:///Users/marcsteinberg/Documents/Projects/ImageCanvas/node_modules/vite/dist/node/chunks/dep-C6uTJdX2.js:49253:16)
+      at TransformPluginContext.transform (file:///Users/marcsteinberg/Documents/Projects/ImageCanvas/node_modules/vite/dist/node/chunks/dep-C6uTJdX2.js:64243:14)
+      at async PluginContainer.transform (file:///Users/marcsteinberg/Documents/Projects/ImageCanvas/node_modules/vite/dist/node/chunks/dep-C6uTJdX2.js:49099:18)
+      at async loadAndTransform (file:///Users/marcsteinberg/Documents/Projects/ImageCanvas/node_modules/vite/dist/node/chunks/dep-C6uTJdX2.js:51977:27)
+      at async viteTransformMiddleware (file:///Users/marcsteinberg/Documents/Projects/ImageCanvas/node_modules/vite/dist/node/chunks/dep-C6uTJdX2.js:62105:24)
+8:23:36 PM [vite] page reload js/ui/floating-color-correction.js
+8:23:37 PM [vite] page reload js/ui/floating-color-correction.js
+8:23:37 PM [vite] page reload js/ui/floating-color-correction.js
+8:23:38 PM [vite] page reload js/ui/floating-color-correction.js
+8:23:42 PM [vite] page reload js/ui/floating-color-correction.js
+8:26:27 PM [vite] page reload js/ui/floating-color-correction.js
+8:26:39 PM [vite] page reload js/ui/floating-color-correction.js
+8:27:15 PM [vite] page reload .scratch/test-color-balance-state.html
+8:27:15 PM [vite] page reload .scratch/test-color-balance-state.html
+8:27:39 PM [vite] page reload js/ui/floating-color-correction.js
+8:27:39 PM [vite] page reload .scratch/test-color-balance-state.html
+8:28:22 PM [vite] page reload js/ui/floating-color-correction.js
+8:28:34 PM [vite] page reload js/ui/floating-color-correction.js
+8:28:39 PM [vite] page reload .scratch/test-cached-rendering.html
+8:28:39 PM [vite] page reload .scratch/test-color-balance-behavior.html
+8:28:39 PM [vite] page reload .scratch/test-color-balance-improved.html
+8:28:39 PM [vite] page reload .scratch/test-color-balance-simple.html
+8:28:39 PM [vite] page reload .scratch/test-color-balance-state.html
+8:28:39 PM [vite] page reload .scratch/test-color-balance-unified.html
+8:28:39 PM [vite] page reload .scratch/test-color-balance-three-way.html
+8:28:39 PM [vite] page reload .scratch/test-color-balance-v2.html
+8:28:39 PM [vite] page reload .scratch/test-color-wheel.html
+8:28:39 PM [vite] page reload .scratch/test-color-balance-with-preview.html
+8:28:39 PM [vite] page reload .scratch/test-coordinate-system.html
+8:28:39 PM [vite] page reload .scratch/test-fixed-behavior.html
+8:28:39 PM [vite] page reload .scratch/test-color-positions.html
+8:28:39 PM [vite] page reload .scratch/test-thumbnail-debug.html
+8:28:39 PM [vite] page reload .scratch/test-gradient-ring.html
+8:28:39 PM [vite] page reload .scratch/test-video-color-grading.html
+8:28:39 PM [vite] page reload .scratch/test-titles.html
+8:28:39 PM [vite] page reload .scratch/test-video-fixes.html
+8:28:39 PM [vite] page reload .scratch/test-video-performance.html
+8:28:39 PM [vite] page reload .scratch/test-webgl-performance-final.html
+8:28:39 PM [vite] page reload .scratch/test-webgl-lod.html
+8:28:39 PM [vite] page reload .scratch/test-webgl-performance-fix.html
+8:28:39 PM [vite] page reload .scratch/test-wheel-behavior-debug.html
+8:30:13 PM [vite] page reload js/renderers/WebGLRenderer.js
+8:30:19 PM [vite] page reload js/renderers/WebGLRenderer.js
+8:30:25 PM [vite] page reload js/renderers/WebGLRenderer.js
+8:30:46 PM [vite] page reload js/ui/floating-color-correction.js
+8:30:59 PM [vite] page reload js/renderers/WebGLRenderer.js
+8:31:11 PM [vite] page reload js/renderers/WebGLRenderer.js
+8:31:21 PM [vite] page reload js/ui/floating-color-correction.js
+8:31:31 PM [vite] page reload js/renderers/WebGLRenderer.js
+8:33:45 PM [vite] page reload js/renderers/WebGLRenderer.js
+8:34:19 PM [vite] page reload js/renderers/TextureLODManager.js
+8:36:48 PM [vite] page reload js/nodes/image-node.js
+8:36:48 PM [vite] page reload js/nodes/image-node.js
+8:37:02 PM [vite] page reload js/nodes/image-node.js
+8:37:03 PM [vite] page reload js/nodes/image-node.js
+8:37:10 PM [vite] page reload js/nodes/image-node.js
+8:42:10 PM [vite] page reload js/app.js
+8:42:10 PM [vite] page reload js/app.js
+8:48:14 PM [vite] page reload js/ui/canvas-navigator.js
+8:48:15 PM [vite] page reload js/ui/canvas-navigator.js
+8:48:23 PM [vite] page reload js/ui/connection-status.js
+8:49:10 PM [vite] page reload js/ui/canvas-navigator.js
+8:49:12 PM [vite] page reload js/ui/connection-status.js
+8:53:43 PM [vite] page reload js/ui/floating-color-correction.js
+8:55:57 PM [vite] page reload js/ui/floating-color-correction.js
+8:57:39 PM [vite] page reload js/ui/floating-properties-inspector.js
+8:57:40 PM [vite] page reload js/ui/floating-properties-inspector.js
+8:57:45 PM [vite] page reload js/ui/floating-properties-inspector.js
+8:59:41 PM [vite] page reload js/ui/floating-properties-inspector.js
+8:59:41 PM [vite] page reload js/ui/floating-properties-inspector.js
+8:59:47 PM [vite] page reload js/ui/floating-properties-inspector.js
+9:00:16 PM [vite] page reload js/ui/floating-properties-inspector.js
+9:00:16 PM [vite] page reload js/ui/floating-properties-inspector.js
+9:00:39 PM [vite] page reload js/ui/floating-properties-inspector.js
+9:00:40 PM [vite] page reload js/ui/floating-properties-inspector.js
+9:00:43 PM [vite] page reload js/ui/floating-properties-inspector.js
+9:02:54 PM [vite] page reload js/ui/floating-properties-inspector.js
+9:02:54 PM [vite] page reload js/ui/floating-properties-inspector.js
+9:03:00 PM [vite] page reload js/ui/floating-properties-inspector.js
+9:03:02 PM [vite] page reload js/ui/floating-properties-inspector.js
+9:03:02 PM [vite] page reload js/ui/floating-properties-inspector.js
+9:03:12 PM [vite] page reload js/ui/floating-properties-inspector.js
+9:03:12 PM [vite] page reload js/ui/floating-properties-inspector.js
+9:05:07 PM [vite] page reload js/ui/floating-properties-inspector.js
+9:05:07 PM [vite] page reload js/ui/floating-properties-inspector.js
+9:05:30 PM [vite] page reload js/ui/floating-properties-inspector.js
+9:11:00 PM [vite] page reload js/nodes/image-node.js
+9:11:00 PM [vite] page reload js/nodes/image-node.js
+9:11:56 PM [vite] page reload js/renderers/WebGLRenderer.js
+9:12:00 PM [vite] page reload js/renderers/WebGLRenderer.js
+9:12:22 PM [vite] page reload js/ui/floating-properties-inspector.js
+9:12:53 PM [vite] page reload js/ui/floating-properties-inspector.js
+9:12:54 PM [vite] page reload js/ui/floating-properties-inspector.js
+9:12:57 PM [vite] page reload js/ui/floating-properties-inspector.js
+9:13:02 PM [vite] page reload js/ui/floating-properties-inspector.js
+9:15:55 PM [vite] page reload js/renderers/TextureLODManager.js
+9:16:01 PM [vite] page reload js/renderers/TextureLODManager.js
+9:16:01 PM [vite] page reload js/renderers/TextureLODManager.js
+9:16:39 PM [vite] page reload js/renderers/WebGLRenderer.js
+9:16:50 PM [vite] page reload js/renderers/WebGLRenderer.js
+9:18:15 PM [vite] page reload js/renderers/WebGLRenderer.js
+9:19:28 PM [vite] page reload js/renderers/WebGLRenderer.js
+9:20:24 PM [vite] page reload js/nodes/image-node.js
+9:20:24 PM [vite] page reload js/nodes/image-node.js
+9:20:27 PM [vite] page reload js/nodes/image-node.js
+9:20:37 PM [vite] page reload js/nodes/video-node.js
+9:21:12 PM [vite] page reload js/renderers/WebGLRenderer.js
+9:21:33 PM [vite] page reload js/renderers/WebGLRenderer.js
+9:22:20 PM [vite] page reload js/renderers/WebGLRenderer.js
+9:22:27 PM [vite] page reload js/renderers/WebGLRenderer.js
+9:22:34 PM [vite] page reload js/renderers/WebGLRenderer.js
+9:22:40 PM [vite] page reload js/renderers/WebGLRenderer.js
+9:22:46 PM [vite] page reload js/renderers/WebGLRenderer.js
+9:26:35 PM [vite] page reload js/ui/components/spline-curve-editor.js
+9:26:47 PM [vite] page reload js/ui/components/spline-curve-editor.js
+9:26:52 PM [vite] page reload js/ui/components/spline-curve-editor.js
+9:27:11 PM [vite] page reload js/ui/components/spline-curve-editor.js
+9:28:29 PM [vite] page reload js/commands/NodeCommands.js
+9:29:29 PM [vite] page reload js/renderers/TextureLODManager.js
+9:29:37 PM [vite] page reload js/renderers/TextureLODManager.js
+9:29:54 PM [vite] page reload js/renderers/TextureLODManager.js
+9:29:57 PM [vite] page reload js/renderers/TextureLODManager.js
+9:31:22 PM [vite] page reload js/renderers/TextureLODManager.js
+9:31:27 PM [vite] page reload js/renderers/TextureLODManager.js
+9:31:32 PM [vite] page reload js/renderers/WebGLRenderer.js
+9:31:45 PM [vite] page reload js/renderers/WebGLRenderer.js
+9:34:17 PM [vite] page reload js/renderers/TextureLODManager.js
+9:34:54 PM [vite] page reload js/renderers/TextureLODManager.js
+9:34:58 PM [vite] page reload js/renderers/TextureLODManager.js
+9:35:08 PM [vite] page reload js/renderers/TextureLODManager.js
+9:35:27 PM [vite] page reload js/renderers/WebGLRenderer.js
+9:35:35 PM [vite] page reload js/renderers/TextureLODManager.js
+9:35:52 PM [vite] page reload js/renderers/TextureLODManager.js
+9:35:57 PM [vite] page reload js/renderers/TextureLODManager.js
+9:36:04 PM [vite] page reload js/renderers/WebGLRenderer.js
+9:39:03 PM [vite] page reload js/renderers/WebGLRenderer.js
+9:39:09 PM [vite] page reload js/renderers/WebGLRenderer.js
+9:39:20 PM [vite] page reload js/renderers/WebGLRenderer.js
+9:39:36 PM [vite] page reload js/renderers/WebGLRenderer.js
+9:39:59 PM [vite] page reload js/renderers/TextureLODManager.js
+9:44:59 PM [vite] page reload js/renderers/WebGLRenderer.js
+9:45:17 PM [vite] page reload js/renderers/WebGLRenderer.js
+9:45:24 PM [vite] page reload js/renderers/WebGLRenderer.js
+9:45:27 PM [vite] page reload js/renderers/WebGLRenderer.js
+9:45:50 PM [vite] page reload js/renderers/TextureLODManager.js
+9:45:57 PM [vite] page reload js/renderers/TextureLODManager.js
+9:46:11 PM [vite] page reload js/renderers/TextureLODManager.js
+9:46:19 PM [vite] page reload js/renderers/TextureLODManager.js
+9:46:43 PM [vite] page reload js/renderers/WebGLRenderer.js
+9:47:16 PM [vite] page reload js/renderers/WebGLRenderer.js
+9:47:24 PM [vite] page reload js/renderers/WebGLRenderer.js
+9:47:28 PM [vite] page reload js/renderers/WebGLRenderer.js
+9:47:31 PM [vite] page reload js/renderers/WebGLRenderer.js
+9:47:43 PM [vite] page reload js/renderers/WebGLRenderer.js
+9:50:08 PM [vite] page reload js/renderers/WebGLRenderer.js
+9:50:27 PM [vite] page reload .scratch/test-client-node-creation.html
+9:50:36 PM [vite] page reload js/renderers/TextureLODManager.js
+9:51:01 PM [vite] page reload js/renderers/WebGLRenderer.js
+9:51:09 PM [vite] page reload js/commands/NodeCommands.js
+9:51:12 PM [vite] page reload js/renderers/WebGLRenderer.js
+9:51:19 PM [vite] page reload js/renderers/WebGLRenderer.js
+9:51:25 PM [vite] page reload js/renderers/TextureLODManager.js
+9:51:29 PM [vite] page reload js/renderers/TextureLODManager.js
+9:51:37 PM [vite] page reload js/commands/NodeCommandsExtended.js
+9:51:38 PM [vite] page reload js/renderers/TextureLODManager.js
+9:52:17 PM [vite] page reload js/commands/NodeCommands.js
+9:52:27 PM [vite] page reload js/commands/NodeCommands.js
+9:53:09 PM [vite] page reload js/renderers/WebGLRenderer.js
+9:57:56 PM [vite] page reload js/ui/floating-properties-inspector.js
+9:57:56 PM [vite] page reload js/ui/floating-properties-inspector.js
+9:58:01 PM [vite] page reload js/ui/floating-properties-inspector.js
+10:03:48 PM [vite] page reload js/renderers/WebGLRenderer.js
+10:03:57 PM [vite] page reload js/renderers/WebGLRenderer.js
+10:04:06 PM [vite] page reload js/renderers/WebGLRenderer.js
+10:04:12 PM [vite] page reload js/renderers/WebGLRenderer.js
+10:04:16 PM [vite] page reload js/renderers/WebGLRenderer.js
+10:05:57 PM [vite] page reload js/renderers/TextureLODManager.js
+10:06:27 PM [vite] page reload js/renderers/TextureLODManager.js
+10:09:43 PM [vite] page reload js/renderers/WebGLRenderer.js
+10:10:02 PM [vite] page reload js/renderers/WebGLRenderer.js
+10:10:15 PM [vite] page reload js/renderers/WebGLRenderer.js
+10:10:24 PM [vite] page reload js/renderers/TextureLODManager.js
+10:10:36 PM [vite] page reload js/renderers/TextureLODManager.js
+10:10:39 PM [vite] page reload js/renderers/TextureLODManager.js
+10:10:46 PM [vite] page reload js/renderers/WebGLRenderer.js
+10:14:20 PM [vite] page reload js/core/StateSyncManager.js
+10:14:34 PM [vite] page reload js/core/StateSyncManager.js
+10:14:47 PM [vite] page reload js/core/StateSyncManager.js
+10:21:25 PM [vite] page reload js/renderers/WebGLRenderer.js
+10:28:07 PM [vite] page reload js/renderers/WebGLRenderer.js
+10:29:21 PM [vite] page reload js/renderers/WebGLRenderer.js
+10:29:27 PM [vite] page reload js/renderers/WebGLRenderer.js
+10:30:21 PM [vite] page reload js/renderers/TextureLODManager.js
+10:34:56 PM [vite] page reload js/renderers/WebGLRenderer.js
+10:37:48 PM [vite] page reload js/ui/floating-properties-inspector.js
+10:37:48 PM [vite] page reload js/ui/floating-properties-inspector.js
+10:38:26 PM [vite] page reload js/renderers/WebGLRenderer.js
+10:38:30 PM [vite] page reload js/renderers/WebGLRenderer.js
+10:39:18 PM [vite] page reload js/ui/floating-properties-inspector.js
+10:39:18 PM [vite] page reload js/ui/floating-properties-inspector.js
+10:39:49 PM [vite] page reload js/ui/floating-properties-inspector.js
+10:39:49 PM [vite] page reload js/ui/floating-properties-inspector.js
+10:41:29 PM [vite] page reload js/renderers/WebGLRenderer.js
+10:41:41 PM [vite] page reload js/renderers/WebGLRenderer.js
+10:41:50 PM [vite] page reload js/renderers/WebGLRenderer.js
+10:42:36 PM [vite] page reload .scratch/test-lod-color-cache.html
+10:42:43 PM [vite] page reload js/renderers/WebGLRenderer.js
+10:42:49 PM [vite] page reload js/renderers/WebGLRenderer.js
+10:46:54 PM [vite] page reload js/renderers/WebGLRenderer.js
+10:47:00 PM [vite] page reload js/renderers/WebGLRenderer.js
+10:48:02 PM [vite] page reload js/renderers/WebGLRenderer.js
+10:50:36 PM [vite] page reload js/renderers/WebGLRenderer.js
+10:50:43 PM [vite] page reload js/renderers/WebGLRenderer.js
+10:51:03 PM [vite] page reload js/renderers/WebGLRenderer.js
+10:51:16 PM [vite] page reload js/renderers/WebGLRenderer.js
+10:53:59 PM [vite] page reload js/renderers/WebGLRenderer.js
+10:54:18 PM [vite] page reload js/renderers/WebGLRenderer.js
+10:54:31 PM [vite] page reload js/renderers/WebGLRenderer.js
+10:54:39 PM [vite] page reload js/renderers/WebGLRenderer.js

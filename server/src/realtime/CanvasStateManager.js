@@ -368,20 +368,27 @@ class CanvasStateManager {
     applyNodePropertyUpdate(params, state, changes) {
         const node = state.nodes.find(n => n.id === params.nodeId);
         if (node) {
+            // Log color correction updates
+            if (['toneCurve', 'toneCurveBypassed', 'colorAdjustmentsBypassed', 'adjustments', 'colorBalance', 'colorBalanceBypassed'].includes(params.property)) {
+                console.log(`[CanvasStateManager] Updating color correction property: ${params.property}`, params.value);
+            }
+            
             // Handle special properties that belong on the node object itself
-            const nodeDirectProperties = ['title', 'rotation', 'aspectRatio'];
+            const nodeDirectProperties = ['title', 'rotation', 'aspectRatio', 'toneCurve', 'toneCurveBypassed', 'colorAdjustmentsBypassed', 'adjustments', 'colorBalance', 'colorBalanceBypassed'];
             
             if (nodeDirectProperties.includes(params.property)) {
                 // Update property directly on the node object
                 node[params.property] = params.value;
-                
+                console.log(`[CanvasStateManager] Updated node.${params.property} directly`);
             } else {
                 // Update property in the properties object
                 node.properties[params.property] = params.value;
-                
+                console.log(`[CanvasStateManager] Updated node.properties.${params.property}`);
             }
             
             changes.updated.push(node);
+        } else {
+            console.warn(`[CanvasStateManager] Node ${params.nodeId} not found for property update`);
         }
         // Missing nodes are silently ignored
         
@@ -666,6 +673,22 @@ class CanvasStateManager {
      * Save canvas state to database
      */
     async saveCanvasState(canvasId, state) {
+        // Log if any nodes have color correction properties
+        const nodesWithColorCorrections = state.nodes.filter(node => 
+            node.toneCurve || node.adjustments || node.colorBalance ||
+            node.toneCurveBypassed !== undefined || 
+            node.colorAdjustmentsBypassed !== undefined ||
+            node.colorBalanceBypassed !== undefined
+        );
+        
+        if (nodesWithColorCorrections.length > 0) {
+            console.log(`[CanvasStateManager] Saving ${nodesWithColorCorrections.length} nodes with color corrections`);
+            nodesWithColorCorrections.forEach(node => {
+                console.log(`  Node ${node.id}: toneCurve=${!!node.toneCurve}, adjustments=${!!node.adjustments}, colorBalance=${!!node.colorBalance}, ` +
+                          `toneCurveBypassed=${node.toneCurveBypassed}, colorAdjustmentsBypassed=${node.colorAdjustmentsBypassed}, colorBalanceBypassed=${node.colorBalanceBypassed}`);
+            });
+        }
+        
         const data = JSON.stringify({
             nodes: state.nodes,
             version: state.version

@@ -92,6 +92,7 @@ import '../js/ui/canvas-navigator.js';
 import '../js/ui/connection-status.js';
 import '../js/ui/floating-properties-inspector.js';
 import '../js/ui/components/spline-curve-editor.js';
+import '../js/ui/components/color-balance-wheel.js';
 import '../js/ui/floating-color-correction.js';
 import '../js/ui/unified-notifications.js';
 import '../js/ui/node-creation-menu.js';

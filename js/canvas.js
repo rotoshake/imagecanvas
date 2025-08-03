@@ -220,9 +220,17 @@ class ImageCanvas {
         
         // Use requestAnimationFrame for efficient rendering
         const renderFrame = (currentTime) => {
-            // No artificial FPS limiting - let RAF handle natural display sync
-            // The old FPS limiting was causing timing conflicts with vsync
-            
+            // Apply FPS limiting based on config
+            if (CONFIG.PERFORMANCE.USE_FPS_LIMIT) {
+                const timeSinceLastRender = currentTime - lastRenderTime;
+                
+                // Skip this frame if we haven't reached the target frame time
+                if (timeSinceLastRender < targetFrameTime) {
+                    this._renderLoopId = requestAnimationFrame(renderFrame);
+                    return;
+                }
+            }
+            // If USE_FPS_LIMIT is false, we let RAF handle natural display sync
             
             // Calculate deltaTime BEFORE updating lastRenderTime  
             const deltaTime = lastRenderTime > 0 ? currentTime - lastRenderTime : 16.67;

@@ -39,6 +39,10 @@ class ImageNode extends BaseNode {
             saturation: 0.0, // range -1..1
             hue: 0.0         // degrees -180..180
         };
+        
+        // Color balance (non-destructive, used by WebGL renderer)
+        this.colorBalance = null; // Will be initialized when first used
+        this.colorBalanceBypassed = false;
 
         this.needsGLUpdate = false; // flag for renderer cache
 
@@ -114,12 +118,21 @@ class ImageNode extends BaseNode {
                     this.loadingState = 'error';
                 } else if (this.properties.hash && !this._retryScheduled) {
                     // We have a hash but no data yet - schedule a retry
-                    this._retryScheduled = true;
-                    setTimeout(() => {
-                        this._retryScheduled = false;
-                        this._sourceErrorLogged = false; // Allow logging again
-                        this.setImage(this.properties.serverUrl, this.properties.filename, this.properties.hash);
-                    }, 1000); // Retry after 1 second
+                    this._retryCount = (this._retryCount || 0) + 1;
+                    
+                    // Max 10 retries to prevent infinite loops
+                    if (this._retryCount < 10) {
+                        this._retryScheduled = true;
+                        const retryDelay = Math.min(1000 * Math.pow(1.5, this._retryCount - 1), 30000); // Exponential backoff, max 30s
+                        setTimeout(() => {
+                            this._retryScheduled = false;
+                            this._sourceErrorLogged = false; // Allow logging again
+                            this.setImage(this.properties.serverUrl, this.properties.filename, this.properties.hash);
+                        }, retryDelay);
+                    } else {
+                        console.error(`❌ Max retries reached for node ${this.id} (hash: ${this.properties.hash?.substring(0, 8)}...) - image unavailable`);
+                        this.loadingState = 'error';
+                    }
                 }
             }
             return;
@@ -131,6 +144,7 @@ class ImageNode extends BaseNode {
             this.loadingState = 'loaded';
             this.primaryLoadCompleteTime = Date.now(); // Track completion time to prevent flicker
             this.isUnloaded = false; // Reset unloaded flag
+            this._retryCount = 0; // Reset retry count on successful load
             
             // Keep preview data until image is fully decoded and displayed
             // This prevents flickering during the transition
@@ -1052,6 +1066,15 @@ class ImageNode extends BaseNode {
             window.thumbnailCache.subscribe(this.properties.hash, this._thumbnailUpdateCallback);
         }
     }
+    
+    // Track what's actually being rendered
+    setLastRenderedResolution(width, height, source) {
+        this._lastRenderedResolution = { width, height, source };
+    }
+    
+    getLastRenderedResolution() {
+        return this._lastRenderedResolution || null;
+    }
 
     onRemoved() {
         // Unsubscribe from thumbnail updates to prevent memory leaks
@@ -1080,9 +1103,9 @@ class ImageNode extends BaseNode {
      * Update tone curve data and mark for re-render.
      */
     updateToneCurve(curveData) {
-        console.log('updateToneCurve called', curveData ? 'with data' : 'null');
+        // Simple direct update - the floating panel handles server sync
         this.toneCurve = curveData;
-        this.needsGLUpdate = true;
+        // Don't set needsGLUpdate here - it causes LUT recreation
 
         // Force immediate redraw and invalidate any cached state
         if (window.app?.graphCanvas) {

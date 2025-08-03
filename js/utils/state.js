@@ -281,18 +281,18 @@ class StateManager {
                 }
             }
             
-            // Restore color correction settings
-            if (nodeData.properties.adjustments) {
-                node.adjustments = { ...nodeData.properties.adjustments };
+            // Restore color correction settings (they're stored as direct properties)
+            if (nodeData.adjustments) {
+                node.adjustments = { ...nodeData.adjustments };
             }
-            if (nodeData.properties.toneCurve !== undefined) {
-                node.toneCurve = nodeData.properties.toneCurve;
+            if (nodeData.toneCurve !== undefined) {
+                node.toneCurve = nodeData.toneCurve;
             }
-            if (nodeData.properties.toneCurveBypassed !== undefined) {
-                node.toneCurveBypassed = nodeData.properties.toneCurveBypassed;
+            if (nodeData.toneCurveBypassed !== undefined) {
+                node.toneCurveBypassed = nodeData.toneCurveBypassed;
             }
-            if (nodeData.properties.colorAdjustmentsBypassed !== undefined) {
-                node.colorAdjustmentsBypassed = nodeData.properties.colorAdjustmentsBypassed;
+            if (nodeData.colorAdjustmentsBypassed !== undefined) {
+                node.colorAdjustmentsBypassed = nodeData.colorAdjustmentsBypassed;
             }
         } else if (node.type === 'media/video') {
             const oldHash = node.properties.hash;
@@ -350,19 +350,19 @@ class StateManager {
         }
         node.title = nodeData.title;
         
-        // Apply color correction settings for image nodes
-        if (node.type === 'media/image' && nodeData.properties) {
-            if (nodeData.properties.adjustments) {
-                node.adjustments = { ...nodeData.properties.adjustments };
+        // Apply color correction settings for image nodes (they're stored as direct properties)
+        if (node.type === 'media/image') {
+            if (nodeData.adjustments) {
+                node.adjustments = { ...nodeData.adjustments };
             }
-            if (nodeData.properties.toneCurve !== undefined) {
-                node.toneCurve = nodeData.properties.toneCurve;
+            if (nodeData.toneCurve !== undefined) {
+                node.toneCurve = nodeData.toneCurve;
             }
-            if (nodeData.properties.toneCurveBypassed !== undefined) {
-                node.toneCurveBypassed = nodeData.properties.toneCurveBypassed;
+            if (nodeData.toneCurveBypassed !== undefined) {
+                node.toneCurveBypassed = nodeData.toneCurveBypassed;
             }
-            if (nodeData.properties.colorAdjustmentsBypassed !== undefined) {
-                node.colorAdjustmentsBypassed = nodeData.properties.colorAdjustmentsBypassed;
+            if (nodeData.colorAdjustmentsBypassed !== undefined) {
+                node.colorAdjustmentsBypassed = nodeData.colorAdjustmentsBypassed;
             }
         }
     }

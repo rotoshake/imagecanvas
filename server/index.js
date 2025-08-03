@@ -2061,20 +2061,34 @@ class ImageCanvasServer {
                 
                 // 1. Drop all database tables
                 try {
+                    console.log('📊 Starting database deletion...');
+                    
                     // Check canvas count before deletion
                     const beforeCount = await this.db.get('SELECT COUNT(*) as count FROM canvases');
                     console.log(`📊 Canvases before wipe: ${beforeCount.count}`);
                     
                     // Delete in correct order to avoid foreign key violations
                     // Child tables first
+                    console.log('Deleting active_sessions...');
                     await this.db.run('DELETE FROM active_sessions');
+                    
+                    console.log('Deleting active_transactions...');
                     await this.db.run('DELETE FROM active_transactions');
+                    
+                    console.log('Deleting operations...');
                     await this.db.run('DELETE FROM operations');
+                    
+                    console.log('Deleting files...');
                     await this.db.run('DELETE FROM files');
-                    await this.db.run('DELETE FROM canvases');
+                    
+                    console.log('Deleting canvas_versions...');
                     await this.db.run('DELETE FROM canvas_versions');
+                    
+                    console.log('Deleting canvas_collaborators...');
                     await this.db.run('DELETE FROM canvas_collaborators');
+                    
                     // Parent table last
+                    console.log('Deleting canvases...');
                     await this.db.run('DELETE FROM canvases');
                     
                     // Reset auto-increment counters

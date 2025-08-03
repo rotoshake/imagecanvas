@@ -47,15 +47,26 @@ class WebGLRenderer {
             this.uContrast = this.gl.getUniformLocation(this.program, 'u_contrast');
             this.uSaturation = this.gl.getUniformLocation(this.program, 'u_saturation');
             this.uHue = this.gl.getUniformLocation(this.program, 'u_hue');
-            this.uToneLUT = this.gl.getUniformLocation(this.program, 'u_toneLUT');
-            this.uHasToneLUT = this.gl.getUniformLocation(this.program, 'u_hasToneLUT');
+            this.uCurvePoints = this.gl.getUniformLocation(this.program, 'u_curvePoints');
+            this.uNumCurvePoints = this.gl.getUniformLocation(this.program, 'u_numCurvePoints');
+            this.uHasToneCurve = this.gl.getUniformLocation(this.program, 'u_hasToneCurve');
             this.uOpacity = this.gl.getUniformLocation(this.program, 'u_opacity');
+            
+            // Color balance uniforms
+            this.uShadowsColor = this.gl.getUniformLocation(this.program, 'u_shadowsColor');
+            this.uShadowsLuminance = this.gl.getUniformLocation(this.program, 'u_shadowsLuminance');
+            this.uMidtonesColor = this.gl.getUniformLocation(this.program, 'u_midtonesColor');
+            this.uMidtonesLuminance = this.gl.getUniformLocation(this.program, 'u_midtonesLuminance');
+            this.uHighlightsColor = this.gl.getUniformLocation(this.program, 'u_highlightsColor');
+            this.uHighlightsLuminance = this.gl.getUniformLocation(this.program, 'u_highlightsLuminance');
+            this.uHasColorBalance = this.gl.getUniformLocation(this.program, 'u_hasColorBalance');
             this.positionLoc = this.gl.getAttribLocation(this.program, 'a_position');
             this.texLoc = this.gl.getAttribLocation(this.program, 'a_texCoord');
             this.resolutionLoc = this.gl.getUniformLocation(this.program, 'u_resolution');
         } else {
-            console.error('WebGL shader program failed to compile');
-            return;
+            const error = new Error('WebGL shader program failed to compile');
+            console.error(error);
+            throw error;
         }
 
         // Create a single VBO reused for all quads (4 vertices)
@@ -130,7 +141,7 @@ class WebGLRenderer {
         
         // Texture request throttling to prevent spam
         this.lastTextureRequest = new Map(); // nodeId -> { hash, lodSize, timestamp }
-        this.textureRequestCooldown = 2000; // 2 seconds between requests for the same node
+        this.textureRequestCooldown = 100; // 100ms between requests for the same LOD
         
         // Track rendered nodes to avoid unnecessary reprocessing
         this.renderedNodes = new Map(); // nodeId -> { hash, scale, position, textureKey }
@@ -143,8 +154,14 @@ class WebGLRenderer {
             thumbnailsPacked: 0
         };
         
-        // LUT texture cache for tone curves
-        this.lutTextureCache = new WeakMap(); // node -> WebGLTexture
+        // No more LUT texture cache needed - using parametric curves
+        
+        // Cached color correction rendering
+        this.colorCorrectedCache = new Map(); // nodeId -> { texture, framebuffer, width, height, timestamp, hash, adjustments }
+        this.activeAdjustmentNodeId = null; // Track which node is being actively adjusted
+        this.maxCachedTextures = 50; // Limit cache size to prevent GPU memory exhaustion
+        this.cacheMemoryUsage = 0; // Track approximate GPU memory usage
+        this.maxCacheMemory = 256 * 1024 * 1024; // 256MB max for cached renders
         
         // Canvas size cache to avoid getBoundingClientRect every frame
         this._cachedCanvasRect = null;
@@ -152,11 +169,613 @@ class WebGLRenderer {
         
         } catch (error) {
             console.error('WebGLRenderer initialization error:', error);
+            console.error('Error stack:', error.stack);
             // Clean up if initialization fails
             if (this.glCanvas && this.glCanvas.parentNode) {
                 this.glCanvas.parentNode.removeChild(this.glCanvas);
             }
             this.gl = null;
+            // Re-throw to prevent partial initialization
+            throw error;
+        }
+    }
+
+    hsvToRgb(h, s, v) {
+        // Convert HSV to RGB
+        // h: 0-360, s: 0-1, v: 0-1
+        const c = v * s;
+        const x = c * (1 - Math.abs(((h / 60) % 2) - 1));
+        const m = v - c;
+        
+        let r, g, b;
+        if (h < 60) {
+            r = c; g = x; b = 0;
+        } else if (h < 120) {
+            r = x; g = c; b = 0;
+        } else if (h < 180) {
+            r = 0; g = c; b = x;
+        } else if (h < 240) {
+            r = 0; g = x; b = c;
+        } else if (h < 300) {
+            r = x; g = 0; b = c;
+        } else {
+            r = c; g = 0; b = x;
+        }
+        
+        return {
+            r: r + m,
+            g: g + m,
+            b: b + m
+        };
+    }
+    
+    /**
+     * Single source of truth for converting color wheel coordinates to RGB
+     * Uses NTSC vectorscope color positions
+     * @private
+     */
+    _wheelToRGB(x, y) {
+        const distance = Math.sqrt(x * x + y * y);
+        if (distance === 0) return [0, 0, 0];
+        
+        // The ColorBalanceWheel displays colors using this transformation:
+        // vectorscopeAngle = (90 - canvasAngle) % 360
+        // Then it uses YUV to RGB conversion with:
+        // U = sin(vectorscopeAngle) * 0.5
+        // V = -cos(vectorscopeAngle) * 0.5
+        
+        // To get the color that the GUI is showing at position (x,y),
+        // we need to replicate the exact same calculation
+        const canvasAngle = Math.atan2(y, x) * 180 / Math.PI;
+        let vectorscopeAngle = (90 - canvasAngle) % 360;
+        if (vectorscopeAngle < 0) vectorscopeAngle += 360;
+        
+        // Use YUV to RGB conversion exactly as the GUI does
+        const angleRad = vectorscopeAngle * Math.PI / 180;
+        const U = Math.sin(angleRad) * 0.5;
+        const V = -Math.cos(angleRad) * 0.5; // Note the negative, same as GUI
+        
+        // YUV to RGB conversion (ITU-R BT.601)
+        const Y = 0.5; // Middle gray as base
+        let R = Y + 1.14 * V;
+        let G = Y - 0.395 * U - 0.581 * V;
+        let B = Y + 2.032 * U;
+        
+        // Clamp to valid range
+        R = Math.max(0, Math.min(1, R));
+        G = Math.max(0, Math.min(1, G));
+        B = Math.max(0, Math.min(1, B));
+        
+        // Convert to offset from neutral (0.5) and scale by distance
+        const dr = (R - 0.5) * distance;
+        const dg = (G - 0.5) * distance;
+        const db = (B - 0.5) * distance;
+        
+        return [dr, dg, db];
+    }
+    
+    /**
+     * Create a framebuffer for off-screen rendering
+     * @param {number} width - Width in pixels
+     * @param {number} height - Height in pixels
+     * @returns {Object} { framebuffer, texture } or null on error
+     */
+    _createFramebuffer(width, height) {
+        try {
+            const gl = this.gl;
+            
+            // Create framebuffer
+            const framebuffer = gl.createFramebuffer();
+            gl.bindFramebuffer(gl.FRAMEBUFFER, framebuffer);
+            
+            // Create texture to render to
+            const texture = gl.createTexture();
+            gl.bindTexture(gl.TEXTURE_2D, texture);
+            
+            // Use RGBA format for full color accuracy
+            gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, width, height, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
+            
+            // Set texture parameters
+            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+            
+            // Attach texture to framebuffer
+            gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, texture, 0);
+            
+            // Check if framebuffer is complete
+            if (gl.checkFramebufferStatus(gl.FRAMEBUFFER) !== gl.FRAMEBUFFER_COMPLETE) {
+                console.error('Framebuffer not complete');
+                gl.deleteTexture(texture);
+                gl.deleteFramebuffer(framebuffer);
+                return null;
+            }
+            
+            // Unbind
+            gl.bindTexture(gl.TEXTURE_2D, null);
+            gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+            
+            return { framebuffer, texture };
+        } catch (error) {
+            console.error('Failed to create framebuffer:', error);
+            return null;
+        }
+    }
+    
+    /**
+     * Start tracking active adjustments for a node
+     * @param {string} nodeId - The node being adjusted
+     */
+    startAdjustment(nodeId) {
+        if (this.activeAdjustmentNodeId !== nodeId) {
+            // console.log(`🎨 Starting active adjustment for node ${nodeId}`);
+            this.activeAdjustmentNodeId = nodeId;
+        }
+    }
+    
+    /**
+     * End tracking active adjustments for a node
+     * @param {string} nodeId - The node that was being adjusted
+     */
+    endAdjustment(nodeId) {
+        if (this.activeAdjustmentNodeId === nodeId) {
+            // console.log(`✅ Ending active adjustment for node ${nodeId}`);
+            this.activeAdjustmentNodeId = null;
+            
+            // Debounce cache invalidation to prevent loops
+            if (this._endAdjustmentTimer) {
+                clearTimeout(this._endAdjustmentTimer);
+            }
+            
+            this._endAdjustmentTimer = setTimeout(() => {
+                // Invalidate cache for this node to force re-render with final values
+                this._invalidateCache(nodeId);
+                this._endAdjustmentTimer = null;
+            }, 100);
+        }
+    }
+    
+    /**
+     * Check if a node has any active color corrections
+     * @private
+     */
+    nodeHasColorCorrection(node) {
+        // Check tone curve
+        const hasToneCurve = node.toneCurve && node.toneCurve.controlPoints && 
+                            !node.toneCurveBypassed;
+        
+        // Check color adjustments
+        const hasAdjustments = node.adjustments && !node.colorAdjustmentsBypassed && (
+            node.adjustments.brightness !== 0 || 
+            node.adjustments.contrast !== 0 || 
+            node.adjustments.saturation !== 0 || 
+            node.adjustments.hue !== 0
+        );
+        
+        // Check color balance
+        const hasColorBalance = node.colorBalance && !node.colorBalanceBypassed;
+        
+        return hasToneCurve || hasAdjustments || hasColorBalance;
+    }
+    
+    /**
+     * Generate unique cache key for a node's current state
+     * @private
+     */
+    _getCacheKey(node) {
+        // Include all color correction properties in the key
+        const parts = [
+            node.id,
+            // Tone curve
+            node.toneCurve ? JSON.stringify(node.toneCurve) : 'none',
+            node.toneCurveBypassed ? 'tc-bypass' : 'tc-active',
+            // Adjustments
+            node.adjustments ? JSON.stringify(node.adjustments) : 'none',
+            node.colorAdjustmentsBypassed ? 'adj-bypass' : 'adj-active',
+            // Color balance
+            node.colorBalance ? JSON.stringify(node.colorBalance) : 'none',
+            node.colorBalanceBypassed ? 'cb-bypass' : 'cb-active',
+            // Size (for resolution changes)
+            Math.round(node.size[0]),
+            Math.round(node.size[1])
+        ];
+        
+        return parts.join('|');
+    }
+    
+    /**
+     * Invalidate cached render for a specific node
+     * @param {string} nodeId - The node to invalidate
+     */
+    _invalidateCache(nodeId) {
+        // Need to invalidate all LOD levels for this node
+        const keysToDelete = [];
+        
+        // Find all cache entries for this node (all LOD levels)
+        for (const [key, cached] of this.colorCorrectedCache) {
+            if (key.startsWith(`${nodeId}_LOD:`)) {
+                keysToDelete.push(key);
+                
+                // Clean up GPU resources
+                if (cached.texture) {
+                    this.gl.deleteTexture(cached.texture);
+                }
+                if (cached.framebuffer) {
+                    this.gl.deleteFramebuffer(cached.framebuffer);
+                }
+                
+                // Update memory tracking
+                const memSize = cached.width * cached.height * 4; // RGBA
+                this.cacheMemoryUsage -= memSize;
+            }
+        }
+        
+        // Remove all entries for this node
+        for (const key of keysToDelete) {
+            this.colorCorrectedCache.delete(key);
+        }
+        
+        if (keysToDelete.length > 0 && window.DEBUG_LOD_STATUS) {
+            console.log(`🗑️ Invalidated ${keysToDelete.length} cached LOD levels for node ${nodeId}`);
+        }
+    }
+    
+    /**
+     * Check if a node's cached render is still valid
+     * @param {Object} node - The node to check
+     * @param {Object} cached - The cached data
+     * @param {WebGLTexture} currentSourceTexture - The current source texture
+     * @param {number} currentLOD - The current LOD level
+     * @returns {boolean} True if cache is valid
+     */
+    _isCacheValid(node, cached, currentSourceTexture, currentLOD) {
+        // Check if source texture hash changed
+        if (node.properties?.hash !== cached.hash) {
+            return false;
+        }
+        
+        // Check if source texture or LOD changed
+        if (cached.sourceTexture !== currentSourceTexture || cached.lodLevel !== currentLOD) {
+            if (window.DEBUG_LOD_STATUS) {
+                console.log(`🔄 Cache invalid for node ${node.id}: LOD changed from ${cached.lodLevel} to ${currentLOD}`);
+            }
+            return false;
+        }
+        
+        // Check if adjustments changed
+        const adj = node.adjustments || {};
+        const cachedAdj = cached.adjustments || {};
+        
+        if (adj.brightness !== cachedAdj.brightness ||
+            adj.contrast !== cachedAdj.contrast ||
+            adj.saturation !== cachedAdj.saturation ||
+            adj.hue !== cachedAdj.hue) {
+            return false;
+        }
+        
+        // Check tone curve
+        if (node.toneCurve?.timestamp !== cached.toneCurveTimestamp) {
+            return false;
+        }
+        
+        // Check color balance
+        if (node.colorBalance && cached.colorBalance) {
+            const cb = node.colorBalance;
+            const cachedCb = cached.colorBalance;
+            
+            // Simple deep comparison for color balance
+            const changed = JSON.stringify(cb) !== JSON.stringify(cachedCb);
+            if (changed) return false;
+        } else if (node.colorBalance !== cached.colorBalance) {
+            return false;
+        }
+        
+        // Check bypass flags
+        if (node.toneCurveBypassed !== cached.toneCurveBypassed ||
+            node.colorAdjustmentsBypassed !== cached.colorAdjustmentsBypassed) {
+            return false;
+        }
+        
+        return true;
+    }
+    
+    /**
+     * Render a node to a texture for caching
+     * @param {Object} node - The node to render
+     * @param {WebGLTexture} sourceTexture - The source texture
+     * @param {number} width - Target width
+     * @param {number} height - Target height
+     * @returns {Object} { texture, framebuffer } or null on error
+     */
+    _renderToTexture(node, sourceTexture, width, height) {
+        if (!this.gl || !sourceTexture) return null;
+        
+        // Create or reuse framebuffer
+        const fb = this._createFramebuffer(width, height);
+        if (!fb) return null;
+        
+        const gl = this.gl;
+        
+        // Save current state
+        const prevViewport = gl.getParameter(gl.VIEWPORT);
+        const prevFramebuffer = gl.getParameter(gl.FRAMEBUFFER_BINDING);
+        
+        try {
+            // Bind framebuffer
+            gl.bindFramebuffer(gl.FRAMEBUFFER, fb.framebuffer);
+            gl.viewport(0, 0, width, height);
+            
+            // Clear to transparent
+            gl.clearColor(0, 0, 0, 0);
+            gl.clear(gl.COLOR_BUFFER_BIT);
+            
+            // Set up rendering
+            gl.useProgram(this.program);
+            gl.uniform2f(this.resolutionLoc, width, height);
+            
+            // Simple fullscreen quad
+            const verts = new Float32Array([
+                0, 0,
+                width, 0,
+                0, height,
+                width, height
+            ]);
+            
+            gl.bindBuffer(gl.ARRAY_BUFFER, this.vertexBuffer);
+            gl.bufferData(gl.ARRAY_BUFFER, verts, gl.DYNAMIC_DRAW);
+            gl.enableVertexAttribArray(this.positionLoc);
+            gl.vertexAttribPointer(this.positionLoc, 2, gl.FLOAT, false, 0, 0);
+            
+            // Texture coordinates - flip Y when rendering to framebuffer
+            // This compensates for the Y-flip in the vertex shader
+            const flippedTexCoords = new Float32Array([
+                0, 1,   // 0,0 -> 0,1
+                1, 1,   // 1,0 -> 1,1
+                0, 0,   // 0,1 -> 0,0  
+                1, 0    // 1,1 -> 1,0
+            ]);
+            
+            gl.bindBuffer(gl.ARRAY_BUFFER, this.texBuffer);
+            gl.bufferData(gl.ARRAY_BUFFER, flippedTexCoords, gl.DYNAMIC_DRAW);
+            gl.enableVertexAttribArray(this.texLoc);
+            gl.vertexAttribPointer(this.texLoc, 2, gl.FLOAT, false, 0, 0);
+            
+            // Bind source texture
+            gl.activeTexture(gl.TEXTURE0);
+            gl.bindTexture(gl.TEXTURE_2D, sourceTexture);
+            
+            // Apply color corrections
+            this._applyNodeUniforms(node);
+            
+            // Draw
+            gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, this.indexBuffer);
+            gl.drawElements(gl.TRIANGLES, 6, gl.UNSIGNED_SHORT, 0);
+            
+            // Restore state
+            gl.bindFramebuffer(gl.FRAMEBUFFER, prevFramebuffer);
+            gl.viewport(prevViewport[0], prevViewport[1], prevViewport[2], prevViewport[3]);
+            
+            // Restore normal texture coordinates
+            gl.bindBuffer(gl.ARRAY_BUFFER, this.texBuffer);
+            gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([
+                0, 0,  1, 0,  0, 1,  1, 1
+            ]), gl.STATIC_DRAW);
+            
+            return fb;
+        } catch (error) {
+            console.error('Error rendering to texture:', error);
+            // Clean up on error
+            gl.deleteTexture(fb.texture);
+            gl.deleteFramebuffer(fb.framebuffer);
+            return null;
+        }
+    }
+    
+    /**
+     * Apply node uniforms for color corrections
+     * @private
+     */
+    _applyNodeUniforms(node) {
+        const gl = this.gl;
+        
+        // Send adjustment uniforms with validation (check bypass flag)
+        // If using cached texture, set all adjustments to 0 since they're already applied
+        let brightness = 0, contrast = 0, saturation = 0, hue = 0;
+        
+        if (typeof usingCachedTexture === 'undefined' || !usingCachedTexture) {
+            const bypassed = node.colorAdjustmentsBypassed;
+            const adj = (!bypassed && node.adjustments) ? node.adjustments : {brightness:0,contrast:0,saturation:0,hue:0};
+            brightness = bypassed ? 0 : (isNaN(adj.brightness) ? 0 : (adj.brightness || 0));
+            contrast = bypassed ? 0 : (isNaN(adj.contrast) ? 0 : (adj.contrast || 0));
+            saturation = bypassed ? 0 : (isNaN(adj.saturation) ? 0 : (adj.saturation || 0));
+            hue = bypassed ? 0 : (isNaN(adj.hue) ? 0 : (adj.hue || 0));
+        }
+        
+        gl.uniform1f(this.uBrightness, brightness);
+        gl.uniform1f(this.uContrast, contrast);
+        gl.uniform1f(this.uSaturation, saturation);
+        gl.uniform1f(this.uHue, hue);
+        
+        // Opacity always 1.0 for cached renders
+        gl.uniform1f(this.uOpacity, 1.0);
+        
+        // Handle tone curve control points
+        if (node.toneCurve && node.toneCurve.controlPoints && !node.toneCurveBypassed) {
+            const points = node.toneCurve.controlPoints;
+            const numPoints = Math.min(points.length, 8); // Max 8 points
+            
+            // Convert control points to flat array for uniform
+            const pointsArray = new Float32Array(16); // 8 points * 2 components
+            for (let i = 0; i < numPoints; i++) {
+                pointsArray[i * 2] = points[i].x;
+                pointsArray[i * 2 + 1] = points[i].y;
+            }
+            
+            gl.uniform2fv(this.uCurvePoints, pointsArray);
+            gl.uniform1i(this.uNumCurvePoints, numPoints);
+            gl.uniform1f(this.uHasToneCurve, 1.0);
+        } else {
+            // Disable tone curve
+            gl.uniform1f(this.uHasToneCurve, 0.0);
+        }
+        
+        // Handle color balance
+        if (node.colorBalance && !node.colorBalanceBypassed) {
+            const cb = node.colorBalance;
+            
+            // Use centralized color wheel to RGB conversion
+            const shadowsRGB = this._wheelToRGB(cb.shadows.x, cb.shadows.y);
+            // Invert midtones because gamma = 1.0 - delta in shader
+            const midtonesRGB = this._wheelToRGB(-cb.midtones.x, -cb.midtones.y);
+            const highlightsRGB = this._wheelToRGB(cb.highlights.x, cb.highlights.y);
+            
+            // Pass colors directly - shader handles the multipliers
+            gl.uniform3fv(this.uShadowsColor, shadowsRGB);
+            gl.uniform1f(this.uShadowsLuminance, cb.shadows.luminance);
+            
+            gl.uniform3fv(this.uMidtonesColor, midtonesRGB);
+            gl.uniform1f(this.uMidtonesLuminance, cb.midtones.luminance);
+            
+            gl.uniform3fv(this.uHighlightsColor, highlightsRGB);
+            gl.uniform1f(this.uHighlightsLuminance, cb.highlights.luminance);
+            
+            gl.uniform1f(this.uHasColorBalance, 1.0);
+        } else {
+            // Disable color balance
+            gl.uniform1f(this.uHasColorBalance, 0.0);
+        }
+    }
+    
+    /**
+     * Get or create cached render for a node
+     * @param {Object} node - The node to get cached render for
+     * @param {WebGLTexture} sourceTexture - The source texture
+     * @param {number} currentLOD - The current LOD level being used
+     * @returns {WebGLTexture|null} Cached texture or null
+     */
+    _getCachedOrRender(node, sourceTexture, currentLOD) {
+        const nodeId = node.id || `${node.type}_${node.pos[0]}_${node.pos[1]}`;
+        
+        // Check if this is the actively adjusted node
+        if (nodeId === this.activeAdjustmentNodeId) {
+            // Don't use cache for actively adjusted node
+            return null;
+        }
+        
+        // Check if we have any color corrections
+        const hasColorCorrections = 
+            (node.adjustments && !node.colorAdjustmentsBypassed && (
+                node.adjustments.brightness !== 0 ||
+                node.adjustments.contrast !== 0 ||
+                node.adjustments.saturation !== 0 ||
+                node.adjustments.hue !== 0
+            )) ||
+            (node.toneCurve && !node.toneCurveBypassed) ||
+            (node.colorBalance && !node.colorBalanceBypassed);
+        
+        if (!hasColorCorrections) {
+            // No corrections, no need for cache
+            return null;
+        }
+        
+        // Use a composite cache key that includes the LOD level
+        const cacheKey = `${nodeId}_LOD:${currentLOD}`;
+        
+        // Check cache
+        const cached = this.colorCorrectedCache.get(cacheKey);
+        
+        if (cached && this._isCacheValid(node, cached, sourceTexture, currentLOD)) {
+            // Valid cache hit
+            if (window.DEBUG_LOD_STATUS) {
+                console.log(`✅ Cache hit for ${cacheKey}`);
+            }
+            return cached.texture;
+        } else if (cached && window.DEBUG_LOD_STATUS) {
+            console.log(`❌ Cache invalid for ${cacheKey} - will re-render`);
+        }
+        
+        // Need to render to cache
+        const vp = this.canvas.viewport;
+        const width = Math.ceil(node.size[0] * vp.scale * vp.dpr);
+        const height = Math.ceil(node.size[1] * vp.scale * vp.dpr);
+        
+        // Check memory limits
+        const requiredMemory = width * height * 4;
+        if (this.cacheMemoryUsage + requiredMemory > this.maxCacheMemory) {
+            this._evictOldestCache();
+        }
+        
+        // Render to texture
+        const result = this._renderToTexture(node, sourceTexture, width, height);
+        if (!result) return null;
+        
+        // Store in cache
+        const cacheData = {
+            texture: result.texture,
+            framebuffer: result.framebuffer,
+            width: width,
+            height: height,
+            timestamp: Date.now(),
+            hash: node.properties?.hash,
+            sourceTexture: sourceTexture,  // Store the source texture reference
+            lodLevel: currentLOD,  // Store the LOD level used
+            adjustments: node.adjustments ? {...node.adjustments} : {},
+            toneCurveTimestamp: node.toneCurve?.timestamp,
+            colorBalance: node.colorBalance ? JSON.parse(JSON.stringify(node.colorBalance)) : null,
+            toneCurveBypassed: node.toneCurveBypassed,
+            colorAdjustmentsBypassed: node.colorAdjustmentsBypassed,
+            colorBalanceBypassed: node.colorBalanceBypassed
+        };
+        
+        this.colorCorrectedCache.set(cacheKey, cacheData);
+        this.cacheMemoryUsage += requiredMemory;
+        
+        if (window.DEBUG_LOD_STATUS) {
+            console.log(`✅ Cached color-corrected render for node ${nodeId} at LOD ${currentLOD} (key: ${cacheKey})`);
+        }
+        
+        return result.texture;
+    }
+    
+    /**
+     * Evict oldest cache entry when memory limit is reached
+     * @private
+     */
+    _evictOldestCache() {
+        let oldestTime = Infinity;
+        let oldestKey = null;
+        
+        // Find oldest entry
+        for (const [key, data] of this.colorCorrectedCache) {
+            if (data.timestamp < oldestTime) {
+                oldestTime = data.timestamp;
+                oldestKey = key;
+            }
+        }
+        
+        if (oldestKey) {
+            const cached = this.colorCorrectedCache.get(oldestKey);
+            if (cached) {
+                // Clean up GPU resources
+                if (cached.texture) {
+                    this.gl.deleteTexture(cached.texture);
+                }
+                if (cached.framebuffer) {
+                    this.gl.deleteFramebuffer(cached.framebuffer);
+                }
+                
+                // Update memory tracking
+                const memSize = cached.width * cached.height * 4; // RGBA
+                this.cacheMemoryUsage -= memSize;
+                
+                // Remove from cache
+                this.colorCorrectedCache.delete(oldestKey);
+                
+                if (window.DEBUG_LOD_STATUS) {
+                    console.log(`🗑️ Evicted oldest cache entry: ${oldestKey}`);
+                }
+            }
         }
     }
 
@@ -185,9 +804,19 @@ class WebGLRenderer {
             uniform float u_contrast;
             uniform float u_saturation;
             uniform float u_hue; // degrees
-            uniform sampler2D u_toneLUT;
-            uniform float u_hasToneLUT;
+            uniform vec2 u_curvePoints[8]; // Up to 8 control points (x,y pairs)
+            uniform int u_numCurvePoints;
+            uniform float u_hasToneCurve;
             uniform float u_opacity;
+            
+            // Color balance uniforms
+            uniform vec3 u_shadowsColor;
+            uniform float u_shadowsLuminance;
+            uniform vec3 u_midtonesColor;
+            uniform float u_midtonesLuminance;
+            uniform vec3 u_highlightsColor;
+            uniform float u_highlightsLuminance;
+            uniform float u_hasColorBalance;
 
             vec3 rgb2hsv(vec3 c) {
                 vec4 K = vec4(0., -1./3., 2./3., -1.);
@@ -203,16 +832,144 @@ class WebGLRenderer {
                 return c.z * mix(vec3(1.), clamp(p-1.,0.,1.), c.y);
             }
 
+            float evaluateCurve(float x) {
+                if (u_numCurvePoints < 2) return x;
+                
+                // Clamp input to [0,1]
+                x = clamp(x, 0.0, 1.0);
+                
+                // Manually unrolled loop to avoid dynamic indexing
+                if (u_numCurvePoints >= 2 && x <= u_curvePoints[1].x) {
+                    float t = (x - u_curvePoints[0].x) / (u_curvePoints[1].x - u_curvePoints[0].x);
+                    return mix(u_curvePoints[0].y, u_curvePoints[1].y, t);
+                }
+                if (u_numCurvePoints >= 3 && x <= u_curvePoints[2].x) {
+                    float t = (x - u_curvePoints[1].x) / (u_curvePoints[2].x - u_curvePoints[1].x);
+                    return mix(u_curvePoints[1].y, u_curvePoints[2].y, t);
+                }
+                if (u_numCurvePoints >= 4 && x <= u_curvePoints[3].x) {
+                    float t = (x - u_curvePoints[2].x) / (u_curvePoints[3].x - u_curvePoints[2].x);
+                    return mix(u_curvePoints[2].y, u_curvePoints[3].y, t);
+                }
+                if (u_numCurvePoints >= 5 && x <= u_curvePoints[4].x) {
+                    float t = (x - u_curvePoints[3].x) / (u_curvePoints[4].x - u_curvePoints[3].x);
+                    return mix(u_curvePoints[3].y, u_curvePoints[4].y, t);
+                }
+                if (u_numCurvePoints >= 6 && x <= u_curvePoints[5].x) {
+                    float t = (x - u_curvePoints[4].x) / (u_curvePoints[5].x - u_curvePoints[4].x);
+                    return mix(u_curvePoints[4].y, u_curvePoints[5].y, t);
+                }
+                if (u_numCurvePoints >= 7 && x <= u_curvePoints[6].x) {
+                    float t = (x - u_curvePoints[5].x) / (u_curvePoints[6].x - u_curvePoints[5].x);
+                    return mix(u_curvePoints[5].y, u_curvePoints[6].y, t);
+                }
+                if (u_numCurvePoints >= 8) {
+                    float t = (x - u_curvePoints[6].x) / (u_curvePoints[7].x - u_curvePoints[6].x);
+                    return mix(u_curvePoints[6].y, u_curvePoints[7].y, t);
+                }
+                
+                // Fallback to last point
+                if (u_numCurvePoints >= 8) return u_curvePoints[7].y;
+                if (u_numCurvePoints >= 7) return u_curvePoints[6].y;
+                if (u_numCurvePoints >= 6) return u_curvePoints[5].y;
+                if (u_numCurvePoints >= 5) return u_curvePoints[4].y;
+                if (u_numCurvePoints >= 4) return u_curvePoints[3].y;
+                if (u_numCurvePoints >= 3) return u_curvePoints[2].y;
+                return u_curvePoints[1].y;
+            }
+            
             vec3 applyToneCurve(vec3 color) {
-                // Apply tone curve LUT if available
-                if (u_hasToneLUT > 0.5) {
-                    // Sample the LUT for each channel - ensure proper clamping
-                    float r = texture2D(u_toneLUT, vec2(clamp(color.r, 0.0, 1.0), 0.5)).r;
-                    float g = texture2D(u_toneLUT, vec2(clamp(color.g, 0.0, 1.0), 0.5)).g;
-                    float b = texture2D(u_toneLUT, vec2(clamp(color.b, 0.0, 1.0), 0.5)).b;
-                    return vec3(r, g, b);
+                if (u_hasToneCurve > 0.5) {
+                    // Apply curve to each channel
+                    return vec3(
+                        evaluateCurve(color.r),
+                        evaluateCurve(color.g),
+                        evaluateCurve(color.b)
+                    );
                 }
                 return color;
+            }
+            
+            // Professional LGG color correction with luminance preservation
+            vec3 applyLiftGammaGain(vec3 color, vec3 lift, vec3 gamma, vec3 gain) {
+                // Store original luminance
+                float originalLuma = dot(color, vec3(0.299, 0.587, 0.114));
+                
+                // Step 1: Lift - Soft shadow offset
+                // lifted = in + L * (1 - in)
+                vec3 lifted = color + lift * (1.0 - color);
+                
+                // Step 2: Gamma - Power curve for midtones
+                // gamma_corrected = lifted^(1/G)
+                vec3 gammaCorrect = pow(max(lifted, vec3(0.0)), 1.0 / gamma);
+                
+                // Step 3: Gain - Soft highlight multiplier
+                // final = gamma_corrected * M
+                vec3 final = gammaCorrect * gain;
+                
+                // Luminance preservation for lift and gain
+                // Calculate how much the luminance changed
+                float newLuma = dot(final, vec3(0.299, 0.587, 0.114));
+                
+                // Blend between full effect and luminance-preserved based on color adjustment strength
+                // This preserves luminance more when making strong color shifts
+                float colorShift = length(lift - vec3(lift.r + lift.g + lift.b) / 3.0) + 
+                                  length(gain - vec3(gain.r + gain.g + gain.b) / 3.0);
+                float preserveAmount = smoothstep(0.0, 2.0, colorShift) * 0.7; // Up to 70% preservation
+                
+                if (newLuma > 0.001) {
+                    float lumaCorrection = mix(1.0, originalLuma / newLuma, preserveAmount);
+                    final *= lumaCorrection;
+                }
+                
+                return final;
+            }
+            
+            vec3 applyColorBalance(vec3 color) {
+                if (u_hasColorBalance < 0.5) return color;
+                
+                // Convert color wheel positions to lift/gain offsets per channel
+                // Shadows affect lift, highlights affect gain
+                vec3 lift = u_shadowsColor * 2.0; // 2x stronger
+                vec3 gain = vec3(1.0) + u_highlightsColor * 2.0; // 2x stronger
+                // Clamp gain to prevent excessive blowouts
+                gain = clamp(gain, vec3(0.0), vec3(4.0));
+                
+                // Midtones color affects gamma per channel
+                vec3 gammaDelta = u_midtonesColor * 2.5; // Strong effect
+                
+                // Apply soft limiting using smoothstep for each channel
+                vec3 gamma = vec3(1.0);
+                for (int i = 0; i < 3; i++) {
+                    float delta = i == 0 ? gammaDelta.r : (i == 1 ? gammaDelta.g : gammaDelta.b);
+                    // Soft limit: full effect up to 1.0, then gradually reduce
+                    if (abs(delta) > 1.0) {
+                        float excess = abs(delta) - 1.0;
+                        float softLimit = 1.0 + excess * 0.2; // Reduce excess by 80%
+                        delta = sign(delta) * softLimit;
+                    }
+                    if (i == 0) gamma.r = 1.0 - delta;
+                    else if (i == 1) gamma.g = 1.0 - delta;
+                    else gamma.b = 1.0 - delta;
+                }
+                
+                // Final safety clamp
+                gamma = clamp(gamma, vec3(0.3), vec3(3.0));
+                
+                // Convert luminance values to LGG parameters
+                // Lift: -0.5 to +0.5 range (darker to lighter shadows)
+                float liftLum = (u_shadowsLuminance - 0.5);
+                lift += vec3(liftLum);
+                
+                // Gamma: 0.5 to 2.0 range (darker to lighter midtones)
+                float gammaLum = pow(2.0, (u_midtonesLuminance - 0.5) * 2.0);
+                gamma *= gammaLum;
+                
+                // Gain: 0.5 to 1.5 range (darker to lighter highlights)
+                float gainLum = 0.5 + u_highlightsLuminance;
+                gain *= gainLum;
+                
+                return applyLiftGammaGain(color, lift, gamma, gain);
             }
 
             void main() {
@@ -220,6 +977,9 @@ class WebGLRenderer {
                 
                 // Apply tone curve first (before other adjustments)
                 color.rgb = applyToneCurve(color.rgb);
+                
+                // Apply color balance (before basic adjustments)
+                color.rgb = applyColorBalance(color.rgb);
                 
                 // brightness
                 color.rgb += u_brightness;
@@ -381,6 +1141,13 @@ class WebGLRenderer {
         this.framesSinceInit++;
         
         // Track frame timing
+        if (!this.frameBudget) {
+            this.frameBudget = {
+                startTime: 0,
+                textureUploads: 8,
+                atlasPacking: 2
+            };
+        }
         this.frameBudget.startTime = performance.now();
         
         // Resize and always clear at the start of each frame to prevent artifacts
@@ -425,6 +1192,9 @@ class WebGLRenderer {
         }
         
         // Clear texture requests from last frame
+        if (!this.textureRequests) {
+            this.textureRequests = new Map();
+        }
         this.textureRequests.clear();
         
         // Note: Don't clear pendingServerRequests here as they persist across frames until complete
@@ -443,6 +1213,57 @@ class WebGLRenderer {
         const [w,h] = this._resizeCanvas();
         const vp = this.canvas.viewport;
         const dpr = vp.dpr;
+        
+        
+        // Track what's being rendered on the node
+        if (node.setLastRenderedResolution) {
+            // For now, we need to check what texture is being used by looking at the LOD cache
+            if (node.properties?.hash && this.lodManager) {
+                const nodeCache = this.lodManager.textureCache.get(node.properties.hash);
+                if (nodeCache) {
+                    // Find which texture is being used
+                    let found = false;
+                    for (const [lodSize, textureData] of nodeCache) {
+                        if (textureData.texture === texture) {
+                            const size = lodSize || 'full';
+                            node.setLastRenderedResolution(
+                                textureData.width, 
+                                textureData.height, 
+                                size === 'full' ? 'full' : `${size}px`
+                            );
+                            found = true;
+                            
+                            // Notify properties panel of the change
+                            if (window.propertiesInspector && window.propertiesInspector.isVisible) {
+                                window.propertiesInspector.scheduleNavigationUpdate();
+                            }
+                            break;
+                        }
+                    }
+                    if (!found) {
+                        // Texture not found in cache, might be using node.img directly
+                        // Texture not found in cache, might be using node.img directly
+                        // Check if this is the full resolution image texture
+                        if (node.img && this.textureCache.has(node.img)) {
+                            const imgTexture = this.textureCache.get(node.img);
+                            if (imgTexture === texture) {
+                                node.setLastRenderedResolution(
+                                    node.img.naturalWidth,
+                                    node.img.naturalHeight,
+                                    'full'
+                                );
+                            }
+                        }
+                    }
+                }
+            } else if (texture.source) {
+                // Fallback for video nodes
+                const source = texture.source;
+                if (source instanceof HTMLVideoElement) {
+                    node.setLastRenderedResolution(source.videoWidth, source.videoHeight, 'video');
+                }
+            }
+        }
         
         // Use animated position if available (matches Canvas2D path)
         let graphPos = node.pos;
@@ -524,12 +1345,17 @@ class WebGLRenderer {
         this.gl.bindTexture(this.gl.TEXTURE_2D, texture);
 
         // Send adjustment uniforms with validation (check bypass flag)
-        const bypassed = node.colorAdjustmentsBypassed;
-        const adj = (!bypassed && node.adjustments) ? node.adjustments : {brightness:0,contrast:0,saturation:0,hue:0};
-        const brightness = bypassed ? 0 : (isNaN(adj.brightness) ? 0 : (adj.brightness || 0));
-        const contrast = bypassed ? 0 : (isNaN(adj.contrast) ? 0 : (adj.contrast || 0));
-        const saturation = bypassed ? 0 : (isNaN(adj.saturation) ? 0 : (adj.saturation || 0));
-        const hue = bypassed ? 0 : (isNaN(adj.hue) ? 0 : (adj.hue || 0));
+        // If using cached texture, set all adjustments to 0 since they're already applied
+        let brightness = 0, contrast = 0, saturation = 0, hue = 0;
+        
+        if (typeof usingCachedTexture === 'undefined' || !usingCachedTexture) {
+            const bypassed = node.colorAdjustmentsBypassed;
+            const adj = (!bypassed && node.adjustments) ? node.adjustments : {brightness:0,contrast:0,saturation:0,hue:0};
+            brightness = bypassed ? 0 : (isNaN(adj.brightness) ? 0 : (adj.brightness || 0));
+            contrast = bypassed ? 0 : (isNaN(adj.contrast) ? 0 : (adj.contrast || 0));
+            saturation = bypassed ? 0 : (isNaN(adj.saturation) ? 0 : (adj.saturation || 0));
+            hue = bypassed ? 0 : (isNaN(adj.hue) ? 0 : (adj.hue || 0));
+        }
         
         this.gl.uniform1f(this.uBrightness, brightness);
         this.gl.uniform1f(this.uContrast, contrast);
@@ -547,26 +1373,58 @@ class WebGLRenderer {
         }
         this.gl.uniform1f(this.uOpacity, opacity);
         
-        // Handle tone curve LUT
-        if (node.toneCurve && node.toneCurve.lut && !node.toneCurveBypassed) {
-            const lutTexture = this._ensureLUTTexture(node);
-            if (lutTexture) {
-                this.gl.activeTexture(this.gl.TEXTURE1);
-                this.gl.bindTexture(this.gl.TEXTURE_2D, lutTexture);
-                this.gl.uniform1i(this.uToneLUT, 1);
-                this.gl.uniform1f(this.uHasToneLUT, 1.0);
-            } else {
-                // Make sure to disable LUT if texture creation failed
-                this.gl.activeTexture(this.gl.TEXTURE1);
-                this.gl.bindTexture(this.gl.TEXTURE_2D, null);
-                this.gl.uniform1f(this.uHasToneLUT, 0.0);
-            }
+        // Skip all color corrections if using cached texture (already has corrections applied)
+        if (typeof usingCachedTexture !== 'undefined' && usingCachedTexture) {
+            // Disable all color corrections in shader
+            this.gl.uniform1f(this.uHasToneCurve, 0.0);
+            this.gl.uniform1f(this.uHasColorBalance, 0.0);
         } else {
-            // Disable LUT completely and unbind texture
-            this.gl.activeTexture(this.gl.TEXTURE1);
-            this.gl.bindTexture(this.gl.TEXTURE_2D, null);
-            this.gl.uniform1f(this.uHasToneLUT, 0.0);
+            // Handle tone curve control points
+        if (node.toneCurve && node.toneCurve.controlPoints && !node.toneCurveBypassed) {
+            const points = node.toneCurve.controlPoints;
+            const numPoints = Math.min(points.length, 8); // Max 8 points
+            
+            // Convert control points to flat array for uniform
+            const pointsArray = new Float32Array(16); // 8 points * 2 components
+            for (let i = 0; i < numPoints; i++) {
+                pointsArray[i * 2] = points[i].x;
+                pointsArray[i * 2 + 1] = points[i].y;
+            }
+            
+            this.gl.uniform2fv(this.uCurvePoints, pointsArray);
+            this.gl.uniform1i(this.uNumCurvePoints, numPoints);
+            this.gl.uniform1f(this.uHasToneCurve, 1.0);
+        } else {
+            // Disable tone curve
+            this.gl.uniform1f(this.uHasToneCurve, 0.0);
         }
+        
+        // Handle color balance
+        if (node.colorBalance && !node.colorBalanceBypassed) {
+            const cb = node.colorBalance;
+            
+            // Use centralized color wheel to RGB conversion
+            const shadowsRGB = this._wheelToRGB(cb.shadows.x, cb.shadows.y);
+            // Invert midtones because gamma = 1.0 - delta in shader
+            const midtonesRGB = this._wheelToRGB(-cb.midtones.x, -cb.midtones.y);
+            const highlightsRGB = this._wheelToRGB(cb.highlights.x, cb.highlights.y);
+            
+            // Pass colors directly (no additional multiplier needed here)
+            this.gl.uniform3fv(this.uShadowsColor, shadowsRGB);
+            this.gl.uniform1f(this.uShadowsLuminance, cb.shadows.luminance);
+            
+            this.gl.uniform3fv(this.uMidtonesColor, midtonesRGB);
+            this.gl.uniform1f(this.uMidtonesLuminance, cb.midtones.luminance);
+            
+            this.gl.uniform3fv(this.uHighlightsColor, highlightsRGB);
+            this.gl.uniform1f(this.uHighlightsLuminance, cb.highlights.luminance);
+            
+            this.gl.uniform1f(this.uHasColorBalance, 1.0);
+        } else {
+            // Disable color balance
+            this.gl.uniform1f(this.uHasColorBalance, 0.0);
+        }
+        } // Close the else block for usingCachedTexture check
 
         // Draw
         this.gl.bindBuffer(this.gl.ELEMENT_ARRAY_BUFFER, this.indexBuffer);
@@ -578,8 +1436,8 @@ class WebGLRenderer {
         this.gl.activeTexture(this.gl.TEXTURE0);
         this.gl.bindTexture(this.gl.TEXTURE_2D, null);
 
-        // Return false to allow canvas to continue drawing other elements (title, selection, etc.)
-        return false;
+        // Return true to indicate we successfully rendered the node
+        return true;
     }
     
     /**
@@ -635,11 +1493,26 @@ class WebGLRenderer {
                 200 // margin
             );
             
-            // Build set of visible hashes
+            // Clear high zoom tracking and rebuild
+            this.lodManager.clearHighZoomNodes();
+            
+            // Build set of visible hashes and track high zoom nodes
             const visibleHashes = new Set();
+            const vp = this.canvas.viewport;
+            
             for (const node of visibleNodes) {
                 if (node.properties?.hash) {
                     visibleHashes.add(node.properties.hash);
+                    
+                    // Check if this node needs full resolution
+                    const screenWidth = node.size[0] * vp.scale;
+                    const screenHeight = node.size[1] * vp.scale;
+                    const screenSize = Math.max(screenWidth, screenHeight);
+                    
+                    // Mark as high zoom if it needs full resolution (>1400px on screen)
+                    if (screenSize > 1400) {
+                        this.lodManager.markHighZoomNode(node.properties.hash);
+                    }
                 }
             }
             
@@ -674,8 +1547,9 @@ class WebGLRenderer {
             return false;
         }
         
+        
         // Debug: Log when we're processing a node with adjustments
-        if (node.adjustments || (node.toneCurve && node.toneCurve.lut)) {
+        if (node.adjustments || (node.toneCurve && node.toneCurve.controlPoints)) {
             const hasAdjustments = node.adjustments && (
                 node.adjustments.brightness !== 0 || 
                 node.adjustments.contrast !== 0 || 
@@ -700,13 +1574,15 @@ class WebGLRenderer {
             }
         }
 
-        // Skip early exit optimization if node has active adjustments
+        // Skip early exit optimization if node has active adjustments or tone curve
         const hasActiveAdjustments = node.adjustments && (
             node.adjustments.brightness !== 0 || 
             node.adjustments.contrast !== 0 || 
             node.adjustments.saturation !== 0 || 
             node.adjustments.hue !== 0
         );
+        
+        const hasActiveToneCurve = node.toneCurve && node.toneCurve.controlPoints && !node.toneCurveBypassed;
         
         const nodeId = node.id || (node.properties?.hash ? 
             `${node.properties.hash}_${node.pos[0]}_${node.pos[1]}` : 
@@ -719,7 +1595,7 @@ class WebGLRenderer {
             rotation: node.rotation || 0
         };
         
-        if (!hasActiveAdjustments && !node.needsGLUpdate && this.framesSinceInit > 5) {
+        if (!hasActiveAdjustments && !hasActiveToneCurve && !node.needsGLUpdate && this.framesSinceInit > 5) {
             // Early exit if nothing has changed for this node (skip first 5 frames to ensure textures load)
             const lastState = this.renderedNodes.get(nodeId);
             if (lastState && 
@@ -732,31 +1608,40 @@ class WebGLRenderer {
                 lastState.lastAccess = Date.now();
                 
                 // Nothing has changed, check if we have a valid texture and just render it
-                if (this.lodManager) {
-                    const screenWidth = node.size[0] * vp.scale * vp.dpr;
-                    const screenHeight = node.size[1] * vp.scale * vp.dpr;
+                if (node.type === 'media/video' && node.video && node.video.readyState >= 2) {
+                    // For video nodes, use the video element directly
+                    const texture = this._ensureTexture(node.video);
+                    return this._renderWithTexture(ctx2d, node, texture);
+                } else if (this.lodManager && node.properties?.hash) {
+                    const screenWidth = node.size[0] * vp.scale;
+                    const screenHeight = node.size[1] * vp.scale;
+                    const screenSize = Math.max(screenWidth, screenHeight);
+                    
+                    // For high DPI displays, use full DPR to get actual pixel count
+                    const effectiveScreenSize = screenSize * (vp.dpr || 1);
+                    
                     const texture = this.lodManager.getBestTexture(
                         node.properties.hash, 
-                        screenWidth,
-                        screenHeight
+                        effectiveScreenSize,
+                        effectiveScreenSize
                     );
+                    
                     
                     if (texture) {
                         // Check if we should request a better texture even though nothing else changed
                         // Check LOD cache first
                         const cachedLODInfo = this.lodCache.get(nodeId);
-                        const screenSize = Math.max(screenWidth, screenHeight);
                         const now = Date.now();
                         
                         let optimalLOD;
-                        if (cachedLODInfo && Math.abs(cachedLODInfo.screenSize - screenSize) < screenSize * 0.05 && 
+                        if (cachedLODInfo && Math.abs(cachedLODInfo.screenSize - effectiveScreenSize) < effectiveScreenSize * 0.05 && 
                             now - cachedLODInfo.lastUpdate < 5000) {
                             optimalLOD = cachedLODInfo.optimalLOD;
                         } else {
-                            optimalLOD = this.lodManager.getOptimalLOD(screenWidth, screenHeight);
+                            optimalLOD = this.lodManager.getOptimalLOD(effectiveScreenSize, effectiveScreenSize);
                             // Update cache
                             this.lodCache.set(nodeId, {
-                                screenSize,
+                                screenSize: effectiveScreenSize,
                                 optimalLOD,
                                 lastUpdate: now
                             });
@@ -847,10 +1732,30 @@ class WebGLRenderer {
         const sw = node.size[0] * vp.scale * dpr;
         const sh = node.size[1] * vp.scale * dpr;
         
-        // Calculate screen size for LOD selection (include DPR for high-DPI displays)
-        const screenWidth = node.size[0] * vp.scale * dpr;
-        const screenHeight = node.size[1] * vp.scale * dpr;
+        // Calculate screen size for LOD selection
+        // node.size = size of the node in graph coordinates
+        // vp.scale = zoom level (e.g., 2.0 = 200% zoom)
+        // Result: how many pixels the node takes up on screen (before DPR)
+        const screenWidth = node.size[0] * vp.scale;
+        const screenHeight = node.size[1] * vp.scale;
         const screenSize = Math.max(screenWidth, screenHeight);
+        
+        // Debug LOD calculation (only log significant changes)
+        const lastDebug = this._lastLODDebug || {};
+        if (lastDebug.nodeId !== node.id || 
+            Math.abs(lastDebug.scale - vp.scale) > 0.1 ||
+            Math.abs(lastDebug.screenSize - screenSize) > 50) {
+            console.log(`📐 LOD calc for ${node.id}:
+  - Node size: ${node.size[0]}x${node.size[1]}
+  - Zoom scale: ${vp.scale.toFixed(2)}x
+  - Screen size: ${Math.round(screenWidth)}x${Math.round(screenHeight)} = ${Math.round(screenSize)}px
+  - DPR: ${dpr}`);
+            this._lastLODDebug = { nodeId: node.id, scale: vp.scale, screenSize };
+        }
+        
+        // For high DPI displays, we need to consider the full DPR to get the actual pixel count
+        // This ensures we load high enough resolution textures for retina displays
+        const effectiveScreenSize = screenSize * dpr;
         
         // Check LOD cache to avoid repeated calculations
         const cachedLOD = this.lodCache.get(nodeId);
@@ -858,24 +1763,21 @@ class WebGLRenderer {
         
         // Use cached LOD if screen size hasn't changed significantly (within 5%)
         let optimalLOD = null;
-        if (cachedLOD && Math.abs(cachedLOD.screenSize - screenSize) < screenSize * 0.05 && 
+        if (cachedLOD && Math.abs(cachedLOD.screenSize - effectiveScreenSize) < effectiveScreenSize * 0.05 && 
             now - cachedLOD.lastUpdate < 5000) { // Cache valid for 5 seconds
             optimalLOD = cachedLOD.optimalLOD;
         } else {
             // Calculate new optimal LOD only once
-            optimalLOD = this.lodManager.getOptimalLOD(screenWidth, screenHeight);
+            optimalLOD = this.lodManager.getOptimalLOD(effectiveScreenSize, effectiveScreenSize);
             
             // Cache the result
             this.lodCache.set(nodeId, {
-                screenSize,
+                screenSize: effectiveScreenSize,
                 optimalLOD,
                 lastUpdate: now
             });
             
-            // Debug: Only log when LOD actually changes
-            if (screenWidth > 5000 || screenHeight > 5000) {
-                console.warn(`🚨 Huge screen size detected: ${Math.round(screenWidth)}x${Math.round(screenHeight)} (node: ${node.size[0]}x${node.size[1]}, scale: ${vp.scale.toFixed(2)}, dpr: ${dpr})`);
-            }
+            // Debug: Only log when LOD actually changes (removed - using better logging above)
         }
         
         // Get best available texture from LOD manager or video element
@@ -944,24 +1846,25 @@ class WebGLRenderer {
                     }
                 }
                 
-                // Check if we should request a better texture (with throttling)
-                const shouldRequestBetter = (currentLOD !== null && optimalLOD !== null && currentLOD < optimalLOD) ||
-                                           (currentLOD !== null && currentLOD <= 128 && screenWidth > 200);
+                // Check if we should request a different texture (with throttling)
+                const shouldRequestDifferent = currentLOD !== optimalLOD;
                 
-                if (shouldRequestBetter) {
+                if (shouldRequestDifferent) {
                     const lastRequest = this.lastTextureRequest.get(nodeId);
                     const requestKey = `${node.properties.hash}_${optimalLOD}`;
                     
-                    // Only make request if we haven't made the same request recently (throttle to 500ms)
+                    // Only make request if we haven't made the same request recently
                     if (!lastRequest || 
                         lastRequest.hash !== node.properties.hash ||
                         lastRequest.lodSize !== optimalLOD ||
                         now - lastRequest.timestamp > this.textureRequestCooldown) {
                         
-                        if (currentLOD < optimalLOD) {
-                            // console.log(`📈 Requesting higher quality texture: current=${currentLOD}px, optimal=${optimalLOD}px, screen=${Math.round(screenWidth)}px`);
+                        if (currentLOD === null) {
+                            console.log(`📥 Requesting texture switch: full res → ${optimalLOD}px`);
+                        } else if (optimalLOD === null) {
+                            console.log(`📥 Requesting texture switch: ${currentLOD}px → full res`);
                         } else {
-                            // console.log(`🔍 Requesting better texture for zoomed view: current=${currentLOD}px, screen=${Math.round(screenWidth)}px`);
+                            console.log(`📥 Requesting texture switch: ${currentLOD}px → ${optimalLOD}px`);
                         }
                         
                         // Update throttling cache
@@ -1008,19 +1911,67 @@ class WebGLRenderer {
                 this._requestTexture(node, screenWidth, screenHeight);
             }
             
-            // Special case: If node has tone curve or color adjustments, try to use the node's img element
+            // Special case: If node has color corrections, try to use the node's img element
             // to prevent falling back to Canvas2D which might cause blending issues
-            if ((node.toneCurve && node.toneCurve.lut) || 
-                (node.adjustments && (node.adjustments.brightness !== 0 || node.adjustments.contrast !== 0 || 
-                 node.adjustments.saturation !== 0 || node.adjustments.hue !== 0))) {
+            if (this.nodeHasColorCorrection(node)) {
                 if (node.img && node.img.complete) {
                     texture = this._ensureTexture(node.img);
+                    // When using node.img fallback, use the optimal LOD as the current LOD
+                    // This ensures proper cache keying even when LOD textures aren't loaded yet
+                    if (!currentLOD) {
+                        currentLOD = optimalLOD;
+                        if (window.DEBUG_LOD_STATUS) {
+                            console.log(`📌 Using optimal LOD ${optimalLOD} for cache key (fallback to node.img)`);
+                        }
+                    }
                 }
             }
             
             // Fall back to Canvas2D only if we have no other options
             if (!texture) {
                 return false;
+            }
+        }
+
+        // Check if this node has color corrections and is not being actively adjusted
+        const hasColorCorrection = this.nodeHasColorCorrection(node);
+        const isActivelyAdjusted = this.activeAdjustmentNodeId === node.id;
+        
+        // Track if we're using a cached texture with pre-applied corrections
+        let usingCachedTexture = false;
+        
+        // Ensure we have a currentLOD for cache keying
+        // If we couldn't determine the LOD from the texture, use the optimal LOD
+        if (currentLOD === null || currentLOD === undefined) {
+            currentLOD = optimalLOD;
+            if (window.DEBUG_LOD_STATUS) {
+                console.log(`📎 No current LOD detected, using optimal LOD ${optimalLOD} for cache key`);
+            }
+        }
+        
+        // For nodes with color corrections that aren't being actively adjusted, use cached rendering
+        if (hasColorCorrection && !isActivelyAdjusted) {
+            // For video nodes, only cache if paused
+            if (node.type === 'media/video' && (!node.properties.paused || !node.video)) {
+                // Playing video - render normally
+            } else {
+                // Try to get cached render
+                if (window.DEBUG_LOD_STATUS) {
+                    console.log(`🔍 Looking for cached render: node=${node.id}, LOD=${currentLOD}, texture=${texture}`);
+                }
+                const cachedTexture = this._getCachedOrRender(node, texture, currentLOD);
+                if (cachedTexture) {
+                    // Use cached texture instead of original
+                    texture = cachedTexture;
+                    usingCachedTexture = true;
+                    if (window.DEBUG_LOD_STATUS) {
+                        console.log(`✓ Using cached texture for node ${node.id} at LOD ${currentLOD}`);
+                    }
+                    // Continue with normal rendering flow but with cached texture
+                    // Note: Color corrections will be disabled in the shader since they're already baked in
+                } else if (window.DEBUG_LOD_STATUS) {
+                    console.log(`✗ No cached texture found for node ${node.id} at LOD ${currentLOD}`);
+                }
             }
         }
 
@@ -1088,12 +2039,17 @@ class WebGLRenderer {
         this.gl.bindTexture(this.gl.TEXTURE_2D, texture);
 
         // Send adjustment uniforms with validation (check bypass flag)
-        const bypassed = node.colorAdjustmentsBypassed;
-        const adj = (!bypassed && node.adjustments) ? node.adjustments : {brightness:0,contrast:0,saturation:0,hue:0};
-        const brightness = bypassed ? 0 : (isNaN(adj.brightness) ? 0 : (adj.brightness || 0));
-        const contrast = bypassed ? 0 : (isNaN(adj.contrast) ? 0 : (adj.contrast || 0));
-        const saturation = bypassed ? 0 : (isNaN(adj.saturation) ? 0 : (adj.saturation || 0));
-        const hue = bypassed ? 0 : (isNaN(adj.hue) ? 0 : (adj.hue || 0));
+        // If using cached texture, set all adjustments to 0 since they're already applied
+        let brightness = 0, contrast = 0, saturation = 0, hue = 0;
+        
+        if (typeof usingCachedTexture === 'undefined' || !usingCachedTexture) {
+            const bypassed = node.colorAdjustmentsBypassed;
+            const adj = (!bypassed && node.adjustments) ? node.adjustments : {brightness:0,contrast:0,saturation:0,hue:0};
+            brightness = bypassed ? 0 : (isNaN(adj.brightness) ? 0 : (adj.brightness || 0));
+            contrast = bypassed ? 0 : (isNaN(adj.contrast) ? 0 : (adj.contrast || 0));
+            saturation = bypassed ? 0 : (isNaN(adj.saturation) ? 0 : (adj.saturation || 0));
+            hue = bypassed ? 0 : (isNaN(adj.hue) ? 0 : (adj.hue || 0));
+        }
         
         this.gl.uniform1f(this.uBrightness, brightness);
         this.gl.uniform1f(this.uContrast, contrast);
@@ -1111,26 +2067,58 @@ class WebGLRenderer {
         }
         this.gl.uniform1f(this.uOpacity, opacity);
         
-        // Handle tone curve LUT
-        if (node.toneCurve && node.toneCurve.lut && !node.toneCurveBypassed) {
-            const lutTexture = this._ensureLUTTexture(node);
-            if (lutTexture) {
-                this.gl.activeTexture(this.gl.TEXTURE1);
-                this.gl.bindTexture(this.gl.TEXTURE_2D, lutTexture);
-                this.gl.uniform1i(this.uToneLUT, 1);
-                this.gl.uniform1f(this.uHasToneLUT, 1.0);
-            } else {
-                // Make sure to disable LUT if texture creation failed
-                this.gl.activeTexture(this.gl.TEXTURE1);
-                this.gl.bindTexture(this.gl.TEXTURE_2D, null);
-                this.gl.uniform1f(this.uHasToneLUT, 0.0);
-            }
+        // Skip all color corrections if using cached texture (already has corrections applied)
+        if (typeof usingCachedTexture !== 'undefined' && usingCachedTexture) {
+            // Disable all color corrections in shader
+            this.gl.uniform1f(this.uHasToneCurve, 0.0);
+            this.gl.uniform1f(this.uHasColorBalance, 0.0);
         } else {
-            // Disable LUT completely and unbind texture
-            this.gl.activeTexture(this.gl.TEXTURE1);
-            this.gl.bindTexture(this.gl.TEXTURE_2D, null);
-            this.gl.uniform1f(this.uHasToneLUT, 0.0);
+            // Handle tone curve control points
+        if (node.toneCurve && node.toneCurve.controlPoints && !node.toneCurveBypassed) {
+            const points = node.toneCurve.controlPoints;
+            const numPoints = Math.min(points.length, 8); // Max 8 points
+            
+            // Convert control points to flat array for uniform
+            const pointsArray = new Float32Array(16); // 8 points * 2 components
+            for (let i = 0; i < numPoints; i++) {
+                pointsArray[i * 2] = points[i].x;
+                pointsArray[i * 2 + 1] = points[i].y;
+            }
+            
+            this.gl.uniform2fv(this.uCurvePoints, pointsArray);
+            this.gl.uniform1i(this.uNumCurvePoints, numPoints);
+            this.gl.uniform1f(this.uHasToneCurve, 1.0);
+        } else {
+            // Disable tone curve
+            this.gl.uniform1f(this.uHasToneCurve, 0.0);
         }
+        
+        // Handle color balance
+        if (node.colorBalance && !node.colorBalanceBypassed) {
+            const cb = node.colorBalance;
+            
+            // Use centralized color wheel to RGB conversion
+            const shadowsRGB = this._wheelToRGB(cb.shadows.x, cb.shadows.y);
+            // Invert midtones because gamma = 1.0 - delta in shader
+            const midtonesRGB = this._wheelToRGB(-cb.midtones.x, -cb.midtones.y);
+            const highlightsRGB = this._wheelToRGB(cb.highlights.x, cb.highlights.y);
+            
+            // Pass colors directly (no additional multiplier needed here)
+            this.gl.uniform3fv(this.uShadowsColor, shadowsRGB);
+            this.gl.uniform1f(this.uShadowsLuminance, cb.shadows.luminance);
+            
+            this.gl.uniform3fv(this.uMidtonesColor, midtonesRGB);
+            this.gl.uniform1f(this.uMidtonesLuminance, cb.midtones.luminance);
+            
+            this.gl.uniform3fv(this.uHighlightsColor, highlightsRGB);
+            this.gl.uniform1f(this.uHighlightsLuminance, cb.highlights.luminance);
+            
+            this.gl.uniform1f(this.uHasColorBalance, 1.0);
+        } else {
+            // Disable color balance
+            this.gl.uniform1f(this.uHasColorBalance, 0.0);
+        }
+        } // Close the else block for usingCachedTexture check
 
         // Draw
         this.gl.bindBuffer(this.gl.ELEMENT_ARRAY_BUFFER, this.indexBuffer);
@@ -1155,10 +2143,114 @@ class WebGLRenderer {
         }
 
         // Reset needsGLUpdate flag since we've now processed the node
-        if (node.needsGLUpdate && !node.toneCurve?.lut) {
-            // Only reset if we don't have a tone curve, as tone curves handle their own flag
+        if (node.needsGLUpdate) {
             node.needsGLUpdate = false;
         }
+        
+        return true;
+    }
+    
+    /**
+     * Draw a cached node texture
+     * @private
+     */
+    _drawCachedNode(node, cached, offsetX, offsetY, scale, opacity) {
+        const gl = this.gl;
+        const vp = this.canvas.viewport;
+        
+        // Use the simple shader (no color correction needed for cached)
+        gl.useProgram(this.program);
+        
+        // Update resolution
+        const [w, h] = this._resizeCanvas();
+        gl.uniform2f(this.resolutionLoc, w, h);
+        
+        // Calculate position
+        let graphPos = node.pos;
+        if (node._gridAnimPos) {
+            graphPos = node._gridAnimPos;
+        } else if (node._animPos) {
+            graphPos = node._animPos;
+        }
+        
+        const dpr = vp.dpr;
+        const screenPos = vp.convertGraphToOffset(graphPos[0], graphPos[1]);
+        const sx = screenPos[0] * dpr;
+        const sy = screenPos[1] * dpr;
+        const sw = node.size[0] * vp.scale * dpr;
+        const sh = node.size[1] * vp.scale * dpr;
+        
+        // Set up vertices (handle rotation if needed)
+        let verts;
+        if (node.rotation && node.rotation !== 0) {
+            const rad = node.rotation * Math.PI / 180;
+            const cos = Math.cos(rad);
+            const sin = Math.sin(rad);
+            const cx = sx + sw / 2;
+            const cy = sy + sh / 2;
+
+            const rotate = (x, y) => {
+                const dx = x - cx;
+                const dy = y - cy;
+                return [
+                    cx + dx * cos - dy * sin,
+                    cy + dx * sin + dy * cos
+                ];
+            };
+
+            const p1 = rotate(sx, sy);
+            const p2 = rotate(sx + sw, sy);
+            const p3 = rotate(sx, sy + sh);
+            const p4 = rotate(sx + sw, sy + sh);
+
+            verts = new Float32Array([
+                p1[0], p1[1],
+                p2[0], p2[1],
+                p3[0], p3[1],
+                p4[0], p4[1]
+            ]);
+        } else {
+            verts = new Float32Array([
+                sx, sy,
+                sx + sw, sy,
+                sx, sy + sh,
+                sx + sw, sy + sh
+            ]);
+        }
+        
+        gl.bindBuffer(gl.ARRAY_BUFFER, this.vertexBuffer);
+        gl.bufferData(gl.ARRAY_BUFFER, verts, gl.DYNAMIC_DRAW);
+        gl.enableVertexAttribArray(this.positionLoc);
+        gl.vertexAttribPointer(this.positionLoc, 2, gl.FLOAT, false, 0, 0);
+        
+        // Texture coordinates
+        gl.bindBuffer(gl.ARRAY_BUFFER, this.texBuffer);
+        gl.enableVertexAttribArray(this.texLoc);
+        gl.vertexAttribPointer(this.texLoc, 2, gl.FLOAT, false, 0, 0);
+        
+        // Bind cached texture
+        gl.activeTexture(gl.TEXTURE0);
+        gl.bindTexture(gl.TEXTURE_2D, cached.texture);
+        
+        // Set uniforms - no color correction needed
+        gl.uniform1f(this.uBrightness, 0);
+        gl.uniform1f(this.uContrast, 0);
+        gl.uniform1f(this.uSaturation, 0);
+        gl.uniform1f(this.uHue, 0);
+        
+        // Apply opacity
+        let finalOpacity = opacity;
+        if (window.app?.galleryViewManager && window.app.galleryViewManager.active) {
+            finalOpacity = window.app.galleryViewManager.getNodeOpacity(node);
+        }
+        gl.uniform1f(this.uOpacity, finalOpacity);
+        
+        // Draw
+        gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, this.indexBuffer);
+        gl.drawElements(gl.TRIANGLES, 6, gl.UNSIGNED_SHORT, 0);
+        
+        // Clean up
+        gl.bindTexture(gl.TEXTURE_2D, null);
         
         return true;
     }
@@ -1176,7 +2268,10 @@ class WebGLRenderer {
         }
         
         const hash = node.properties.hash;
-        const optimalLOD = this.lodManager.getOptimalLOD(screenWidth, screenHeight);
+        const dpr = this.canvas.viewport?.dpr || 1;
+        const effectiveScreenSize = Math.max(screenWidth, screenHeight) * dpr;
+        const optimalLOD = this.lodManager.getOptimalLOD(effectiveScreenSize, effectiveScreenSize);
+        // console.log(`📤 Requesting texture: ${optimalLOD === null ? 'full res' : optimalLOD + 'px'} for ${hash.substring(0, 8)}... (screen: ${Math.round(screenWidth)}x${Math.round(screenHeight)}, effective: ${Math.round(effectiveScreenSize)})`);
         
         // Single decision tree - no overlapping conditions
         let textureSource = null;
@@ -1570,94 +2665,6 @@ class WebGLRenderer {
         }
     }
     
-    _ensureLUTTexture(node) {
-        // Check cache first
-        let lutTexture = this.lutTextureCache.get(node);
-        
-        // If texture exists but curve has changed, delete old texture
-        if (lutTexture && node.needsGLUpdate) {
-            // Silently invalidate LUT texture
-            this.gl.deleteTexture(lutTexture);
-            lutTexture = null;
-            this.lutTextureCache.delete(node);
-        }
-        
-        if (!lutTexture && node.toneCurve && node.toneCurve.lut) {
-            const lut = node.toneCurve.lut;
-            const size = lut.length;
-            
-            // Validate LUT data
-            if (size < 2) {
-                console.warn('LUT data too small, skipping texture creation');
-                return null;
-            }
-            
-            // Check if this is an identity curve (y = x) and skip if so
-            let isIdentityCurve = true;
-            const tolerance = 0.01;
-            for (let i = 0; i < size; i++) {
-                const expected = i / (size - 1);
-                if (Math.abs(lut[i] - expected) > tolerance) {
-                    isIdentityCurve = false;
-                    break;
-                }
-            }
-            
-            // if (isIdentityCurve) {
-            //     console.log('Identity curve detected, skipping LUT texture creation');
-            //     return null;
-            // }
-            
-            // Create new LUT texture
-            lutTexture = this.gl.createTexture();
-            this.gl.bindTexture(this.gl.TEXTURE_2D, lutTexture);
-            
-            // Configure texture parameters for 1D LUT
-            this.gl.texParameteri(this.gl.TEXTURE_2D, this.gl.TEXTURE_WRAP_S, this.gl.CLAMP_TO_EDGE);
-            this.gl.texParameteri(this.gl.TEXTURE_2D, this.gl.TEXTURE_WRAP_T, this.gl.CLAMP_TO_EDGE);
-            this.gl.texParameteri(this.gl.TEXTURE_2D, this.gl.TEXTURE_MIN_FILTER, this.gl.LINEAR);
-            this.gl.texParameteri(this.gl.TEXTURE_2D, this.gl.TEXTURE_MAG_FILTER, this.gl.LINEAR);
-            
-            // Create RGBA texture data for better compatibility
-            const lutData = new Uint8Array(size * 4);
-            
-            for (let i = 0; i < size; i++) {
-                // Clamp and convert to 0-255 range
-                const value = Math.floor(Math.max(0, Math.min(1, lut[i])) * 255);
-                const idx = i * 4;
-                lutData[idx] = value;     // R
-                lutData[idx + 1] = value; // G  
-                lutData[idx + 2] = value; // B
-                lutData[idx + 3] = 255;   // A (full opacity)
-            }
-            
-            // Upload as 1D texture (width x 1)
-            this.gl.texImage2D(
-                this.gl.TEXTURE_2D,
-                0,
-                this.gl.RGBA,
-                size,
-                1,
-                0,
-                this.gl.RGBA,
-                this.gl.UNSIGNED_BYTE,
-                lutData
-            );
-            
-            // Cache the texture
-            this.lutTextureCache.set(node, lutTexture);
-            
-            // Reset the GL update flag only when LUT texture is successfully created
-            node.needsGLUpdate = false;
-            
-            // Only log LUT creation when debugging
-            if (window.DEBUG_LOD_STATUS) {
-                console.log(`Created LUT texture: ${size} samples, range [${Math.min(...lut).toFixed(3)}, ${Math.max(...lut).toFixed(3)}]`);
-            }
-        }
-        
-        return lutTexture;
-    }
     
     /**
      * Clean up resources

@@ -840,8 +840,30 @@ class FloatingPropertiesInspector {
         }
     }
 
+    scheduleNavigationUpdate() {
+        if (this._navigationUpdateTimeout) {
+            clearTimeout(this._navigationUpdateTimeout);
+        }
+        this._navigationUpdateTimeout = setTimeout(() => {
+            // Only update if we have selected nodes with thumbnails
+            if (this.currentNodes.size > 0) {
+                const needsUpdate = Array.from(this.currentNodes.values()).some(node => 
+                    (node.type === 'media/image' || node.type === 'media/video') && node.properties?.hash
+                );
+                if (needsUpdate) {
+                    this.updatePropertyValues();
+                }
+            }
+            this._navigationUpdateTimeout = null;
+        }, 250); // 250ms debounce for navigation changes
+    }
+    
     setupCanvasStateListeners() {
         this.lastZoomLevel = null;
+        
+        // Set up navigation-based updates for thumbnail resolution
+        this._navigationUpdateTimeout = null;
+        const scheduleNavigationUpdate = () => this.scheduleNavigationUpdate();
         
         // Listen for canvas draw events to update zoom level only
         const originalDraw = this.canvas.draw.bind(this.canvas);
@@ -897,43 +919,42 @@ class FloatingPropertiesInspector {
             const originalChangeZoom = this.canvas.ds.changeZoom.bind(this.canvas.ds);
             this.canvas.ds.changeZoom = (...args) => {
                 const result = originalChangeZoom(...args);
+                // Update canvas stats when no nodes selected
                 if (this.currentNodes.size === 0) {
                     this.updateProperties();
                 }
+                // Schedule navigation update for thumbnail resolution
+                scheduleNavigationUpdate();
                 return result;
             };
         }
-
-        // Set up periodic updates for live data - more frequent for better responsiveness
-        this.updateInterval = setInterval(() => {
-            // Only update values, not the entire UI
-            this.updatePropertyValues();
-        }, 100); // More frequent updates for better responsiveness
         
-        // Throttle canvas draw updates to prevent excessive updates
-        this.lastDrawUpdate = 0;
-        const drawUpdateThrottle = 16; // ~60fps for smooth updates
-        
-        // Listen for canvas draw events to update values after changes
-        const updateAfterDraw = () => {
-            const now = Date.now();
-            // Only update if we have selected nodes and enough time has passed
-            if (this.currentNodes.size > 0 && (now - this.lastDrawUpdate) > drawUpdateThrottle) {
-                this.lastDrawUpdate = now;
-                // Update immediately for better responsiveness
-                this.updatePropertyValues();
+        // Listen for pan changes - use canvas mouse events as ds.offset might not be settable
+        let isPanning = false;
+        this.canvas.canvas.addEventListener('mousedown', (e) => {
+            if (e.button === 1 || (e.button === 0 && e.shiftKey)) { // Middle mouse or shift+left
+                isPanning = true;
             }
-        };
+        });
         
-        // Add listener for canvas redraws (less aggressive)
-        if (this.canvas) {
-            const originalDraw = this.canvas.draw.bind(this.canvas);
-            this.canvas.draw = (...args) => {
-                const result = originalDraw(...args);
-                updateAfterDraw();
-                return result;
-            };
-        }
+        this.canvas.canvas.addEventListener('mouseup', () => {
+            if (isPanning) {
+                isPanning = false;
+                scheduleNavigationUpdate();
+            }
+        });
+        
+        this.canvas.canvas.addEventListener('wheel', () => {
+            scheduleNavigationUpdate();
+        });
+        
+        // Set up a much slower interval just for position updates
+        this.updateInterval = setInterval(() => {
+            // Only update transform properties (x, y, width, height) for dragging
+            if (this.currentNodes.size > 0 && !this._navigationUpdateTimeout) {
+                this.updateTransformPropertiesOnly();
+            }
+        }, 100); // Keep responsive for dragging
     }
 
     updateSelection(selectedNodes) {
@@ -988,6 +1009,31 @@ class FloatingPropertiesInspector {
         }
     }
     
+    updateTransformPropertiesOnly() {
+        // Skip update if any input is focused to prevent interference
+        if (this.focusedInputs.size > 0) {
+            return;
+        }
+        
+        const transformProps = ['x', 'y', 'width', 'height'];
+        const commonProperties = this.getCommonProperties();
+        
+        for (const prop of transformProps) {
+            if (!commonProperties[prop]) continue;
+            
+            const input = document.getElementById(`property-input-${prop}`);
+            if (!input || input === document.activeElement) continue;
+            
+            const propData = commonProperties[prop];
+            if (propData.mixed) {
+                input.value = '';
+                input.placeholder = 'Mixed';
+            } else if (typeof propData.value === 'number') {
+                input.value = propData.value.toFixed(2);
+            }
+        }
+    }
+    
     updatePropertyValues() {
         // Skip update if any input is focused to prevent interference
         if (this.focusedInputs.size > 0) {
@@ -1026,6 +1072,15 @@ class FloatingPropertiesInspector {
                           document.getElementById(`property-checkbox-${prop}`);
             
             if (!input) continue;
+            
+            // For readonly spans, we can always update them
+            if (input.tagName === 'SPAN') {
+                const currentValue = propData.mixed ? 'Mixed' : (propData.value || 'No file');
+                if (input.textContent !== currentValue) {
+                    input.textContent = currentValue;
+                }
+                continue;
+            }
             
             // Skip if this input is focused or has user selection
             if (this.focusedInputs.has(input.id) || 
@@ -1173,23 +1228,19 @@ class FloatingPropertiesInspector {
                     return `${node.thumbnail.width} × ${node.thumbnail.height}`;
                 }
                 
-                // For image nodes, check what's actually being displayed
-                if (node.properties?.hash && window.thumbnailCache) {
-                    // Get the best thumbnail that would be used at current zoom
-                    const screenWidth = Math.abs(node.size[0] * (this.canvas?.ds?.scale || 1));
-                    const bestThumbnail = node.getBestThumbnail ? node.getBestThumbnail(screenWidth, screenWidth) : null;
-                    
-                    if (bestThumbnail) {
-                        // Try to determine which thumbnail size this is
-                        const thumbnails = window.thumbnailCache.getThumbnails(node.properties.hash);
-                        for (const [size, thumb] of thumbnails) {
-                            if (thumb === bestThumbnail) {
-                                return `${bestThumbnail.width} × ${bestThumbnail.height} (${size}px)`;
-                            }
-                        }
-                        return `${bestThumbnail.width} × ${bestThumbnail.height}`;
+                // Check if we have tracked what was last rendered
+                if (node.getLastRenderedResolution) {
+                    const lastRendered = node.getLastRenderedResolution();
+                    if (lastRendered) {
+                        const sourceInfo = lastRendered.source === 'full' ? ' (full)' : 
+                                         lastRendered.source === 'video' ? ' (video)' : 
+                                         ` (${lastRendered.source})`;
+                        return `${lastRendered.width} × ${lastRendered.height}${sourceInfo}`;
                     }
-                    
+                }
+                
+                // Fallback to checking what's available
+                if (node.properties?.hash && window.thumbnailCache) {
                     // If using full resolution
                     if (node.img && node.img.naturalWidth) {
                         return `${node.img.naturalWidth} × ${node.img.naturalHeight} (full)`;
@@ -2294,9 +2345,9 @@ class FloatingPropertiesInspector {
         }
         
         const nodeCount = nodes.length;
-        const imageCount = nodes.filter(n => n.type === 'image').length;
-        const videoCount = nodes.filter(n => n.type === 'video').length;
-        const textCount = nodes.filter(n => n.type === 'text').length;
+        const imageCount = nodes.filter(n => n.type === 'media/image').length;
+        const videoCount = nodes.filter(n => n.type === 'media/video').length;
+        const textCount = nodes.filter(n => n.type === 'media/text' || n.type === 'text').length;
         
         const canvasEl = this.canvas.canvas;
         const canvasWidth = canvasEl ? canvasEl.width : 0;

@@ -297,6 +297,22 @@ class CreateNodeCommand extends Command {
             node.aspectRatio = this.params.aspectRatio;
         }
         
+        // Apply color correction properties
+        const colorCorrectionProps = [
+            'adjustments', 
+            'toneCurve', 
+            'toneCurveBypassed',
+            'colorAdjustmentsBypassed',
+            'colorBalance',
+            'colorBalanceBypassed'
+        ];
+        
+        colorCorrectionProps.forEach(prop => {
+            if (this.params[prop] !== undefined) {
+                node[prop] = this.params[prop];
+            }
+        });
+        
         if (this.params.flags) {
             // Only override specific flags that are explicitly provided
             // This preserves constructor defaults (like hide_title: true)
@@ -790,6 +806,22 @@ class DeleteNodeCommand extends Command {
                 }
                 node.title = nodeData.title;
                 
+                // Restore color correction properties
+                const colorCorrectionProps = [
+                    'adjustments', 
+                    'toneCurve', 
+                    'toneCurveBypassed',
+                    'colorAdjustmentsBypassed',
+                    'colorBalance',
+                    'colorBalanceBypassed'
+                ];
+                
+                colorCorrectionProps.forEach(prop => {
+                    if (nodeData[prop] !== undefined) {
+                        node[prop] = nodeData[prop];
+                    }
+                });
+                
                 // Restore media if needed
                 if (node.type === 'media/image') {
                     // Check if we have a cached version first
@@ -870,7 +902,7 @@ class UpdateNodePropertyCommand extends Command {
                 previousProperties: {}
             };
             this.params.nodeIds.forEach((nodeId, index) => {
-                const isDirectProperty = ['title'].includes(this.params.property);
+                const isDirectProperty = ['title', 'toneCurve', 'toneCurveBypassed', 'colorAdjustmentsBypassed', 'adjustments', 'colorBalance', 'colorBalanceBypassed'].includes(this.params.property);
                 const oldValue = isDirectProperty ? this.initialState.nodes[index][this.params.property] : this.initialState.nodes[index].properties[this.params.property];
                 this.undoData.previousProperties[nodeId] = {
                     [this.params.property]: oldValue
@@ -883,7 +915,7 @@ class UpdateNodePropertyCommand extends Command {
         
         if (node) {
             // Store old value for undo
-            const isDirectProperty = ['title'].includes(this.params.property);
+            const isDirectProperty = ['title', 'toneCurve', 'toneCurveBypassed', 'colorAdjustmentsBypassed', 'adjustments', 'colorBalance', 'colorBalanceBypassed'].includes(this.params.property);
             const oldValue = isDirectProperty ? node[this.params.property] : node.properties[this.params.property];
             
             // Debug logging for title property
@@ -914,7 +946,7 @@ class UpdateNodePropertyCommand extends Command {
             const node = graph.getNodeById(nodeId);
             if (!node) continue;
 
-            const isDirectProperty = ['title'].includes(this.params.property);
+            const isDirectProperty = ['title', 'toneCurve', 'toneCurveBypassed', 'colorAdjustmentsBypassed', 'adjustments', 'colorBalance', 'colorBalanceBypassed'].includes(this.params.property);
             if (isDirectProperty) {
                 node[this.params.property] = this.params.value;
             } else {
@@ -943,7 +975,7 @@ class UpdateNodePropertyCommand extends Command {
                 const node = graph.getNodeById(nodeId);
                 if (node) {
                     for (const [key, value] of Object.entries(props)) {
-                        const isDirectProperty = ['title'].includes(key);
+                        const isDirectProperty = ['title', 'toneCurve', 'toneCurveBypassed', 'colorAdjustmentsBypassed', 'adjustments', 'colorBalance', 'colorBalanceBypassed'].includes(key);
                         if (isDirectProperty) {
                             node[key] = value;
                         } else {

@@ -43,8 +43,12 @@ class SplineCurveEditor {
         // Handle container resize
         this.resizeObserver = new ResizeObserver(() => {
             const rect = this.container.getBoundingClientRect();
-            this.width = rect.width;
+            // Make canvas square based on the smaller dimension
+            const size = Math.min(rect.width, rect.height);
+            this.width = size;
+            this.height = size;
             this.canvas.width = this.width;
+            this.canvas.height = this.height;
             this.draw();
         });
         this.resizeObserver.observe(this.container);
@@ -132,7 +136,7 @@ class SplineCurveEditor {
             }
             
             this.draw();
-            this.notifyChange();
+            this.notifyChange(true); // intermediate update - dragging point
         } else {
             // Check for hover
             const hoveredPoint = this.findPointAt(point.x, point.y);
@@ -150,6 +154,9 @@ class SplineCurveEditor {
             this.selectedPoint = null;
             this.canvas.style.cursor = this.hoveredPoint ? 'grab' : 'crosshair';
             this.draw();
+            
+            // Notify final change to save to server
+            this.notifyChange(false);
             
             // Remove global listeners
             this.removeGlobalDragListeners();
@@ -200,7 +207,7 @@ class SplineCurveEditor {
             }
             
             this.draw();
-            this.notifyChange();
+            this.notifyChange(true); // intermediate update during drag
         }
     }
     
@@ -210,6 +217,9 @@ class SplineCurveEditor {
             this.selectedPoint = null;
             this.canvas.style.cursor = 'crosshair';
             this.draw();
+            
+            // Notify final change to save to server
+            this.notifyChange(false);
             
             // Remove global listeners
             this.removeGlobalDragListeners();
@@ -236,7 +246,7 @@ class SplineCurveEditor {
             if (index > 0 && index < this.controlPoints.length - 1) {
                 this.controlPoints.splice(index, 1);
                 this.draw();
-                this.notifyChange();
+                this.notifyChange(false); // final update - removing point
             }
         }
     }
@@ -252,20 +262,29 @@ class SplineCurveEditor {
             if (index > 0 && index < this.controlPoints.length - 1) {
                 this.controlPoints.splice(index, 1);
                 this.draw();
-                this.notifyChange();
+                this.notifyChange(false); // final update - removing point
             }
         }
     }
 
     getMousePoint(e) {
         const rect = this.canvas.getBoundingClientRect();
+        // Since canvas maintains aspect ratio, we need to use actual canvas size
+        const canvasRect = {
+            width: this.canvas.width,
+            height: this.canvas.height
+        };
+        // Calculate the actual position within the square canvas
         const x = (e.clientX - rect.left) / rect.width;
         const y = 1 - (e.clientY - rect.top) / rect.height; // Flip Y axis
         return { x, y };
     }
 
     findPointAt(x, y) {
-        const threshold = (this.pointRadius * 2) / this.width;
+        // Calculate threshold based on square canvas to ensure circular hit detection
+        const thresholdX = (this.pointRadius * 2) / this.width;
+        const thresholdY = (this.pointRadius * 2) / this.height;
+        const threshold = Math.max(thresholdX, thresholdY);
         
         for (const point of this.controlPoints) {
             const dx = point.x - x;
@@ -293,7 +312,7 @@ class SplineCurveEditor {
         const newPoint = { x, y };
         this.controlPoints.splice(insertIndex, 0, newPoint);
         this.draw();
-        this.notifyChange();
+        this.notifyChange(false); // final update - adding point
         
         // Return the newly created point so it can be selected immediately
         return newPoint;
@@ -584,27 +603,10 @@ class SplineCurveEditor {
     }
 
     getCurveData() {
-        // Generate LUT data for WebGL
-        const lut = new Float32Array(this.curveResolution);
-        
-        if (this.controlPoints.length === 2) {
-            // Simple linear interpolation for 2 points
-            for (let i = 0; i < this.curveResolution; i++) {
-                const t = i / (this.curveResolution - 1);
-                lut[i] = this.controlPoints[0].y + (this.controlPoints[1].y - this.controlPoints[0].y) * t;
-            }
-        } else {
-            // Use monotonic spline for multiple points
-            const spline = this.computeMonotonicSpline(this.controlPoints);
-            for (let i = 0; i < this.curveResolution; i++) {
-                const x = i / (this.curveResolution - 1);
-                lut[i] = this.evaluateMonotonicSpline(spline, x);
-            }
-        }
-        
+        // Return control points directly - no LUT needed
         return {
             controlPoints: this.controlPoints.map(p => ({ x: p.x, y: p.y })),
-            lut: lut
+            timestamp: Date.now()
         };
     }
 
@@ -623,12 +625,12 @@ class SplineCurveEditor {
         this.selectedPoint = null;
         this.hoveredPoint = null;
         this.draw();
-        this.notifyChange();
+        this.notifyChange(false); // final update - reset curve
     }
 
-    notifyChange() {
+    notifyChange(isIntermediate = true) {
         if (this.onChange) {
-            this.onChange(this.getCurveData());
+            this.onChange(this.getCurveData(), isIntermediate);
         }
     }
 

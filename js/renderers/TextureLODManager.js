@@ -47,6 +47,13 @@ class TextureLODManager {
             cacheMisses: 0
         };
         
+        // Track nodes that need high resolution
+        this._highZoomNodes = new Set();
+        
+        // Track actively rendered textures to prevent eviction
+        this.activelyRenderedTextures = new Set();
+        this.lastActiveUpdate = 0;
+        
         // Initialize WebGL extensions
         this.anisoExt = gl.getExtension('EXT_texture_filter_anisotropic');
         this.maxAnisotropy = this.anisoExt ? 
@@ -84,15 +91,18 @@ class TextureLODManager {
             return null;
         }
         
+        
         // Find best available texture
         let bestTexture = null;
         let bestSize = 0;
         
         for (const [lodSize, textureData] of nodeCache) {
-            if (lodSize === null || lodSize >= targetSize * 0.8) {
+            if (lodSize === null || lodSize >= targetSize) {
                 // This LOD is good enough quality
                 bestTexture = textureData.texture;
                 bestSize = lodSize || Infinity;
+                
+                // console.log(`  → Found suitable texture: ${lodSize === null ? 'full' : lodSize + 'px'}`);
                 
                 // Update access order for LRU
                 this._markAccessed(hash, lodSize);
@@ -103,6 +113,12 @@ class TextureLODManager {
                 bestTexture = textureData.texture;
                 bestSize = lodSize;
             }
+        }
+        
+        if (!bestTexture) {
+            // console.log(`  → No texture found!`);
+        } else if (bestSize !== Infinity && bestSize < targetSize) {
+            // console.log(`  → Using best available: ${bestSize}px (requested ${Math.round(targetSize)}px)`);
         }
         
         if (bestTexture && bestSize > 0) {
@@ -326,7 +342,7 @@ class TextureLODManager {
             const memorySize = width * height * 4 * 1.33; // 1.33 for mipmaps
             
             // Log large textures
-            if (memorySize > 50 * 1024 * 1024) { // > 50MB
+            if (memorySize > 100 * 1024 * 1024) { // > 100MB
                 console.log(`⚠️ Large texture: ${width}x${height} = ${(memorySize / 1024 / 1024).toFixed(1)}MB for ${hash.substring(0, 8)}`);
             }
             
@@ -345,6 +361,7 @@ class TextureLODManager {
             
             this.textureCache.get(hash).set(lodSize, {
                 texture,
+                source: decodedSource,
                 lastUsed: Date.now(),
                 memorySize,
                 width,
@@ -424,6 +441,7 @@ class TextureLODManager {
             
             this.textureCache.get(hash).set(lodSize, {
                 texture,
+                source: source,
                 lastUsed: Date.now(),
                 memorySize,
                 width: source.width,
@@ -648,50 +666,40 @@ class TextureLODManager {
      * @returns {number|null} Optimal LOD size
      */
     getOptimalLOD(screenWidth, screenHeight) {
+        // Note: screenWidth/screenHeight should already include DPR multiplier
         const targetSize = Math.max(screenWidth, screenHeight);
         
-        // Find the smallest LOD that provides good quality
-        // For very small sizes, don't multiply - just use the smallest available
-        const multiplier = targetSize < 50 ? 1.0 : (targetSize < 100 ? 1.2 : 1.5);
-        const desiredSize = targetSize * multiplier;
+        // Quality multiplier - we want slightly higher res than screen size for quality
+        const qualityMultiplier = 1.2;
+        const desiredSize = targetSize * qualityMultiplier;
         
-        // Debug: Log LOD calculation (disabled for performance)
-        // if (targetSize < 100 || targetSize > 1500) {
-        //     console.log(`🎯 LOD calc: screen=${Math.round(targetSize)}px, desired=${Math.round(desiredSize)}px → LOD: ${desiredSize <= 3072 ? 'will check sizes' : 'full-res'}`);
-        // }
+        // console.log(`🎯 LOD selection: targetSize=${Math.round(targetSize)}px (with DPR), desired=${Math.round(desiredSize)}px`);
         
-        // For very small images, use the smallest available LOD
-        if (targetSize <= 64) {
-            return 64; // Always use 64px for tiny thumbnails
-        } else if (targetSize <= 128) {
-            return 128; // Use 128px for small thumbnails
-        }
-        
-        // Be more conservative with full resolution
-        // Only use full res if screen size is truly large and 2048px isn't enough
-        if (targetSize < 2000) {
-            // For normal zoom levels, find the best LOD
-            for (const lod of this.lodLevels) {
-                if (lod.size && lod.size >= desiredSize) {
-                    return lod.size;
-                }
-            }
-            // If we get here, 2048px should be our max
+        // Select appropriate LOD based on effective screen size (already includes DPR)
+        // These thresholds are designed for effective pixel counts
+        if (desiredSize <= 64) {
+            // console.log(`  → Selected: 64px (tiny)`);
+            return 64;
+        } else if (desiredSize <= 128) {
+            // console.log(`  → Selected: 128px (small)`);
+            return 128;
+        } else if (desiredSize <= 256) {
+            // console.log(`  → Selected: 256px (medium)`);
+            return 256;
+        } else if (desiredSize <= 512) {
+            // console.log(`  → Selected: 512px (large)`);
+            return 512;
+        } else if (desiredSize <= 1024) {
+            // console.log(`  → Selected: 1024px (xl)`);
+            return 1024;
+        } else if (desiredSize <= 2048) {
+            // console.log(`  → Selected: 2048px (xxl)`);
             return 2048;
+        } else {
+            // For very large sizes, use full resolution
+            // console.log(`  → Selected: full resolution (desiredSize > 2048)`);
+            return null;
         }
-        
-        // For very large screen sizes, check if 2048px is sufficient
-        if (desiredSize <= 3072) { // 2048 * 1.5
-            return 2048;
-        }
-        
-        // Only request full resolution for extreme zoom levels
-        // where the image takes up most of the screen
-        if (targetSize > 2500) {
-            return null; // Full resolution
-        }
-        
-        return 2048; // Default to 2048px for most cases
     }
     
     /**
@@ -717,11 +725,15 @@ class TextureLODManager {
                         // But ALWAYS keep preview textures (256px and below)
                         shouldUnload = (lodSize === null || lodSize > keepThreshold) && (lodSize === null || lodSize > 256);
                     } else if (aggressiveMode && lodSize === null) {
-                        // Visible but in aggressive mode - unload full-res if we have 2048px
-                        shouldUnload = nodeCache.has(2048);
+                        // Visible but in aggressive mode - only unload full-res if we have 2048px
+                        // AND the node is not actively being viewed at high zoom
+                        // (keep full res for nodes that need it based on screen size)
+                        shouldUnload = nodeCache.has(2048) && !this._isHighZoomNode(hash);
                     }
                     
                     if (shouldUnload) {
+                        console.log(`🗑️ Unloading ${lodSize === null ? 'full res' : lodSize + 'px'} texture for ${hash.substring(0, 8)}... (visible: ${isVisible}, aggressive: ${aggressiveMode})`);
+                        
                         // Delete the texture
                         this.gl.deleteTexture(textureData.texture);
                         this.totalMemory -= textureData.memorySize;
@@ -818,9 +830,9 @@ class TextureLODManager {
      * Debug: Log current cache contents
      */
     logCacheContents() {
-        console.log(`\n📊 Texture Cache Contents:`);
-        console.log(`Total memory: ${(this.totalMemory / 1024 / 1024).toFixed(1)}MB / ${(this.maxTextureMemory / 1024 / 1024).toFixed(1)}MB`);
-        console.log(`Total textures: ${this.accessOrder.length}`);
+        // console.log(`\n📊 Texture Cache Contents:`);
+        // console.log(`Total memory: ${(this.totalMemory / 1024 / 1024).toFixed(1)}MB / ${(this.maxTextureMemory / 1024 / 1024).toFixed(1)}MB`);
+        // console.log(`Total textures: ${this.accessOrder.length}`);
         
         const textureSummary = new Map();
         for (const [hash, nodeCache] of this.textureCache) {
@@ -838,9 +850,9 @@ class TextureLODManager {
         // Sort by memory usage
         const sorted = Array.from(textureSummary.entries()).sort((a, b) => b[1].memory - a[1].memory);
         
-        console.log(`\nTop textures by memory:`);
+        // console.log(`\nTop textures by memory:`);
         sorted.slice(0, 10).forEach(([key, data]) => {
-            console.log(`  ${key}: ${data.width}x${data.height} = ${(data.memory / 1024 / 1024).toFixed(1)}MB`);
+            // console.log(`  ${key}: ${data.width}x${data.height} = ${(data.memory / 1024 / 1024).toFixed(1)}MB`);
         });
         
         // Group by hash
@@ -940,6 +952,18 @@ class TextureLODManager {
             if (b === null) return -1;
             return b - a; // Descending order
         });
+    }
+    
+    markHighZoomNode(hash) {
+        this._highZoomNodes.add(hash);
+    }
+    
+    clearHighZoomNodes() {
+        this._highZoomNodes.clear();
+    }
+    
+    _isHighZoomNode(hash) {
+        return this._highZoomNodes.has(hash);
     }
 }
 

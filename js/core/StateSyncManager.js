@@ -97,12 +97,13 @@ class StateSyncManager {
             ];
             
             if (undoableOperations.includes(command.type) && command.origin === 'local') {
-                console.log(`📝 Checking ${command.type} undo data:`, {
-                    hasUndoData: !!command.undoData,
-                    hasPrepareMethod: typeof command.prepareUndoData === 'function',
-                    commandKeys: Object.keys(command),
-                    proto: Object.getPrototypeOf(command).constructor.name
-                });
+                // Debug logging disabled - too noisy
+                // console.log(`📝 Checking ${command.type} undo data:`, {
+                //     hasUndoData: !!command.undoData,
+                //     hasPrepareMethod: typeof command.prepareUndoData === 'function',
+                //     commandKeys: Object.keys(command),
+                //     proto: Object.getPrototypeOf(command).constructor.name
+                // });
                 
                 if (!command.undoData && typeof command.prepareUndoData === 'function') {
                     const context = {
@@ -887,18 +888,24 @@ class StateSyncManager {
                 nodeData.properties.hash
             );
             
-            // Restore color correction settings if present
-            if (nodeData.properties.adjustments) {
-                node.adjustments = { ...nodeData.properties.adjustments };
+            // Restore color correction settings if present (stored as direct properties)
+            if (nodeData.adjustments) {
+                node.adjustments = { ...nodeData.adjustments };
             }
-            if (nodeData.properties.toneCurve !== undefined) {
-                node.toneCurve = nodeData.properties.toneCurve;
+            if (nodeData.toneCurve !== undefined) {
+                node.toneCurve = nodeData.toneCurve;
             }
-            if (nodeData.properties.toneCurveBypassed !== undefined) {
-                node.toneCurveBypassed = nodeData.properties.toneCurveBypassed;
+            if (nodeData.toneCurveBypassed !== undefined) {
+                node.toneCurveBypassed = nodeData.toneCurveBypassed;
             }
-            if (nodeData.properties.colorAdjustmentsBypassed !== undefined) {
-                node.colorAdjustmentsBypassed = nodeData.properties.colorAdjustmentsBypassed;
+            if (nodeData.colorAdjustmentsBypassed !== undefined) {
+                node.colorAdjustmentsBypassed = nodeData.colorAdjustmentsBypassed;
+            }
+            if (nodeData.colorBalance !== undefined) {
+                node.colorBalance = nodeData.colorBalance;
+            }
+            if (nodeData.colorBalanceBypassed !== undefined) {
+                node.colorBalanceBypassed = nodeData.colorBalanceBypassed;
             }
             
             // Log what we're creating
@@ -950,17 +957,24 @@ class StateSyncManager {
             }
             
             // Restore color correction settings for video nodes
-            if (nodeData.properties.adjustments) {
-                node.adjustments = { ...nodeData.properties.adjustments };
+            // Note: Color correction props should be stored directly on nodeData, not in properties
+            if (nodeData.adjustments) {
+                node.adjustments = { ...nodeData.adjustments };
             }
-            if (nodeData.properties.toneCurve !== undefined) {
-                node.toneCurve = nodeData.properties.toneCurve;
+            if (nodeData.toneCurve !== undefined) {
+                node.toneCurve = nodeData.toneCurve;
             }
-            if (nodeData.properties.toneCurveBypassed !== undefined) {
-                node.toneCurveBypassed = nodeData.properties.toneCurveBypassed;
+            if (nodeData.toneCurveBypassed !== undefined) {
+                node.toneCurveBypassed = nodeData.toneCurveBypassed;
             }
-            if (nodeData.properties.colorAdjustmentsBypassed !== undefined) {
-                node.colorAdjustmentsBypassed = nodeData.properties.colorAdjustmentsBypassed;
+            if (nodeData.colorAdjustmentsBypassed !== undefined) {
+                node.colorAdjustmentsBypassed = nodeData.colorAdjustmentsBypassed;
+            }
+            if (nodeData.colorBalance !== undefined) {
+                node.colorBalance = nodeData.colorBalance;
+            }
+            if (nodeData.colorBalanceBypassed !== undefined) {
+                node.colorBalanceBypassed = nodeData.colorBalanceBypassed;
             }
         }
         
@@ -1126,19 +1140,19 @@ class StateSyncManager {
             node.aspectRatio = nodeData.aspectRatio;
         }
         
-        // Update color correction settings for image and video nodes
-        if ((node.type === 'media/image' || node.type === 'media/video') && nodeData.properties) {
-            if (nodeData.properties.adjustments) {
-                node.adjustments = { ...nodeData.properties.adjustments };
+        // Update color correction settings for image and video nodes (stored as direct properties)
+        if ((node.type === 'media/image' || node.type === 'media/video')) {
+            if (nodeData.adjustments) {
+                node.adjustments = { ...nodeData.adjustments };
             }
-            if (nodeData.properties.toneCurve !== undefined) {
-                node.toneCurve = nodeData.properties.toneCurve;
+            if (nodeData.toneCurve !== undefined) {
+                node.toneCurve = nodeData.toneCurve;
             }
-            if (nodeData.properties.toneCurveBypassed !== undefined) {
-                node.toneCurveBypassed = nodeData.properties.toneCurveBypassed;
+            if (nodeData.toneCurveBypassed !== undefined) {
+                node.toneCurveBypassed = nodeData.toneCurveBypassed;
             }
-            if (nodeData.properties.colorAdjustmentsBypassed !== undefined) {
-                node.colorAdjustmentsBypassed = nodeData.properties.colorAdjustmentsBypassed;
+            if (nodeData.colorAdjustmentsBypassed !== undefined) {
+                node.colorAdjustmentsBypassed = nodeData.colorAdjustmentsBypassed;
             }
         }
         

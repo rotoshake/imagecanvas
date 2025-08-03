@@ -33,13 +33,13 @@ class ThumbnailRequestCoordinator {
         // Check if request is already active
         const activeRequest = this.activeRequests.get(requestKey);
         if (activeRequest) {
-            console.log(`📎 Reusing active request for ${hash.substring(0, 8)} (${size}px)`);
+            // console.log(`📎 Reusing active request for ${hash.substring(0, 8)} (${size}px)`);
             activeRequest.requesters.add(requesterId);
             return activeRequest.promise;
         }
         
         // Create new request
-        console.log(`🆕 Creating new request for ${hash.substring(0, 8)} (${size}px)`);
+        // console.log(`🆕 Creating new request for ${hash.substring(0, 8)} (${size}px)`);
         
         const promise = this._executeRequest(hash, serverFilename, size, requestKey);
         this.activeRequests.set(requestKey, {
@@ -67,7 +67,7 @@ class ThumbnailRequestCoordinator {
                 const success = await window.thumbnailCache.loadServerThumbnails(hash, serverFilename, [size]);
                 
                 if (success) {
-                    console.log(`✅ Thumbnail ${size}px loaded for ${hash.substring(0, 8)}`);
+                    // console.log(`✅ Thumbnail ${size}px loaded for ${hash.substring(0, 8)}`);
                     this._notifySubscribers(hash);
                 }
                 
@@ -89,7 +89,7 @@ class ThumbnailRequestCoordinator {
         const subscribers = this.hashSubscribers.get(hash);
         if (!subscribers || subscribers.size === 0) return;
         
-        console.log(`🔔 Notifying ${subscribers.size} subscribers about ${hash.substring(0, 8)}`);
+        // console.log(`🔔 Notifying ${subscribers.size} subscribers about ${hash.substring(0, 8)}`);
         
         // Force all nodes with this hash to update
         if (window.app?.graph?.nodes) {
@@ -124,7 +124,7 @@ class ThumbnailRequestCoordinator {
             }
             
             if (nodesUpdated > 0) {
-                console.log(`🔄 Force-updated ${nodesUpdated} nodes with cleared caches`);
+                // console.log(`🔄 Force-updated ${nodesUpdated} nodes with cleared caches`);
                 
                 // Force immediate redraw
                 if (window.app.graphCanvas) {
@@ -149,7 +149,7 @@ class ThumbnailRequestCoordinator {
         const now = Date.now();
         for (const [key, request] of this.activeRequests) {
             if (now - request.timestamp > this.requestTimeout) {
-                console.warn(`⏰ Request timeout for ${key}`);
+                // console.warn(`⏰ Request timeout for ${key}`);
                 this.activeRequests.delete(key);
             }
         }

@@ -1254,6 +1254,11 @@ document.addEventListener('keydown', async (e) => {
                 
                 // 2. Call server endpoint to wipe database
                 console.log('🗄️ Wiping server database...');
+                
+                // Add timeout to prevent infinite hanging
+                const controller = new AbortController();
+                const timeoutId = setTimeout(() => controller.abort(), 60000); // 60 second timeout
+                
                 const response = await fetch(`${CONFIG.SERVER.API_BASE}/debug/wipe-database`, {
                     method: 'POST',
                     headers: {
@@ -1262,8 +1267,9 @@ document.addEventListener('keydown', async (e) => {
                     body: JSON.stringify({
                         confirm: true,
                         includeFiles: true
-                    })
-                });
+                    }),
+                    signal: controller.signal
+                }).finally(() => clearTimeout(timeoutId));
                 
                 if (!response.ok) {
                     throw new Error(`Server wipe failed: ${response.status}`);

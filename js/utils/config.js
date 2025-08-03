@@ -51,6 +51,7 @@ const CONFIG = {
     
     PERFORMANCE: {
         MAX_FPS: 120,
+        USE_FPS_LIMIT: false, // Set to false to use natural RAF vsync timing
         THUMBNAIL_THRESHOLD: 50, // pixels - use thumbnail when video node is smaller than this on screen
         VISIBILITY_MARGIN: 200,
         BATCH_SIZE: 100

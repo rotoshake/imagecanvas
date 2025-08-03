@@ -256,16 +256,7 @@ class CollaborationManager {
     }
     
     async getOrCreateCanvas(canvasId, user) {
-        if (canvasId === 'demo-canvas' || canvasId === 1) {
-            // Handle demo canvas - check canvases table by name
-            let canvas = await this.db.get('SELECT * FROM canvases WHERE name = ?', ['Demo Canvas']);
-            if (!canvas) {
-                const id = await this.db.createCanvas('Demo Canvas', user.id, 'Collaborative demo canvas');
-                canvas = await this.db.getCanvas(id);
-            }
-            return canvas;
-        }
-        
+        // Simply return the canvas by ID, no special demo canvas handling
         return await this.db.getCanvas(canvasId);
     }
     

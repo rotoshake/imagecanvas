@@ -863,6 +863,22 @@ class DuplicateNodesCommand extends Command {
         node.title = nodeData.title;
         node.aspectRatio = nodeData.aspectRatio;
         
+        // Restore color correction properties
+        const colorCorrectionProps = [
+            'adjustments', 
+            'toneCurve', 
+            'toneCurveBypassed',
+            'colorAdjustmentsBypassed',
+            'colorBalance',
+            'colorBalanceBypassed'
+        ];
+        
+        colorCorrectionProps.forEach(prop => {
+            if (nodeData[prop] !== undefined) {
+                node[prop] = nodeData[prop];
+            }
+        });
+        
         // Set loading state immediately for image nodes
         if (node.type === 'media/image') {
             node.loadingState = 'loading';
@@ -1093,6 +1109,22 @@ class PasteNodesCommand extends Command {
         }
         node.title = nodeData.title;
         node.aspectRatio = nodeData.aspectRatio;
+        
+        // Restore color correction properties
+        const colorCorrectionProps = [
+            'adjustments', 
+            'toneCurve', 
+            'toneCurveBypassed',
+            'colorAdjustmentsBypassed',
+            'colorBalance',
+            'colorBalanceBypassed'
+        ];
+        
+        colorCorrectionProps.forEach(prop => {
+            if (nodeData[prop] !== undefined) {
+                node[prop] = nodeData[prop];
+            }
+        });
         
         // Set loading state immediately for image nodes
         if (node.type === 'media/image') {

@@ -77,9 +77,9 @@ class CanvasNavigator {
                 <div class="database-info">
                     <span class="database-size">Database: <span class="size-value">--</span></span>
                 </div>
-                <button class="cleanup-btn" title="Clean up orphaned data and unused media">
-                    <span class="icon">🧹</span>
-                    <!-- Clean Up -->
+                <button class="admin-btn" title="Admin Panel">
+                    <span class="icon">⚙️</span>
+                    <!-- Admin -->
                 </button>
             </div>
         `;
@@ -471,7 +471,7 @@ class CanvasNavigator {
                 font-weight: 500;
             }
             
-            .cleanup-btn {
+            .admin-btn {
                 background: none;
                 border: none;
                 color: #999;
@@ -486,17 +486,17 @@ class CanvasNavigator {
                 transition: all 0.2s;
             }
             
-            .cleanup-btn:hover {
+            .admin-btn:hover {
                 background: ${COLORS.buttons.hover_secondary};
                 color: #fff;
             }
             
-            .cleanup-btn.loading {
+            .admin-btn.loading {
                 opacity: 0.6;
                 cursor: not-allowed;
             }
             
-            .cleanup-btn .icon {
+            .admin-btn .icon {
                 font-size: 12px;
             }
         `;
@@ -536,14 +536,14 @@ class CanvasNavigator {
             refreshBtn.addEventListener('click', () => this.loadCanvases());
         }
         
-        // Cleanup button
-        const cleanupBtn = this.panel.querySelector('.cleanup-btn');
-        if (cleanupBtn) {
-            cleanupBtn.addEventListener('click', () => {
-                this.performCleanup();
+        // Admin button
+        const adminBtn = this.panel.querySelector('.admin-btn');
+        if (adminBtn) {
+            adminBtn.addEventListener('click', () => {
+                this.openAdminPanel();
             });
         } else {
-            
+            console.error('Admin button not found');
         }
         
         // Keyboard shortcut (Ctrl/Cmd + O)
@@ -1344,21 +1344,21 @@ class CanvasNavigator {
             const isDemoMode = window.location.pathname.includes('demo.html');
             
             if (isDemoMode) {
-                
-                // For demo mode, always load or create the demo canvas
+                // For demo mode, just load the first available canvas or create a new untitled one
                 await this.loadCanvases();
-                const demoCanvas = this.canvases.find(c => c.name === 'Demo Canvas');
                 
-                if (demoCanvas) {
-                    await this.loadCanvas(demoCanvas.id);
+                if (this.canvases.length > 0) {
+                    // Load the first available canvas
+                    await this.loadCanvas(this.canvases[0].id);
                 } else {
+                    // Create a new untitled canvas
                     const response = await fetch(CONFIG.ENDPOINTS.PROJECTS, {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({
-                            name: 'Demo Canvas',
+                            name: 'Untitled Canvas',
                             ownerId: 1,
-                            description: 'Collaborative demo canvas'
+                            description: ''
                         })
                     });
                     
@@ -2041,6 +2041,42 @@ class CanvasNavigator {
                     window.location.reload();
                 }, 1500);
             }
+        }
+    }
+    
+    /**
+     * Open the admin panel
+     */
+    openAdminPanel() {
+        // Check if admin panel already exists
+        if (window.adminPanel) {
+            window.adminPanel.show();
+            return;
+        }
+        
+        // Load admin panel script if not already loaded
+        if (!window.AdminPanel) {
+            const script = document.createElement('script');
+            script.src = '/js/ui/admin-panel.js';
+            script.onload = () => {
+                // Create and show admin panel after script loads
+                window.adminPanel = new AdminPanel(this);
+                window.adminPanel.show();
+            };
+            script.onerror = () => {
+                console.error('Failed to load admin panel script');
+                if (this.app.showNotification) {
+                    this.app.showNotification({
+                        type: 'error',
+                        message: 'Failed to load admin panel'
+                    });
+                }
+            };
+            document.head.appendChild(script);
+        } else {
+            // Create and show admin panel
+            window.adminPanel = new AdminPanel(this);
+            window.adminPanel.show();
         }
     }
 }
