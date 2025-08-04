@@ -175,6 +175,9 @@ class CanvasStateManager {
                     }
                 });
                 break;
+                
+            case 'node_layer_order':
+                return this.applyNodeLayerOrder(operation.params, state, changes);
 
             case 'image_upload_complete':
                 return this.applyImageUploadComplete(operation.params, state, changes);
@@ -898,6 +901,16 @@ class CanvasStateManager {
             return { valid: true };
         });
         
+        validators.set('node_layer_order', (op, state) => {
+            if (!op.params.nodeIds || !Array.isArray(op.params.nodeIds) || op.params.nodeIds.length === 0) {
+                return { valid: false, error: 'Missing or invalid nodeIds' };
+            }
+            if (!['up', 'down', 'front', 'back'].includes(op.params.direction)) {
+                return { valid: false, error: 'Invalid direction' };
+            }
+            return { valid: true };
+        });
+        
         validators.set('image_upload_complete', (op, state) => {
             if (!op.params.hash || !op.params.serverUrl) {
                 return { valid: false, error: 'Missing hash or serverUrl' };
@@ -1144,6 +1157,26 @@ class CanvasStateManager {
         
         Object.assign(group.properties.style, params.style);
         changes.updated.push(group);
+        
+        return changes;
+    }
+    
+    /**
+     * Apply node layer order change
+     */
+    applyNodeLayerOrder(params, state, changes) {
+        const { nodeIds, direction } = params;
+        
+        // Update z-index values based on the final positions from the client
+        if (params.zIndexUpdates) {
+            for (const [nodeId, zIndex] of Object.entries(params.zIndexUpdates)) {
+                const node = state.nodes.find(n => n.id == nodeId);
+                if (node) {
+                    node.zIndex = zIndex;
+                    changes.updated.push(node);
+                }
+            }
+        }
         
         return changes;
     }

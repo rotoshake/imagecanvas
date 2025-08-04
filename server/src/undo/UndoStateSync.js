@@ -28,6 +28,7 @@ class UndoStateSync {
             'node_rotate': this.undoNodeRotate,
             'node_reset': this.undoNodeReset,
             'video_toggle': this.undoVideoToggle,
+            'node_layer_order': this.undoNodeLayerOrder,
         };
     }
     
@@ -609,6 +610,22 @@ class UndoStateSync {
             // Toggle the paused state back
             node.properties.paused = !node.properties.paused;
             changes.updated.push(node);
+        }
+        return changes;
+    }
+    
+    /**
+     * Undo node layer order
+     */
+    undoNodeLayerOrder(operation, state, changes) {
+        if (operation.undoData && operation.undoData.originalZIndices) {
+            for (const [nodeId, zIndex] of Object.entries(operation.undoData.originalZIndices)) {
+                const node = state.nodes.find(n => n.id == nodeId);
+                if (node) {
+                    node.zIndex = zIndex;
+                    changes.updated.push(node);
+                }
+            }
         }
         return changes;
     }

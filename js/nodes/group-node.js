@@ -744,7 +744,7 @@ class GroupNode extends BaseNode {
         const viewport = passedViewport || this.graph?.canvas?.viewport;
         
         // Temporary padding adjustment based on zoom - only check when zoom changes
-        const PADDING_ENABLED = false; // Disabled for performance - was causing continuous calculations
+        const PADDING_ENABLED = true; // Disabled for performance - was causing continuous calculations
         if (PADDING_ENABLED && viewport && !this.isCollapsed && this.childNodes.size > 0) {
             // Only process when zoom changes significantly (more aggressive threshold)
             if (!this._lastPaddingScale || Math.abs(viewport.scale - this._lastPaddingScale) > 0.1) {

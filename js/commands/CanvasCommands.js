@@ -48,6 +48,9 @@ class NodeLayerOrderCommand extends Command {
         const { graph, canvas } = context;
         const { nodeIds, direction } = this.params;
         
+        // Track z-index updates for server sync
+        const zIndexUpdates = {};
+        
         // Process each selected node
         for (const nodeId of nodeIds) {
             const node = graph.getNodeById(nodeId);
@@ -76,6 +79,7 @@ class NodeLayerOrderCommand extends Command {
                     
                     // Normalize z-indices to integers
                     this.normalizeZIndices(graph.nodes);
+                    zIndexUpdates[nodeId] = node.zIndex;
                 }
             } else { // down
                 // Find the previous node below this one
@@ -90,9 +94,13 @@ class NodeLayerOrderCommand extends Command {
                     
                     // Normalize z-indices to integers
                     this.normalizeZIndices(graph.nodes);
+                    zIndexUpdates[nodeId] = node.zIndex;
                 }
             }
         }
+        
+        // Include z-index updates in params for server sync
+        this.params.zIndexUpdates = zIndexUpdates;
         
         return { success: true };
     }
@@ -120,6 +128,14 @@ class NodeLayerOrderCommand extends Command {
         // Reassign z-indices as integers starting from 0
         sorted.forEach((node, index) => {
             node.zIndex = index;
+        });
+        
+        // Add all normalized z-indices to params for server sync
+        if (!this.params.zIndexUpdates) {
+            this.params.zIndexUpdates = {};
+        }
+        sorted.forEach(node => {
+            this.params.zIndexUpdates[node.id] = node.zIndex;
         });
     }
 
