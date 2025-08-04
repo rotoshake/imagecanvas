@@ -11,6 +11,7 @@ class GroupNode extends BaseNode {
         this.collapsedSize = [200, 40]; // Size when collapsed (width, height of title bar)
         this.expandedSize = [300, 200]; // Minimum expanded size
         this.padding = 30; // Padding around child nodes - increased for better visual spacing
+        this.minScreenPadding = 15; // Minimum padding in screen pixels
         this.titleBarHeight = 30; // Fallback height
         this.screenSpaceTitleBarHeight = 20; // Target screen-space height in pixels
         
@@ -108,7 +109,12 @@ class GroupNode extends BaseNode {
         }
         this.childNodes.add(nodeId);
         if (!skipBoundsUpdate) {
-            return this.updateBounds(true); // expandOnly = true for animation
+            const bounds = this.updateBounds(true); // expandOnly = true for animation
+            // If bounds changed and needs sync, schedule it after animation
+            if (bounds && bounds.needsSync && !this.isAnimating) {
+                setTimeout(() => this.syncBoundsToServer(), 300);
+            }
+            return bounds;
         }
         this.markDirty();
         return null;
@@ -122,8 +128,7 @@ class GroupNode extends BaseNode {
             nodeId = nodeId.id;
         }
         this.childNodes.delete(nodeId);
-        // Update bounds to fit remaining children
-        this.updateBounds(false); // expandOnly = false to allow shrinking
+        // Don't update bounds when removing - keep current size
         this.markDirty();
     }
     
@@ -143,7 +148,11 @@ class GroupNode extends BaseNode {
             }
         }
         if (added) {
-            this.updateBounds(true); // expandOnly = true for animation
+            const bounds = this.updateBounds(true); // expandOnly = true for animation
+            // If bounds changed and needs sync, schedule it after animation
+            if (bounds && bounds.needsSync && !this.isAnimating) {
+                setTimeout(() => this.syncBoundsToServer(), 300);
+            }
             this.markDirty();
         }
     }
@@ -165,7 +174,8 @@ class GroupNode extends BaseNode {
                     const node = globalGraph.getNodeById(id);
                     if (!node) {
                         if (!this._warnedDeletedNodes.has(id)) {
-                            console.warn(`⚠️ Group ${this.id}: Child node ${id} not found in global graph - it may have been deleted`);
+                            // Only log at debug level, not warn
+                            console.debug(`Group ${this.id}: Removing deleted child node ${id}`);
                             this._warnedDeletedNodes.add(id);
                         }
                         // Remove the deleted node from our childNodes set
@@ -186,7 +196,8 @@ class GroupNode extends BaseNode {
                 const node = this.graph.getNodeById(id);
                 if (!node) {
                     if (!this._warnedDeletedNodes.has(id)) {
-                        console.warn(`⚠️ Group ${this.id}: Child node ${id} not found in graph - it may have been deleted`);
+                        // Only log at debug level, not warn
+                        console.debug(`Group ${this.id}: Removing deleted child node ${id}`);
                         this._warnedDeletedNodes.add(id);
                     }
                     // Remove the deleted node from our childNodes set
@@ -218,6 +229,13 @@ class GroupNode extends BaseNode {
     syncChildNodesToServer() {
         if (!this._needsChildNodeSync) return;
         
+        // Don't sync during initial load or if we haven't actually removed any nodes
+        if (!this._hasRemovedDeletedNodes) {
+            this._hasRemovedDeletedNodes = true;
+            this._needsChildNodeSync = false;
+            return;
+        }
+        
         // Send update command to sync child nodes
         if (window.app?.operationPipeline) {
             const command = new window.NodeCommands.NodePropertyCommand({
@@ -227,7 +245,7 @@ class GroupNode extends BaseNode {
             });
             window.app.operationPipeline.executeCommand(command);
             
-            console.log(`📤 Synced cleaned child nodes for group ${this.id}`);
+            console.debug(`📤 Synced cleaned child nodes for group ${this.id}`);
         }
         
         this._needsChildNodeSync = false;
@@ -251,7 +269,18 @@ class GroupNode extends BaseNode {
      * Note: This should be called from canvas context with proper viewport
      */
     isPointInTitleBar(x, y, viewport = null) {
-        const titleBarHeight = this.getScreenSpaceTitleBarHeightForViewport(viewport);
+        // Calculate screen-space size (viewport.scale is already in CSS pixels)
+        const screenSpaceWidth = viewport ? this.size[0] * viewport.scale : this.size[0];
+        const screenSpaceHeight = viewport ? this.size[1] * viewport.scale : this.size[1];
+        
+        // Check if group is too small in screen space for full title bar
+        const minScreenSizeForTitle = 100;
+        const isTooSmall = screenSpaceWidth < minScreenSizeForTitle || screenSpaceHeight < minScreenSizeForTitle;
+        
+        // For thin bar, use 4 screen pixels converted to world space
+        const thinBarWorldHeight = viewport ? 4 / viewport.scale : 4;
+        const titleBarHeight = isTooSmall ? thinBarWorldHeight : this.getScreenSpaceTitleBarHeightForViewport(viewport);
+        
         return (
             x >= this.pos[0] && 
             x <= this.pos[0] + this.size[0] &&
@@ -301,6 +330,18 @@ class GroupNode extends BaseNode {
         if (this._alignmentJustCompleted) {
             const timeSinceCompletion = Date.now() - this._alignmentJustCompleted;
             if (timeSinceCompletion < 1000) { // 1 second grace period
+                console.log(`Group ${this.id}: Skipping bounds update - alignment just completed`);
+                
+                // Schedule a deferred sync after grace period
+                if (!this._deferredSyncTimeout) {
+                    this._deferredSyncTimeout = setTimeout(() => {
+                        delete this._alignmentJustCompleted;
+                        delete this._deferredSyncTimeout;
+                        // Sync bounds to server after alignment protection expires
+                        this.syncBoundsToServer();
+                    }, 1100); // Slightly after grace period
+                }
+                
                 return {
                     pos: [...this.pos],
                     size: [...this.size]
@@ -308,12 +349,15 @@ class GroupNode extends BaseNode {
             } else {
                 // Clear the flag after grace period
                 delete this._alignmentJustCompleted;
+                if (this._deferredSyncTimeout) {
+                    clearTimeout(this._deferredSyncTimeout);
+                    delete this._deferredSyncTimeout;
+                }
             }
         }
         
         
         const childNodes = this.getChildNodes();
-        // console.log(`📐 updateBounds: Group ${this.id} has ${childNodes.length} children`);
         
         if (childNodes.length === 0) {
             // Don't shrink to default size if expandOnly is true
@@ -334,7 +378,7 @@ class GroupNode extends BaseNode {
             
             // Skip null/undefined nodes
             if (!node || !node.pos || !node.size) {
-                console.warn(`⚠️ Skipping invalid child node in group ${this.id}`);
+                console.debug(`Skipping invalid child node in group ${this.id}`);
                 continue;
             }
             
@@ -360,12 +404,44 @@ class GroupNode extends BaseNode {
             };
         }
         
-        // Calculate new bounds with padding
-        const titleBarHeight = this.titleBarHeight; // Use fallback for bounds calculation
+        // Store the bounding box for later padding updates
+        this._lastBoundingBox = { minX, minY, maxX, maxY };
+        
+        // Get viewport for calculating screen-space padding
+        const viewport = this.graph?.canvas?.viewport;
+        
+        
+        // Use viewport scale if available, otherwise use stored scale
+        const scale = viewport?.scale || this._currentScale;
+        
+        // Calculate title bar height first to know if we're in thin mode
+        let titleBarHeight = this.titleBarHeight;
+        let isThinBar = false;
+        
+        if (scale) {
+            // Check if we're in thin bar mode
+            const screenSpaceWidth = this.size[0] * scale;
+            const screenSpaceHeight = this.size[1] * scale;
+            const minScreenSizeForTitle = 80;
+            isThinBar = screenSpaceWidth < minScreenSizeForTitle || screenSpaceHeight < minScreenSizeForTitle;
+            
+            if (isThinBar) {
+                titleBarHeight = 4 / scale; // 4 screen pixels
+            } else {
+                titleBarHeight = this.screenSpaceTitleBarHeight / scale;
+            }
+        }
+        
+        // Always use base padding in updateBounds
+        let effectiveTopPadding = this.padding;
+        
+        // Calculate bounds with extra top padding when zoomed out
         const newX = minX - this.padding;
-        const newY = minY - this.padding - titleBarHeight;
+        const newY = minY - effectiveTopPadding - titleBarHeight;
         const newWidth = Math.max(maxX - minX + (this.padding * 2), this.minSize[0]);
-        const newHeight = Math.max(maxY - minY + (this.padding * 2) + titleBarHeight, this.minSize[1]);
+        const newHeight = Math.max(maxY - minY + effectiveTopPadding + this.padding + titleBarHeight, this.minSize[1]);
+        
+        
         
         if (expandOnly) {
             // Calculate current bounds
@@ -383,6 +459,13 @@ class GroupNode extends BaseNode {
             const finalWidth = finalRight - finalLeft;
             const finalHeight = finalBottom - finalTop;
             
+            // Check if bounds actually changed
+            const boundsChanged = 
+                Math.abs(this.pos[0] - finalLeft) > 0.1 ||
+                Math.abs(this.pos[1] - finalTop) > 0.1 ||
+                Math.abs(this.size[0] - finalWidth) > 0.1 ||
+                Math.abs(this.size[1] - finalHeight) > 0.1;
+            
             // console.log(`📐 Expand only - animating to: pos[${finalLeft}, ${finalTop}] size[${finalWidth}, ${finalHeight}]`);
             
             // Check if we're being animated by alignment system
@@ -397,7 +480,8 @@ class GroupNode extends BaseNode {
             // Return target bounds for server sync
             return {
                 pos: [finalLeft, finalTop],
-                size: [finalWidth, finalHeight]
+                size: [finalWidth, finalHeight],
+                needsSync: boundsChanged // Track if sync is needed
             };
         } else {
             // Animate to new bounds for smooth transition
@@ -405,7 +489,7 @@ class GroupNode extends BaseNode {
             // console.log(`📐 Animating to: pos[${newX}, ${newY}] size[${newWidth}, ${newHeight}]`);
             
             // Check if bounds actually changed
-            const boundsChanged = 
+            let boundsChanged = 
                 Math.abs(this.pos[0] - newX) > 0.1 ||
                 Math.abs(this.pos[1] - newY) > 0.1 ||
                 Math.abs(this.size[0] - newWidth) > 0.1 ||
@@ -425,7 +509,8 @@ class GroupNode extends BaseNode {
             // Return target bounds
             return {
                 pos: [newX, newY],
-                size: [newWidth, newHeight]
+                size: [newWidth, newHeight],
+                needsSync: boundsChanged // Track if sync is needed
             };
         }
     }
@@ -527,6 +612,11 @@ class GroupNode extends BaseNode {
             // Log completion for debugging
             // console.log(`Group ${this.id} animation complete at pos[${this.pos[0]}, ${this.pos[1]}]`);
             
+            // Sync to server after animation completes
+            setTimeout(() => {
+                this.syncBoundsToServer();
+            }, 50); // Small delay to ensure render completes
+            
             return false;
         }
         
@@ -545,6 +635,7 @@ class GroupNode extends BaseNode {
         }
         this.markDirty();
     }
+    
     
     /**
      * Move all child nodes by the given offset
@@ -572,14 +663,29 @@ class GroupNode extends BaseNode {
         if (node === this || node.type === 'container/group') return false;
         if (this.isCollapsed) return false;
         
-        // Check if node center is within group bounds (excluding title bar)
+        // Get viewport for screen space calculations
+        const viewport = this.graph?.canvas?.viewport;
+        const screenSpaceWidth = viewport ? this.size[0] * viewport.scale : this.size[0];
+        const screenSpaceHeight = viewport ? this.size[1] * viewport.scale : this.size[1];
+        
+        // Check if group is too small in screen space for full title bar
+        const minScreenSizeForTitle = 80;
+        const isTooSmall = screenSpaceWidth < minScreenSizeForTitle || screenSpaceHeight < minScreenSizeForTitle;
+        
+        // For thin bar, use 4 screen pixels converted to world space
+        const thinBarWorldHeight = viewport ? 4 / viewport.scale : 4;
+        const titleBarHeight = isTooSmall ? thinBarWorldHeight : this.titleBarHeight;
+        
+        // Use base padding
+        let topPadding = this.padding;
+        
+        // Check if node center is within group bounds (excluding title bar and top padding)
         const nodeCenterX = node.pos[0] + node.size[0] / 2;
         const nodeCenterY = node.pos[1] + node.size[1] / 2;
         
-        const titleBarHeight = this.titleBarHeight; // Use fallback for containment check
         const groupContentArea = {
             left: this.pos[0],
-            top: this.pos[1] + titleBarHeight,
+            top: this.pos[1] + titleBarHeight + topPadding,
             right: this.pos[0] + this.size[0],
             bottom: this.pos[1] + this.size[1]
         };
@@ -618,21 +724,127 @@ class GroupNode extends BaseNode {
      * Render the group node
      * Note: titleBarHeight, lineWidth, and fontSize should be calculated in canvas context before node transform
      */
-    onDrawForeground(ctx, titleBarHeight = null, lineWidth = null, fontSize = null) {
+    onDrawForeground(ctx, titleBarHeight = null, lineWidth = null, fontSize = null, passedViewport = null) {
         ctx.save();
         
-        // Use provided screen-space values or fallbacks
-        const actualTitleBarHeight = titleBarHeight || this.titleBarHeight;
+        // Use passed viewport or try to get it from graph
+        const viewport = passedViewport || this.graph?.canvas?.viewport;
+        
+        // Temporary padding adjustment based on zoom - only check when zoom changes
+        const PADDING_ENABLED = true; // Toggle this to test performance
+        if (PADDING_ENABLED && viewport && !this.isCollapsed && this.childNodes.size > 0) {
+            // Only process when zoom changes significantly
+            if (!this._lastPaddingScale || Math.abs(viewport.scale - this._lastPaddingScale) > 0.01) {
+                this._lastPaddingScale = viewport.scale;
+                
+                // Use the current size to determine title bar mode (before any adjustments)
+                const screenSpaceWidth = this.size[0] * viewport.scale;
+                const screenSpaceHeight = this.size[1] * viewport.scale;
+                const minScreenSizeForTitle = 80;
+                const isThinBar = screenSpaceWidth < minScreenSizeForTitle || screenSpaceHeight < minScreenSizeForTitle;
+                
+                // Calculate actual title bar height in world space
+                let actualTitleBarHeight;
+                if (isThinBar) {
+                    actualTitleBarHeight = 4 / viewport.scale; // 4 screen pixels
+                } else {
+                    actualTitleBarHeight = this.screenSpaceTitleBarHeight / viewport.scale; // 20 screen pixels
+                }
+                
+                // We want 10 screen pixels from bottom of title bar
+                const targetScreenGap = 10;
+                const requiredWorldGap = targetScreenGap / viewport.scale;
+                
+                // Find topmost child Y position efficiently
+                let minChildY = Infinity;
+                const graph = this.graph || window.app?.graph;
+                if (graph) {
+                    for (const nodeId of this.childNodes) {
+                        const node = graph.getNodeById(nodeId);
+                        if (node && node.pos) {
+                            minChildY = Math.min(minChildY, node.pos[1]);
+                        }
+                    }
+                }
+                
+                if (minChildY !== Infinity) {
+                    // Calculate current gap from bottom of title bar
+                    // Use original position if we have temp padding applied
+                    const effectiveY = this._tempPaddingApplied ? 
+                        this.pos[1] + this._tempPaddingApplied : this.pos[1];
+                    const titleBarBottom = effectiveY + actualTitleBarHeight;
+                    const currentGap = minChildY - titleBarBottom;
+                    const currentScreenGap = currentGap * viewport.scale;
+                    
+                    // If current screen gap is less than target, adjust
+                    if (currentScreenGap < targetScreenGap - 1) { // Small tolerance to prevent oscillation
+                        const extraPadding = requiredWorldGap - currentGap;
+                        
+                        if (!this._tempPaddingApplied) {
+                            // Apply temporary padding by shifting group up
+                            this.pos[1] -= extraPadding;
+                            this.size[1] += extraPadding;
+                            this._tempPaddingApplied = extraPadding;
+                        } else if (Math.abs(extraPadding - this._tempPaddingApplied) > 1) {
+                            // Significant change needed
+                            const diff = extraPadding - this._tempPaddingApplied;
+                            this.pos[1] -= diff;
+                            this.size[1] += diff;
+                            this._tempPaddingApplied = extraPadding;
+                        }
+                    } else if (this._tempPaddingApplied && currentScreenGap > targetScreenGap + 5) {
+                        // Remove padding only when we have significant excess gap
+                        this.pos[1] += this._tempPaddingApplied;
+                        this.size[1] -= this._tempPaddingApplied;
+                        this._tempPaddingApplied = 0;
+                    }
+                }
+            }
+        }
+        
+        // Calculate screen space dimensions once (reuse if already calculated for padding)
+        let screenSpaceWidth, screenSpaceHeight;
+        if (this._lastPaddingScale === viewport?.scale) {
+            // Reuse calculations from padding check
+            screenSpaceWidth = this.size[0] * (viewport?.scale || 1);
+            screenSpaceHeight = this.size[1] * (viewport?.scale || 1);
+        } else {
+            // Calculate fresh
+            screenSpaceWidth = viewport ? this.size[0] * viewport.scale : this.size[0];
+            screenSpaceHeight = viewport ? this.size[1] * viewport.scale : this.size[1];
+        }
+        
+        // Check if group is too small in screen space for full title bar
+        const minScreenSizeForTitle = 80; // Minimum screen pixels to show title
+        const isTooSmall = screenSpaceWidth < minScreenSizeForTitle || screenSpaceHeight < minScreenSizeForTitle;
+        
+        // Debug log when state changes
+        if (this._wasTooSmall !== isTooSmall) {
+            console.log(`Group ${this.id}: Thin bar mode ${isTooSmall ? 'ON' : 'OFF'} - screen size: ${screenSpaceWidth.toFixed(1)}x${screenSpaceHeight.toFixed(1)}px (scale=${viewport?.scale})`);
+            this._wasTooSmall = isTooSmall;
+        }
+        
+        // Use provided values or calculate based on size
+        let actualTitleBarHeight;
+        if (isTooSmall) {
+            // For thin bar, use 4 screen pixels converted to world space
+            actualTitleBarHeight = viewport ? 4 / viewport.scale : 4;
+        } else {
+            // Use the provided screen-space height or fallback
+            actualTitleBarHeight = titleBarHeight || this.titleBarHeight;
+        }
+        
         const actualLineWidth = lineWidth || this.style.borderWidth;
         const actualFontSize = fontSize || 12;
         
         // Draw main group background (only if expanded)
         if (!this.isCollapsed) {
             this.drawGroupBackground(ctx, actualTitleBarHeight, actualLineWidth);
+            
         }
         
         // Draw title bar
-        this.drawTitleBar(ctx, actualTitleBarHeight, actualLineWidth, actualFontSize);
+        this.drawTitleBar(ctx, actualTitleBarHeight, actualLineWidth, actualFontSize, isTooSmall);
         
         // Draw resize handles (only if expanded and selected and not animating)
         if (!this.isCollapsed && this.graph?.canvas?.selection?.isSelected(this)) {
@@ -660,10 +872,23 @@ class GroupNode extends BaseNode {
         const width = this.size[0];
         const height = this.size[1] - titleBarHeight;
         
+        // Check if we're using thin title bar
+        // Compare with a small threshold since floating point
+        const viewport = this.graph?.canvas?.viewport;
+        const thinBarWorldHeight = viewport ? 4 / viewport.scale : 4;
+        const isThinBar = Math.abs(titleBarHeight - thinBarWorldHeight) < 0.01;
+        
         // Background with rounded corners
         ctx.fillStyle = this.style.backgroundColor;
         ctx.beginPath();
-        ctx.roundRect(x, y, width, height, [0, 0, this.style.cornerRadius, this.style.cornerRadius]);
+        
+        if (isThinBar) {
+            // Simple rectangle for thin bar mode
+            ctx.rect(x, y, width, height);
+        } else {
+            // Rounded corners for normal mode
+            ctx.roundRect(x, y, width, height, [0, 0, this.style.cornerRadius, this.style.cornerRadius]);
+        }
         ctx.fill();
         
         // Border with screen-space line width
@@ -682,16 +907,23 @@ class GroupNode extends BaseNode {
     /**
      * Draw the title bar
      */
-    drawTitleBar(ctx, titleBarHeight, lineWidth, fontSize = null) {
+    drawTitleBar(ctx, titleBarHeight, lineWidth, fontSize = null, isTooSmall = false) {
         const x = 0;
         const y = 0;
         const width = this.size[0];
         const height = titleBarHeight;
         
         // Title bar background
-        ctx.fillStyle = this.style.titleBackgroundColor;
+        ctx.fillStyle = isTooSmall ? 'rgba(100, 100, 100, 0.8)' : this.style.titleBackgroundColor;
         ctx.beginPath();
-        ctx.roundRect(x, y, width, height, [this.style.cornerRadius, this.style.cornerRadius, 0, 0]);
+        
+        if (isTooSmall) {
+            // Simple rectangle for thin bar
+            ctx.rect(x, y, width, height);
+        } else {
+            // Rounded corners for normal title bar
+            ctx.roundRect(x, y, width, height, [this.style.cornerRadius, this.style.cornerRadius, 0, 0]);
+        }
         ctx.fill();
         
         // Title bar border with screen-space line width
@@ -699,18 +931,21 @@ class GroupNode extends BaseNode {
         ctx.lineWidth = lineWidth;
         ctx.stroke();
         
-        // Title text with screen-space font size
-        ctx.fillStyle = this.style.titleTextColor;
-        const actualFontSize = fontSize || 12; // Use passed font size or fallback
-        ctx.font = `bold ${actualFontSize}px Arial`;
-        ctx.textAlign = 'left';
-        ctx.textBaseline = 'middle';
-        
-        const titleText = this.getDisplayTitle();
-        const maxTitleWidth = width - 16; // Just leave some padding
-        const truncatedTitle = this.truncateText(ctx, titleText, maxTitleWidth);
-        
-        ctx.fillText(truncatedTitle, 8, height / 2);
+        // Only draw title text if not too small
+        if (!isTooSmall) {
+            // Title text with screen-space font size
+            ctx.fillStyle = this.style.titleTextColor;
+            const actualFontSize = fontSize || 12; // Use passed font size or fallback
+            ctx.font = `bold ${actualFontSize}px Arial`;
+            ctx.textAlign = 'left';
+            ctx.textBaseline = 'middle';
+            
+            const titleText = this.getDisplayTitle();
+            const maxTitleWidth = width - 16; // Just leave some padding
+            const truncatedTitle = this.truncateText(ctx, titleText, maxTitleWidth);
+            
+            ctx.fillText(truncatedTitle, 8, height / 2);
+        }
         
         // Collapse/expand button - removed per user request
         // this.drawCollapseButton(ctx, width - 25, height / 2);
@@ -859,6 +1094,49 @@ class GroupNode extends BaseNode {
         super.onRemoved();
         // Child nodes remain in the graph, just remove group association
         this.childNodes.clear();
+    }
+
+    /**
+     * Sync current bounds to server
+     */
+    syncBoundsToServer() {
+        // Try to get graph reference
+        const graph = this.graph || window.app?.graph;
+        
+        if (!graph || !window.NodeCommands) {
+            // console.warn('Cannot sync bounds - graph or NodeCommands not available');
+            return;
+        }
+
+        // Don't sync if we're still animating
+        if (this.isAnimating || this._animPos || this._gridAnimPos) {
+            console.log(`Group ${this.id}: Skipping sync - still animating`);
+            return;
+        }
+
+        // Don't sync during alignment completion grace period
+        if (this._alignmentJustCompleted) {
+            const timeSinceCompletion = Date.now() - this._alignmentJustCompleted;
+            if (timeSinceCompletion < 1000) {
+                console.log(`Group ${this.id}: Skipping sync - alignment just completed`);
+                return;
+            }
+        }
+
+        console.log(`Group ${this.id}: Syncing bounds to server - pos: [${this.pos[0].toFixed(1)}, ${this.pos[1].toFixed(1)}], size: [${this.size[0].toFixed(1)}, ${this.size[1].toFixed(1)}]`);
+
+        // Create group resize command
+        const command = new window.NodeCommands.GroupNodeCommand({
+            action: 'group_resize',
+            groupId: this.id,
+            size: [...this.size],
+            position: [...this.pos]
+        });
+
+        // Execute command through operation pipeline
+        if (window.app?.operationPipeline) {
+            window.app.operationPipeline.executeCommand(command);
+        }
     }
 }
 

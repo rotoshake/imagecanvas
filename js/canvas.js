@@ -1142,11 +1142,9 @@ Mode: ${this.fpsTestMode}`;
             const result = this.handleDetector.getNodeAtPosition(...this.mouseState.graph, this.graph.nodes);
             if (result) {
                 const node = result.node || result;
-                // Only allow duplication of regular nodes, not groups
-                if (node.type !== 'container/group') {
-                    this.startNodeDuplication(node, e);
-                    return true;
-                }
+                // Allow duplication of all node types including groups
+                this.startNodeDuplication(node, e);
+                return true;
             }
         }
         
@@ -1951,6 +1949,12 @@ Mode: ${this.fpsTestMode}`;
     // ===================================
     
     startGroupTitleBarDrag(groupNode, e) {
+        // Handle alt-drag for duplication
+        if (e.altKey) {
+            this.startNodeDuplication(groupNode, e);
+            return;
+        }
+        
         // Handle shift-click for selection toggle
         if (e.shiftKey) {
             if (this.selection.isSelected(groupNode)) {
@@ -2447,6 +2451,22 @@ Mode: ${this.fpsTestMode}`;
                     angles: finalRotations, 
                     positions: finalPositions 
                 });
+            }
+        }
+
+        // Sync any group bounds that may have changed during interactions
+        if (this.graph) {
+            const groups = this.graph.nodes.filter(n => n.type === 'container/group');
+            for (const group of groups) {
+                // Check if group needs sync (not animating and has been modified)
+                if (group.syncBoundsToServer && !group.isAnimating && !group._animPos && !group._gridAnimPos) {
+                    // Schedule sync after a short delay to batch updates
+                    setTimeout(() => {
+                        if (group.syncBoundsToServer) {
+                            group.syncBoundsToServer();
+                        }
+                    }, 100);
+                }
             }
         }
 
@@ -3634,6 +3654,21 @@ Mode: ${this.fpsTestMode}`;
         const nodeData = this.serializeNode(originalNode);
         const duplicate = this.deserializeNode(nodeData, true); // true = skip media loading
         
+        // Add suffix to duplicated titles
+        if (duplicate && duplicate.title) {
+            // Check if title already has "Copy" suffix
+            const copyMatch = duplicate.title.match(/^(.*?)\s*\(Copy\s*(\d*)\)$/);
+            if (copyMatch) {
+                // Increment copy number
+                const baseName = copyMatch[1];
+                const copyNum = copyMatch[2] ? parseInt(copyMatch[2]) + 1 : 2;
+                duplicate.title = `${baseName} (Copy ${copyNum})`;
+            } else {
+                // Add first copy suffix
+                duplicate.title = `${duplicate.title} (Copy)`;
+            }
+        }
+        
         // For media nodes, copy the actual media element reference if available
         if (duplicate && (originalNode.type === 'media/image' || originalNode.type === 'media/video')) {
             if (originalNode.img && duplicate.setImage) {
@@ -3655,7 +3690,7 @@ Mode: ${this.fpsTestMode}`;
     serializeNode(node) {
         // Use UndoOptimization utility if available
         if (window.UndoOptimization) {
-            return window.UndoOptimization.optimizeNodeData(node);
+            return window.UndoOptimization.optimizeNodeData(node, true); // true = forCopy
         }
         
         // Fallback to inline optimization
@@ -3669,6 +3704,13 @@ Mode: ${this.fpsTestMode}`;
             aspectRatio: node.aspectRatio,
             rotation: node.rotation
         };
+        
+        // For group nodes, clear childNodes when copying
+        // The copied group should start empty
+        if (node.type === 'container/group' && serialized.properties) {
+            serialized.properties = { ...serialized.properties };
+            serialized.properties.childNodes = [];
+        }
         
         // For media nodes, ensure we never include data URLs
         if (node.type === 'media/image' || node.type === 'media/video') {
@@ -4807,12 +4849,13 @@ Mode: ${this.fpsTestMode}`;
         
         // Draw node content
         if (node.onDrawForeground) {
-            // For group nodes, calculate screen-space dimensions before transform
+            // For group nodes, pass viewport for calculations
             if (node.type === 'container/group' && node.getScreenSpaceTitleBarHeightForViewport) {
                 const screenSpaceTitleBarHeight = node.getScreenSpaceTitleBarHeightForViewport(this.viewport);
                 const screenSpaceLineWidth = node.style.borderWidth / this.viewport.scale;
                 const screenSpaceFontSize = 12 / this.viewport.scale; // 12px target font size
-                node.onDrawForeground(ctx, screenSpaceTitleBarHeight, screenSpaceLineWidth, screenSpaceFontSize);
+                // Pass viewport as additional parameter
+                node.onDrawForeground(ctx, screenSpaceTitleBarHeight, screenSpaceLineWidth, screenSpaceFontSize, this.viewport);
             } else {
                 node.onDrawForeground(ctx);
             }

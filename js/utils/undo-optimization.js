@@ -68,10 +68,10 @@ class UndoOptimization {
      * Optimize node data for undo storage
      * Creates a clean copy with optimized properties
      */
-    static optimizeNodeData(node) {
+    static optimizeNodeData(node, forCopy = false) {
         if (!node) return null;
         
-        return {
+        const optimized = {
             id: node.id,
             type: node.type,
             pos: [...node.pos],
@@ -82,6 +82,14 @@ class UndoOptimization {
             title: node.title,
             aspectRatio: node.aspectRatio
         };
+        
+        // When copying groups, clear childNodes to prevent reference conflicts
+        if (forCopy && node.type === 'container/group' && optimized.properties) {
+            optimized.properties = { ...optimized.properties };
+            optimized.properties.childNodes = [];
+        }
+        
+        return optimized;
     }
     
     /**
