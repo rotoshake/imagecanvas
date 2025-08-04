@@ -20,44 +20,121 @@ class NodeLayerOrderCommand extends Command {
 
     async prepareUndoData(context) {
         const { graph } = context;
-        this.undoData = { originalOrder: [...graph.nodes].map(n => n.id) };
+        // Store original z-index values for all affected nodes
+        this.undoData = { 
+            originalZIndices: {}
+        };
+        
+        // Store z-indices for selected nodes and their children
+        for (const nodeId of this.params.nodeIds) {
+            const node = graph.getNodeById(nodeId);
+            if (node) {
+                this.undoData.originalZIndices[nodeId] = node.zIndex ?? 0;
+                
+                // If it's a group, store z-indices of all children too
+                if (node.type === 'container/group' && node.childNodes) {
+                    for (const childId of node.childNodes) {
+                        const child = graph.getNodeById(childId);
+                        if (child) {
+                            this.undoData.originalZIndices[childId] = child.zIndex ?? 0;
+                        }
+                    }
+                }
+            }
+        }
     }
 
     async execute(context) {
-        const { graph } = context;
+        const { graph, canvas } = context;
         const { nodeIds, direction } = this.params;
         
-        // This is a simplified version. A real implementation would be more robust.
-        if (direction === 'up') {
-            nodeIds.forEach(nodeId => {
-                const node = graph.getNodeById(nodeId);
-                if (node) {
-                    const index = graph.nodes.indexOf(node);
-                    if (index < graph.nodes.length - 1) {
-                        graph.nodes.splice(index, 1);
-                        graph.nodes.splice(index + 1, 0, node);
-                    }
+        // Process each selected node
+        for (const nodeId of nodeIds) {
+            const node = graph.getNodeById(nodeId);
+            if (!node) continue;
+            
+            // Find overlapping nodes
+            const overlapping = this.getOverlappingNodes(node, graph.nodes);
+            if (overlapping.length === 0) continue;
+            
+            // Sort overlapping nodes by z-index
+            overlapping.sort((a, b) => (a.zIndex ?? 0) - (b.zIndex ?? 0));
+            
+            const currentZ = node.zIndex ?? 0;
+            const nodeIndex = overlapping.findIndex(n => n.id === node.id);
+            
+            if (direction === 'up') {
+                // Find the next node above this one
+                const nodesAbove = overlapping.slice(nodeIndex + 1);
+                if (nodesAbove.length > 0) {
+                    // Move above the first node that's currently above us
+                    const targetNode = nodesAbove[0];
+                    const targetZ = targetNode.zIndex ?? 0;
+                    
+                    // Set our z-index slightly above the target
+                    node.zIndex = targetZ + 0.1;
+                    
+                    // Normalize z-indices to integers
+                    this.normalizeZIndices(graph.nodes);
                 }
-            });
-        } else { // down
-            nodeIds.forEach(nodeId => {
-                const node = graph.getNodeById(nodeId);
-                if (node) {
-                    const index = graph.nodes.indexOf(node);
-                    if (index > 0) {
-                        graph.nodes.splice(index, 1);
-                        graph.nodes.splice(index - 1, 0, node);
-                    }
+            } else { // down
+                // Find the previous node below this one
+                const nodesBelow = overlapping.slice(0, nodeIndex);
+                if (nodesBelow.length > 0) {
+                    // Move below the last node that's currently below us
+                    const targetNode = nodesBelow[nodesBelow.length - 1];
+                    const targetZ = targetNode.zIndex ?? 0;
+                    
+                    // Set our z-index slightly below the target
+                    node.zIndex = targetZ - 0.1;
+                    
+                    // Normalize z-indices to integers
+                    this.normalizeZIndices(graph.nodes);
                 }
-            });
+            }
         }
+        
         return { success: true };
+    }
+    
+    getOverlappingNodes(targetNode, allNodes) {
+        const [tx, ty, tw, th] = targetNode.getBoundingBox();
+        const overlapping = [];
+        
+        for (const node of allNodes) {
+            const [nx, ny, nw, nh] = node.getBoundingBox();
+            
+            // Check if bounding boxes overlap
+            if (tx < nx + nw && tx + tw > nx && ty < ny + nh && ty + th > ny) {
+                overlapping.push(node);
+            }
+        }
+        
+        return overlapping;
+    }
+    
+    normalizeZIndices(nodes) {
+        // Sort all nodes by current z-index
+        const sorted = [...nodes].sort((a, b) => (a.zIndex ?? 0) - (b.zIndex ?? 0));
+        
+        // Reassign z-indices as integers starting from 0
+        sorted.forEach((node, index) => {
+            node.zIndex = index;
+        });
     }
 
     async undo(context) {
         const { graph } = context;
-        const { originalOrder } = this.undoData;
-        graph.nodes.sort((a, b) => originalOrder.indexOf(a.id) - originalOrder.indexOf(b.id));
+        const { originalZIndices } = this.undoData;
+        
+        // Restore original z-indices
+        for (const [nodeId, zIndex] of Object.entries(originalZIndices)) {
+            const node = graph.getNodeById(nodeId);
+            if (node) {
+                node.zIndex = zIndex;
+            }
+        }
+        
         return { success: true };
     }
 }

@@ -16,6 +16,7 @@ class BaseNode {
         this.originalAspect = 1;
         this.graph = null;
         this.loadingState = 'idle'; // idle, loading, loaded, error
+        this.zIndex = 0; // Z-order for layering
         
         // Visual effects
         this.brightness = 1.0; // 1.0 = normal, > 1.0 = brighter

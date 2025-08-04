@@ -2666,11 +2666,19 @@ Mode: ${this.fpsTestMode}`;
         
         // Layer controls
         if (key === '[') {
-            this.moveSelectedDown();
+            if (shift) {
+                this.sendSelectedToBack();
+            } else {
+                this.moveSelectedDown();
+            }
             return true;
         }
         if (key === ']') {
-            this.moveSelectedUp();
+            if (shift) {
+                this.bringSelectedToFront();
+            } else {
+                this.moveSelectedUp();
+            }
             return true;
         }
         
@@ -3463,9 +3471,100 @@ Mode: ${this.fpsTestMode}`;
         window.app.operationPipeline.execute('node_layer_order', { nodeIds, direction: 'down' });
     }
     
+    sendSelectedToBack() {
+        const selected = this.selection.getSelectedNodes();
+        if (selected.length === 0) return;
+
+        // Find minimum z-index
+        let minZ = Infinity;
+        for (const node of this.graph.nodes) {
+            const z = node.zIndex ?? 0;
+            if (z < minZ) minZ = z;
+        }
+        
+        // Set selected nodes to below minimum
+        for (const node of selected) {
+            node.zIndex = minZ - 1;
+            
+            // If it's a group, move all children too
+            if (node.type === 'container/group' && node.childNodes) {
+                for (const childId of node.childNodes) {
+                    const child = this.graph.getNodeById(childId);
+                    if (child) {
+                        child.zIndex = minZ - 1;
+                    }
+                }
+            }
+        }
+        
+        // Normalize z-indices
+        this.normalizeAllZIndices();
+    }
+    
+    bringSelectedToFront() {
+        const selected = this.selection.getSelectedNodes();
+        if (selected.length === 0) return;
+
+        // Find maximum z-index
+        let maxZ = -Infinity;
+        for (const node of this.graph.nodes) {
+            const z = node.zIndex ?? 0;
+            if (z > maxZ) maxZ = z;
+        }
+        
+        // Set selected nodes to above maximum
+        for (const node of selected) {
+            node.zIndex = maxZ + 1;
+            
+            // If it's a group, move all children too
+            if (node.type === 'container/group' && node.childNodes) {
+                for (const childId of node.childNodes) {
+                    const child = this.graph.getNodeById(childId);
+                    if (child) {
+                        child.zIndex = maxZ + 1;
+                    }
+                }
+            }
+        }
+        
+        // Normalize z-indices
+        this.normalizeAllZIndices();
+    }
+    
+    normalizeAllZIndices() {
+        // Sort all nodes by current z-index
+        const sorted = [...this.graph.nodes].sort((a, b) => (a.zIndex ?? 0) - (b.zIndex ?? 0));
+        
+        // Reassign z-indices as integers starting from 0
+        sorted.forEach((node, index) => {
+            node.zIndex = index;
+        });
+    }
+    
     // ===================================
     // SMART LAYER ORDERING
     // ===================================
+    
+    getEffectiveZIndex(node) {
+        // Find parent group if any
+        const parentGroup = this.getParentGroup(node);
+        if (parentGroup) {
+            // Use parent group's z-index
+            return parentGroup.zIndex ?? 0;
+        }
+        // Use node's own z-index
+        return node.zIndex ?? 0;
+    }
+    
+    getParentGroup(node) {
+        // Find which group contains this node
+        for (const n of this.graph.nodes) {
+            if (n.type === 'container/group' && n.childNodes?.has(node.id)) {
+                return n;
+            }
+        }
+        return null;
+    }
     
     getOverlappingNodes(targetNode) {
         const [tx, ty, tw, th] = targetNode.getBoundingBox();
@@ -4556,23 +4655,25 @@ Mode: ${this.fpsTestMode}`;
             window.memoryManager.performCleanup(visibleNodes, this.graph.nodes, this.viewport);
         }
         
-        // Draw all visible nodes in layers: groups first, then regular nodes
-        
-        // First pass: draw group nodes (background layer)
-        for (const node of visibleNodes) {
-            if (node.type !== 'container/group') continue;
+        // Draw all visible nodes sorted by z-index
+        // Sort visible nodes by z-index (lower z-index drawn first)
+        const sortedNodes = [...visibleNodes].sort((a, b) => {
+            // Get effective z-index (considering group membership)
+            const aZ = this.getEffectiveZIndex(a);
+            const bZ = this.getEffectiveZIndex(b);
             
-            // In gallery mode, only draw the current node
-            if (this.galleryViewManager && this.galleryViewManager.shouldHideNode(node)) {
-                continue;
+            // If z-indices are the same, maintain relative order within group
+            if (aZ === bZ) {
+                // Groups should be drawn before their children
+                if (a.type === 'container/group' && a.childNodes?.has(b.id)) return -1;
+                if (b.type === 'container/group' && b.childNodes?.has(a.id)) return 1;
             }
-            this.drawNode(ctx, node);
-        }
-        
-        // Second pass: draw regular nodes (foreground layer)
-        for (const node of visibleNodes) {
-            if (node.type === 'container/group') continue;
             
+            return aZ - bZ;
+        });
+        
+        // Draw nodes in z-order
+        for (const node of sortedNodes) {
             // In gallery mode, only draw the current node
             if (this.galleryViewManager && this.galleryViewManager.shouldHideNode(node)) {
                 continue;

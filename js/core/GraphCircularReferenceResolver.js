@@ -42,6 +42,18 @@ class GraphCircularReferenceResolver {
                 node.id = ++this.lastNodeId;
             }
             
+            // Assign z-index to new nodes (they go on top)
+            if (node.zIndex === undefined || node.zIndex === null) {
+                // Find the maximum z-index
+                let maxZ = -1;
+                for (const n of this.nodes) {
+                    if (n.zIndex !== undefined && n.zIndex !== null && n.zIndex > maxZ) {
+                        maxZ = n.zIndex;
+                    }
+                }
+                node.zIndex = maxZ + 1;
+            }
+            
             this.nodes.push(node);
             
             // Instead of node.graph = this, use our resolver
