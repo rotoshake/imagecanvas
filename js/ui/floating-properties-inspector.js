@@ -55,8 +55,8 @@ class FloatingPropertiesInspector {
         this.addStyles();
         document.body.appendChild(this.panel);
         
-        // Make sure panel doesn't block canvas interactions when starting a drag
-        this.setupCanvasInteractionHandling();
+        // Setup canvas drag detection to allow drag operations to pass through
+        this.setupCanvasDragDetection();
         
         // Prevent keyboard events from bubbling to canvas
         this.setupKeyboardHandling();
@@ -703,46 +703,44 @@ class FloatingPropertiesInspector {
         });
     }
     
-    setupCanvasInteractionHandling() {
-        // Monitor canvas drag operations
-        let isDraggingOnCanvas = false;
+    setupCanvasDragDetection() {
+        // Track canvas drag state to allow drag operations to pass through panel
+        let isCanvasDragging = false;
         let originalPointerEvents = null;
         
-        // Function to temporarily disable panel interaction during canvas drags
-        const disablePanelDuringDrag = () => {
-            if (this.isVisible && !isDraggingOnCanvas) {
-                isDraggingOnCanvas = true;
-                originalPointerEvents = this.panel.style.pointerEvents;
-                this.panel.style.pointerEvents = 'none';
+        // Listen for mousedown on canvas to detect start of canvas drag
+        document.addEventListener('mousedown', (e) => {
+            // Check if mousedown started on canvas (not on this panel)
+            const canvas = this.canvas?.canvas;
+            if (canvas && canvas.contains(e.target) && !this.panel.contains(e.target)) {
+                // Canvas drag started - temporarily disable panel pointer events
+                if (this.isVisible && !isCanvasDragging) {
+                    isCanvasDragging = true;
+                    originalPointerEvents = this.panel.style.pointerEvents;
+                    this.panel.style.pointerEvents = 'none';
+                }
             }
-        };
+        }, true); // Use capture phase to catch early
         
-        const enablePanelAfterDrag = () => {
-            if (isDraggingOnCanvas) {
-                isDraggingOnCanvas = false;
+        // Re-enable panel interaction on mouseup
+        document.addEventListener('mouseup', () => {
+            if (isCanvasDragging) {
+                isCanvasDragging = false;
+                if (this.isVisible) {
+                    // Restore original pointer events or default to auto
+                    this.panel.style.pointerEvents = originalPointerEvents || 'auto';
+                }
+            }
+        }, true);
+        
+        // Also handle mouse leaving window during drag
+        document.addEventListener('mouseleave', () => {
+            if (isCanvasDragging) {
+                isCanvasDragging = false;
                 if (this.isVisible) {
                     this.panel.style.pointerEvents = originalPointerEvents || 'auto';
                 }
             }
-        };
-        
-        // Listen for canvas mousedown events to detect drag start
-        document.addEventListener('mousedown', (e) => {
-            const canvas = this.canvas.canvas;
-            if (canvas && canvas.contains(e.target) && !this.panel.contains(e.target)) {
-                // Started dragging on canvas
-                disablePanelDuringDrag();
-            }
-        }, true);
-        
-        // Re-enable on mouseup
-        document.addEventListener('mouseup', () => {
-            enablePanelAfterDrag();
-        }, true);
-        
-        // Also handle when mouse leaves the window
-        document.addEventListener('mouseleave', () => {
-            enablePanelAfterDrag();
         });
     }
     
@@ -2207,7 +2205,13 @@ class FloatingPropertiesInspector {
     
     executeNodePropertyUpdate(prop, value) {
         const nodes = Array.from(this.currentNodes.values());
-        const nodeIds = nodes.map(n => n.id);
+        const nodeIds = nodes.map(n => n.id).filter(id => id != null);
+
+        // Safety check: ensure we have valid nodeIds
+        if (!nodeIds || nodeIds.length === 0) {
+            console.warn('executeNodePropertyUpdate - No valid nodeIds found, aborting operation');
+            return;
+        }
 
         let commandType;
         let params = { nodeIds };
@@ -2538,8 +2542,12 @@ class FloatingPropertiesInspector {
         if (this.isVisible) {
             this.isVisible = false;
             this.panel.classList.remove('visible');
-            // Don't hide the display, just make it non-interactive
-            // This prevents layout jumps and keeps transitions smooth
+            // Set display: none after transition to prevent interference with canvas drag operations
+            setTimeout(() => {
+                if (!this.isVisible) { // Only hide if still not visible
+                    this.panel.style.display = 'none';
+                }
+            }, 200); // Match the CSS transition duration
             
             // Notify any listeners that visibility changed
             this.onVisibilityChange();

@@ -76,7 +76,7 @@ class ImageUploadCoordinator {
                 node._uploadRetryCount++;
                 const retryDelay = 500 * node._uploadRetryCount; // 500ms, 1s, 1.5s, 2s, 2.5s
                 
-                console.log(`⏳ Cache not ready for ${hash.substring(0, 8)}... - retry ${node._uploadRetryCount}/5 in ${retryDelay}ms`);
+                // console.log(`⏳ Cache not ready for ${hash.substring(0, 8)}... - retry ${node._uploadRetryCount}/5 in ${retryDelay}ms`);
                 
                 setTimeout(() => {
                     // Check if node still exists and needs upload
@@ -88,8 +88,8 @@ class ImageUploadCoordinator {
             }
             
             // Max retries reached
-            console.warn(`⚠️ No cached data URL found for hash ${hash.substring(0, 8)}... after ${node._uploadRetryCount} retries`);
-            console.log(`   Cache has data: ${!!cached}, URL starts with data: ${cached?.url?.startsWith('data:')}`);
+            // console.warn(`⚠️ No cached data URL found for hash ${hash.substring(0, 8)}... after ${node._uploadRetryCount} retries`);
+            // console.log(`   Cache has data: ${!!cached}, URL starts with data: ${cached?.url?.startsWith('data:')}`);
             // Mark this node as failed to avoid checking it again
             this.failedNodes.add(node.id);
             return;

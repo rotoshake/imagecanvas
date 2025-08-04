@@ -617,6 +617,11 @@ class GalleryViewManager {
     handleKeyDown(e) {
         if (!this.active) return;
         
+        // Allow Space key to pass through to canvas for panning
+        if (e.key === ' ' || e.code === 'Space') {
+            return; // Don't handle, let it bubble to canvas
+        }
+        
         switch(e.key.toLowerCase()) {
             case 'arrowleft':
                 e.preventDefault();

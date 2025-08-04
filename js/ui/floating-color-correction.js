@@ -27,8 +27,8 @@ class FloatingColorCorrection {
         this.setupEventListeners();
         this.updatePosition();
         
-        // Make sure panel doesn't block canvas interactions when starting a drag
-        this.setupCanvasInteractionHandling();
+        // Setup canvas drag detection to allow drag operations to pass through
+        this.setupCanvasDragDetection();
         
         // Load saved state from localStorage
         this.loadState();
@@ -501,47 +501,71 @@ rgb(255, 50, 50) 100%);
         });
     }
 
-    setupCanvasInteractionHandling() {
-        // Monitor canvas drag operations
-        let isDraggingOnCanvas = false;
+    setupCanvasDragDetection() {
+        // Track canvas drag state to allow drag operations to pass through panel
+        let isCanvasDragging = false;
         let originalPointerEvents = null;
         
-        // Function to temporarily disable panel interaction during canvas drags
-        const disablePanelDuringDrag = () => {
-            if (this.isVisible && !isDraggingOnCanvas) {
-                isDraggingOnCanvas = true;
-                originalPointerEvents = this.panel.style.pointerEvents;
-                this.panel.style.pointerEvents = 'none';
+        // Listen for mousedown on canvas to detect start of canvas drag
+        document.addEventListener('mousedown', (e) => {
+            // Check if mousedown started on canvas (not on this panel)
+            const canvas = this.canvas?.canvas;
+            if (canvas && canvas.contains(e.target) && !this.panel.contains(e.target)) {
+                // Canvas drag started - temporarily disable panel pointer events
+                if (this.isVisible && !isCanvasDragging) {
+                    isCanvasDragging = true;
+                    originalPointerEvents = this.panel.style.pointerEvents;
+                    this.panel.style.pointerEvents = 'none';
+                }
             }
-        };
+        }, true); // Use capture phase to catch early
         
-        const enablePanelAfterDrag = () => {
-            if (isDraggingOnCanvas) {
-                isDraggingOnCanvas = false;
+        // Re-enable panel interaction on mouseup
+        document.addEventListener('mouseup', () => {
+            if (isCanvasDragging) {
+                isCanvasDragging = false;
+                if (this.isVisible) {
+                    // Restore original pointer events or default to auto
+                    this.panel.style.pointerEvents = originalPointerEvents || 'auto';
+                }
+            }
+        }, true);
+        
+        // Also handle mouse leaving window during drag
+        document.addEventListener('mouseleave', () => {
+            if (isCanvasDragging) {
+                isCanvasDragging = false;
                 if (this.isVisible) {
                     this.panel.style.pointerEvents = originalPointerEvents || 'auto';
                 }
             }
+        });
+        
+        // Handle color balance panel if it exists
+        const checkColorBalancePanel = () => {
+            if (this.colorBalancePanel) {
+                document.addEventListener('mousedown', (e) => {
+                    const canvas = this.canvas?.canvas;
+                    if (canvas && canvas.contains(e.target) && 
+                        !this.panel.contains(e.target) && 
+                        !this.colorBalancePanel.contains(e.target)) {
+                        if (this.colorBalanceVisible && !isCanvasDragging) {
+                            this.colorBalancePanel.style.pointerEvents = 'none';
+                        }
+                    }
+                }, true);
+                
+                document.addEventListener('mouseup', () => {
+                    if (this.colorBalanceVisible && isCanvasDragging) {
+                        this.colorBalancePanel.style.pointerEvents = 'auto';
+                    }
+                }, true);
+            }
         };
         
-        // Listen for canvas mousedown events to detect drag start
-        document.addEventListener('mousedown', (e) => {
-            const canvas = this.canvas.canvas;
-            if (canvas && canvas.contains(e.target) && !this.panel.contains(e.target)) {
-                // Started dragging on canvas
-                disablePanelDuringDrag();
-            }
-        }, true);
-        
-        // Re-enable on mouseup
-        document.addEventListener('mouseup', () => {
-            enablePanelAfterDrag();
-        }, true);
-        
-        // Also handle when mouse leaves the window
-        document.addEventListener('mouseleave', () => {
-            enablePanelAfterDrag();
-        });
+        // Check immediately and periodically for color balance panel
+        checkColorBalancePanel();
+        this.colorBalancePanelCheckInterval = setInterval(checkColorBalancePanel, 1000);
     }
 
     makeDraggable(handle) {
@@ -1339,6 +1363,13 @@ rgb(255, 50, 50) 100%);
                 }, 200);
             }
             
+            // Set display: none after transition to prevent interference with canvas drag operations
+            setTimeout(() => {
+                if (!this.isVisible) { // Only hide if still not visible
+                    this.panel.style.display = 'none';
+                }
+            }, 200); // Match the CSS transition duration
+            
             // Notify any listeners that visibility changed
             this.onVisibilityChange();
             this.saveState();
@@ -1940,6 +1971,12 @@ rgb(255, 50, 50) 100%);
     }
     
     destroy() {
+        // Clear color balance panel check interval
+        if (this.colorBalancePanelCheckInterval) {
+            clearInterval(this.colorBalancePanelCheckInterval);
+            this.colorBalancePanelCheckInterval = null;
+        }
+        
         // Clean up undo/redo listeners
         if (this._undoRedoListener) {
             if (window.app?.events?.off) {

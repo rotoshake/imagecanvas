@@ -539,19 +539,7 @@ class CanvasNavigator {
             console.error('Admin button not found');
         }
         
-        // Keyboard shortcut (Ctrl/Cmd + O)
-        document.addEventListener('keydown', (e) => {
-            // Don't handle shortcuts if editing text
-            const canvasTitleInput = document.querySelector('.canvas-title-input');
-            if (canvasTitleInput && document.activeElement === canvasTitleInput) {
-                return;
-            }
-            
-            if ((e.ctrlKey || e.metaKey) && e.key === 'o') {
-                e.preventDefault();
-                this.toggle();
-            }
-        });
+        // Note: Ctrl/Cmd + O shortcut is now handled by the main keyboard shortcuts system
     }
     
     toggle() {

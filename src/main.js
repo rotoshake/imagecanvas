@@ -15,6 +15,10 @@ import '../js/utils/undo-optimization.js';
 import '../js/utils/ImageLoadManager.js';
 import '../js/utils/IndexedDBThumbnailStore.js';
 
+// Keyboard shortcuts system
+import '../js/config/keyboard-shortcuts.js';
+import '../js/config/keyboard-shortcuts-integration.js';
+
 // 2) Core systems and renderers
 import '../js/renderers/Canvas2DRenderer.js';
 import '../js/renderers/TextureLODManager.js';

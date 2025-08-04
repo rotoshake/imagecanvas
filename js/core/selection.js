@@ -68,7 +68,7 @@ class SelectionManager {
         this.notifyChange();
     }
     
-    selectInRect(nodes, rect) {
+    selectInRect(nodes, rect, mode = 'replace') {
         const [x, y, width, height] = rect;
         const selectionBounds = [
             Math.min(x, x + width),
@@ -77,9 +77,12 @@ class SelectionManager {
             Math.abs(height)
         ];
         
-        this.selectedNodes.clear();
+        // Store nodes in rect for processing
+        const nodesInRect = new Set();
         
         for (const node of nodes) {
+            let intersects = false;
+            
             if (node.type === 'container/group') {
                 // For groups, only check if title bar intersects with selection
                 // Get the viewport-aware title bar height
@@ -95,24 +98,55 @@ class SelectionManager {
                 ];
                 
                 // Check if title bar intersects with selection rectangle
-                if (titleBarBounds[0] + titleBarBounds[2] > selectionBounds[0] && 
-                    titleBarBounds[0] < selectionBounds[0] + selectionBounds[2] &&
-                    titleBarBounds[1] + titleBarBounds[3] > selectionBounds[1] && 
-                    titleBarBounds[1] < selectionBounds[1] + selectionBounds[3]) {
-                    this.selectedNodes.set(node.id, node);
-                }
+                intersects = titleBarBounds[0] + titleBarBounds[2] > selectionBounds[0] && 
+                            titleBarBounds[0] < selectionBounds[0] + selectionBounds[2] &&
+                            titleBarBounds[1] + titleBarBounds[3] > selectionBounds[1] && 
+                            titleBarBounds[1] < selectionBounds[1] + selectionBounds[3];
             } else {
                 // For regular nodes, check full bounds
                 const [nx, ny, nw, nh] = node.getBoundingBox();
                 
                 // Check if node intersects with selection rectangle
-                if (nx + nw > selectionBounds[0] && 
-                    nx < selectionBounds[0] + selectionBounds[2] &&
-                    ny + nh > selectionBounds[1] && 
-                    ny < selectionBounds[1] + selectionBounds[3]) {
+                intersects = nx + nw > selectionBounds[0] && 
+                            nx < selectionBounds[0] + selectionBounds[2] &&
+                            ny + nh > selectionBounds[1] && 
+                            ny < selectionBounds[1] + selectionBounds[3];
+            }
+            
+            if (intersects) {
+                nodesInRect.add(node);
+            }
+        }
+        
+        // Apply selection based on mode
+        if (mode === 'replace') {
+            // Replace selection with nodes in rect
+            this.selectedNodes.clear();
+            nodesInRect.forEach(node => this.selectedNodes.set(node.id, node));
+        } else if (mode === 'add') {
+            // In add mode, if ALL nodes in rect are already selected, deselect them
+            // Otherwise, add any unselected nodes to selection
+            const allAlreadySelected = Array.from(nodesInRect).every(node => this.selectedNodes.has(node.id));
+            
+            if (allAlreadySelected && nodesInRect.size > 0) {
+                // Deselect all nodes in rect
+                nodesInRect.forEach(node => this.selectedNodes.delete(node.id));
+            } else {
+                // Add nodes in rect to current selection
+                nodesInRect.forEach(node => this.selectedNodes.set(node.id, node));
+            }
+        } else if (mode === 'subtract') {
+            // Remove nodes in rect from current selection
+            nodesInRect.forEach(node => this.selectedNodes.delete(node.id));
+        } else if (mode === 'toggle') {
+            // Toggle selection state of nodes in rect
+            nodesInRect.forEach(node => {
+                if (this.selectedNodes.has(node.id)) {
+                    this.selectedNodes.delete(node.id);
+                } else {
                     this.selectedNodes.set(node.id, node);
                 }
-            }
+            });
         }
         
         this.notifyChange();
@@ -251,11 +285,12 @@ class SelectionManager {
     }
     
     // Selection rectangle management
-    startSelection(startPos) {
+    startSelection(startPos, modifiers = {}) {
         this.selectionRect = {
             start: [...startPos],
             current: [...startPos],
-            active: true
+            active: true,
+            modifiers: { ...modifiers }
         };
     }
     
@@ -278,7 +313,19 @@ class SelectionManager {
         
         const rect = this.getSelectionRect();
         if (rect && (Math.abs(rect[2]) > 5 || Math.abs(rect[3]) > 5)) {
-            this.selectInRect(nodes, rect);
+            // Determine selection mode based on modifiers
+            let mode = 'replace';
+            const modifiers = this.selectionRect.modifiers || {};
+            
+            if (modifiers.shiftKey && modifiers.ctrlKey) {
+                mode = 'subtract';  // Shift+Ctrl = subtract from selection
+            } else if (modifiers.shiftKey) {
+                mode = 'add';       // Shift = add to selection
+            } else if (modifiers.ctrlKey) {
+                mode = 'toggle';    // Ctrl = toggle selection
+            }
+            
+            this.selectInRect(nodes, rect, mode);
         }
         
         this.selectionRect = null;

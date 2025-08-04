@@ -111,12 +111,33 @@ class GroupNode extends BaseNode {
     }
     
     /**
+     * Remove a node from any group it might belong to
+     */
+    removeFromAnyGroup(nodeId) {
+        // Get the graph reference
+        const graph = this.graph || window.app?.graph;
+        if (!graph || !graph.nodes) return;
+        
+        // Find all groups and remove the node from any that contain it
+        for (const node of graph.nodes) {
+            if (node.type === 'container/group' && node !== this && node.childNodes?.has(nodeId)) {
+                console.log(`Removing node ${nodeId} from group ${node.id} before adding to group ${this.id}`);
+                node.removeChildNode(nodeId);
+            }
+        }
+    }
+    
+    /**
      * Add a node to this group
      */
     addChildNode(nodeId, skipBoundsUpdate = false) {
         if (typeof nodeId === 'object') {
             nodeId = nodeId.id; // Handle both node objects and IDs
         }
+        
+        // Remove from any existing group first to ensure single-parent constraint
+        this.removeFromAnyGroup(nodeId);
+        
         this.childNodes.add(nodeId);
         if (!skipBoundsUpdate) {
             const bounds = this.updateBounds(true); // expandOnly = true for animation
@@ -153,6 +174,8 @@ class GroupNode extends BaseNode {
                 nodeId = nodeId.id;
             }
             if (!this.childNodes.has(nodeId)) {
+                // Remove from any existing group first
+                this.removeFromAnyGroup(nodeId);
                 this.childNodes.add(nodeId);
                 added = true;
             }
@@ -371,6 +394,7 @@ class GroupNode extends BaseNode {
         
         
         const childNodes = this.getChildNodes();
+        console.log(`📐 Group ${this.id} has ${childNodes.length} child nodes:`, childNodes.map(n => ({ id: n.id, pos: n.pos, size: n.size })));
         
         if (childNodes.length === 0) {
             // Don't shrink to default size if expandOnly is true
@@ -427,28 +451,15 @@ class GroupNode extends BaseNode {
         // Use viewport scale if available, otherwise use stored scale
         const scale = viewport?.scale || this._currentScale;
         
-        // Calculate title bar height first to know if we're in thin mode
-        let titleBarHeight = this.titleBarHeight;
-        let isThinBar = false;
-        
-        if (scale) {
-            // Check if we're in thin bar mode
-            const screenSpaceWidth = this.size[0] * scale;
-            const screenSpaceHeight = this.size[1] * scale;
-            const minScreenSizeForTitle = 80;
-            isThinBar = screenSpaceWidth < minScreenSizeForTitle || screenSpaceHeight < minScreenSizeForTitle;
-            
-            if (isThinBar) {
-                titleBarHeight = 4 / scale; // 4 screen pixels
-            } else {
-                titleBarHeight = this.screenSpaceTitleBarHeight / scale;
-            }
-        }
+        // For updateBounds, we should use the full title bar height consistently
+        // Don't adjust based on current zoom level, as the group needs to accommodate
+        // the title bar at all zoom levels
+        const titleBarHeight = this.titleBarHeight; // Always use the full 30px title bar height
         
         // Always use base padding in updateBounds
         let effectiveTopPadding = this.padding;
         
-        // Calculate bounds with extra top padding when zoomed out
+        // Calculate bounds with proper title bar space
         const newX = minX - this.padding;
         const newY = minY - effectiveTopPadding - titleBarHeight;
         const newWidth = Math.max(maxX - minX + (this.padding * 2), this.minSize[0]);
@@ -498,8 +509,8 @@ class GroupNode extends BaseNode {
             };
         } else {
             // Animate to new bounds for smooth transition
-            // console.log(`📐 Animating from: pos[${this.pos[0]}, ${this.pos[1]}] size[${this.size[0]}, ${this.size[1]}]`);
-            // console.log(`📐 Animating to: pos[${newX}, ${newY}] size[${newWidth}, ${newHeight}]`);
+            console.log(`📐 Double-click fit: Animating from: pos[${this.pos[0]}, ${this.pos[1]}] size[${this.size[0]}, ${this.size[1]}]`);
+            console.log(`📐 Double-click fit: Animating to: pos[${newX}, ${newY}] size[${newWidth}, ${newHeight}]`);
             
             // Check if bounds actually changed
             let boundsChanged = 
@@ -508,15 +519,23 @@ class GroupNode extends BaseNode {
                 Math.abs(this.size[0] - newWidth) > 0.1 ||
                 Math.abs(this.size[1] - newHeight) > 0.1;
             
+            console.log(`📐 Bounds changed: ${boundsChanged}`);
+            
             if (boundsChanged) {
                 // Check if we're being animated by alignment system
-                if (this._animPos || this._gridAnimPos || this._animSize || this._gridAnimSize) {
+                const hasActiveAnimation = this._animPos || this._gridAnimPos || this._animSize || this._gridAnimSize;
+                console.log(`📐 Has active animation: ${hasActiveAnimation}`);
+                
+                if (hasActiveAnimation) {
                     // Don't interfere with alignment animation
-                    // Just return the calculated bounds without animating
+                    console.log('📐 Skipping animation - alignment system is active');
                 } else {
                     // Start animation to new bounds
+                    console.log('📐 Starting animateToBounds...');
                     this.animateToBounds(newX, newY, newWidth, newHeight);
                 }
+            } else {
+                console.log('📐 No bounds change needed');
             }
             
             // Return target bounds
@@ -532,10 +551,14 @@ class GroupNode extends BaseNode {
      * Animate to new bounds
      */
     animateToBounds(x, y, width, height) {
+        console.log(`🎬 animateToBounds called: target pos[${x}, ${y}] size[${width}, ${height}]`);
+        console.log(`🎬 Current state: pos[${this.pos[0]}, ${this.pos[1]}] size[${this.size[0]}, ${this.size[1]}]`);
+        
         // If no animation is running, store current pos/size as animation start
         if (!this.animationStartTime) {
             this.animatedPos = [...this.pos];
             this.animatedSize = [...this.size];
+            console.log(`🎬 Starting new animation from: pos[${this.animatedPos[0]}, ${this.animatedPos[1]}] size[${this.animatedSize[0]}, ${this.animatedSize[1]}]`);
         } else {
             // If animation is already running, use current interpolated values as new start
             const now = Date.now();
@@ -653,7 +676,7 @@ class GroupNode extends BaseNode {
     /**
      * Move all child nodes by the given offset
      */
-    moveChildNodes(deltaX, deltaY) {
+    moveChildNodes(deltaX, deltaY, excludeNodeIds = null) {
         // console.log(`🚀 moveChildNodes called with delta: ${deltaX}, ${deltaY}`);
         // console.log(`   Group ${this.id} has ${this.childNodes.size} child IDs:`, Array.from(this.childNodes));
         
@@ -662,9 +685,26 @@ class GroupNode extends BaseNode {
         
         for (const node of childNodes) {
             if (node === this) continue; // Skip self
+            
+            // Skip nodes that are being moved independently (e.g., also selected and being dragged)
+            if (excludeNodeIds && excludeNodeIds.has(node.id)) {
+                continue;
+            }
+            
             // console.log(`   Moving child ${node.id} from [${node.pos[0]}, ${node.pos[1]}]`);
             node.pos[0] += deltaX;
             node.pos[1] += deltaY;
+            
+            // Also update animation positions if they exist (for smooth alignment animations)
+            if (node._animPos) {
+                node._animPos[0] += deltaX;
+                node._animPos[1] += deltaY;
+            }
+            if (node._gridAnimPos) {
+                node._gridAnimPos[0] += deltaX;
+                node._gridAnimPos[1] += deltaY;
+            }
+            
             node.markDirty();
         }
     }
@@ -846,7 +886,7 @@ class GroupNode extends BaseNode {
         
         // Debug log when state changes
         if (this._wasTooSmall !== isTooSmall) {
-            console.log(`Group ${this.id}: Thin bar mode ${isTooSmall ? 'ON' : 'OFF'} - screen size: ${screenSpaceWidth.toFixed(1)}x${screenSpaceHeight.toFixed(1)}px (scale=${viewport?.scale})`);
+           1 // console.log(`Group ${this.id}: Thin bar mode ${isTooSmall ? 'ON' : 'OFF'} - screen size: ${screenSpaceWidth.toFixed(1)}x${screenSpaceHeight.toFixed(1)}px (scale=${viewport?.scale})`);
             this._wasTooSmall = isTooSmall;
         }
         
@@ -1149,7 +1189,7 @@ class GroupNode extends BaseNode {
             }
         }
 
-        console.log(`Group ${this.id}: Syncing bounds to server - pos: [${this.pos[0].toFixed(1)}, ${this.pos[1].toFixed(1)}], size: [${this.size[0].toFixed(1)}, ${this.size[1].toFixed(1)}]`);
+        // console.log(`Group ${this.id}: Syncing bounds to server - pos: [${this.pos[0].toFixed(1)}, ${this.pos[1].toFixed(1)}], size: [${this.size[0].toFixed(1)}, ${this.size[1].toFixed(1)}]`);
 
         // Create group resize command
         const command = new window.NodeCommands.GroupNodeCommand({

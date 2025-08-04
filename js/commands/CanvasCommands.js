@@ -175,7 +175,8 @@ class NodeAlignCommand extends Command {
         const { graph } = context;
         
         this.undoData = {
-            previousPositions: {}
+            previousPositions: {},
+            previousChildPositions: {}
         };
 
         if (this.initialState) {
@@ -183,12 +184,26 @@ class NodeAlignCommand extends Command {
             this.params.nodeIds.forEach((nodeId, index) => {
                 this.undoData.previousPositions[nodeId] = this.initialState.positions[index];
             });
+            // Store child positions if provided
+            if (this.initialState.childPositions) {
+                this.undoData.previousChildPositions = { ...this.initialState.childPositions };
+            }
         } else {
             // Fallback: read current positions
             this.params.nodeIds.forEach(nodeId => {
                 const node = graph.getNodeById(nodeId);
                 if (node) {
                     this.undoData.previousPositions[nodeId] = [...node.pos];
+                    
+                    // If it's a group, store child positions
+                    if (node.type === 'container/group' && node.childNodes) {
+                        for (const childId of node.childNodes) {
+                            const child = graph.getNodeById(childId);
+                            if (child) {
+                                this.undoData.previousChildPositions[childId] = [...child.pos];
+                            }
+                        }
+                    }
                 }
             });
         }
@@ -197,7 +212,7 @@ class NodeAlignCommand extends Command {
 
     async execute(context) {
         const { graph } = context;
-        const { nodeIds, positions, axis } = this.params;
+        const { nodeIds, positions, axis, childPositions } = this.params;
 
         // Check if grid alignment animation is active
         const alignmentManager = window.app?.graphCanvas?.alignmentManager;
@@ -230,6 +245,24 @@ class NodeAlignCommand extends Command {
                     delete node._gridAnimVel;
                 }
             }
+            
+            // Apply child positions if provided
+            if (childPositions) {
+                for (const [childId, pos] of Object.entries(childPositions)) {
+                    const child = graph.getNodeById(childId);
+                    if (child && pos) {
+                        child.pos[0] = pos[0];
+                        child.pos[1] = pos[1];
+                        // Clear any animation state
+                        delete child._animPos;
+                        delete child._animVel;
+                        delete child._gridAnimPos;
+                        delete child._gridAnimVel;
+                        child.markDirty();
+                    }
+                }
+            }
+            
             // Mark canvas as dirty to ensure redraw
             if (graph.canvas) {
                 graph.canvas.dirty_canvas = true;
@@ -268,8 +301,9 @@ class NodeAlignCommand extends Command {
 
     async undo(context) {
         const { graph } = context;
-        const { previousPositions } = this.undoData;
+        const { previousPositions, previousChildPositions } = this.undoData;
         
+        // Restore positions of selected nodes
         for (const [nodeId, pos] of Object.entries(previousPositions)) {
             const node = graph.getNodeById(nodeId);
             if (node) {
@@ -278,8 +312,28 @@ class NodeAlignCommand extends Command {
                 // Clear any animation state
                 delete node._animPos;
                 delete node._animVel;
+                delete node._gridAnimPos;
+                delete node._gridAnimVel;
+                delete node._childOffsets;
             }
         }
+        
+        // Restore child positions
+        if (previousChildPositions) {
+            for (const [childId, pos] of Object.entries(previousChildPositions)) {
+                const child = graph.getNodeById(childId);
+                if (child) {
+                    child.pos = [...pos];
+                    // Clear any animation state
+                    delete child._animPos;
+                    delete child._animVel;
+                    delete child._gridAnimPos;
+                    delete child._gridAnimVel;
+                    child.markDirty();
+                }
+            }
+        }
+        
         // Mark canvas as dirty to ensure redraw
         if (graph.canvas) {
             graph.canvas.dirty_canvas = true;

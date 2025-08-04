@@ -342,7 +342,7 @@ class ImageNode extends BaseNode {
         // 4. Try resource cache (for duplicated nodes)
         if (this.properties.hash && window.app?.imageResourceCache) {
             const resource = window.app.imageResourceCache.get(this.properties.hash);
-            console.log(`🔍 Resource cache lookup for ${this.properties.hash.substring(0, 8)}:`, resource);
+            // console.log(`🔍 Resource cache lookup for ${this.properties.hash.substring(0, 8)}:`, resource);
             if (resource?.url) {
                 console.log(`📂 Found resource cache URL for ${this.properties.hash.substring(0, 8)}: ${resource.url.substring(0, 50)}...`);
                 return resource.url;
@@ -353,7 +353,7 @@ class ImageNode extends BaseNode {
         // Only log error once per node to avoid spam
         if (!this._sourceErrorLogged) {
             this._sourceErrorLogged = true;
-            console.warn(`⏳ No image source available yet for node ${this.id} (hash: ${this.properties.hash?.substring(0, 8)}...) - will retry`);
+            // console.warn(`⏳ No image source available yet for node ${this.id} (hash: ${this.properties.hash?.substring(0, 8)}...) - will retry`);
         }
         return null;
     }

@@ -1029,8 +1029,8 @@ async function initApp() {
             }
         };
 
-        // Undo/Redo Manager
-        app.undoManager = new ClientUndoManager(app.graph, app.operationPipeline);
+        // Undo/Redo Manager - Now created by CollaborativeArchitecture
+        // app.undoManager = new ClientUndoManager(app.graph, app.operationPipeline);
 
         // Load last canvas or create default
         // Use more robust initialization that doesn't strictly depend on collaborative architecture
@@ -1102,11 +1102,9 @@ if (document.readyState === 'loading') {
     initApp();
 }
 
-// Debug shortcut for database wipe (Ctrl+Shift+Delete)
-document.addEventListener('keydown', async (e) => {
-    if (e.ctrlKey && e.shiftKey && e.key === 'Delete') {
-        e.preventDefault();
-        console.log('🗑️ Database wipe shortcut triggered');
+// Database wipe functionality (callable from keyboard shortcuts system)
+window.triggerDatabaseWipe = async () => {
+    console.log('🗑️ Database wipe triggered');
         
         // Create confirmation dialog
         const backdrop = document.createElement('div');
@@ -1332,8 +1330,7 @@ document.addEventListener('keydown', async (e) => {
         
         // Focus on cancel button by default (safety)
         cancelBtn.focus();
-    }
-});
+};
 
 // Handle errors gracefully
 window.addEventListener('error', (event) => {

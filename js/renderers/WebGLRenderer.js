@@ -2742,7 +2742,7 @@ class WebGLRenderer {
         
         // Check if we're zoomed out on many small images
         if (visibleImageCount > 20 && avgScreenSize < 100) {
-            console.warn(`⚠️ Many small images visible: ${visibleImageCount} at ~${Math.round(avgScreenSize)}px each`);
+            // console.warn(`⚠️ Many small images visible: ${visibleImageCount} at ~${Math.round(avgScreenSize)}px each`);
         }
         
         // Get nodes in a wider area for preloading

@@ -207,6 +207,11 @@ class ClientUndoManager {
                 initialState.properties.push(state.properties);
             }
         });
+        
+        // Pass through childPositions if provided
+        if (finalParams.childPositions) {
+            initialState.childPositions = finalParams.childPositions;
+        }
 
         const params = {
             ...finalParams,
@@ -257,25 +262,8 @@ class ClientUndoManager {
      * Setup keyboard shortcuts
      */
     setupKeyboardShortcuts() {
-        document.addEventListener('keydown', (e) => {
-            // Cmd/Ctrl + Z for undo
-            if ((e.metaKey || e.ctrlKey) && e.key === 'z' && !e.shiftKey) {
-                e.preventDefault();
-                this.undo();
-            }
-            
-            // Cmd/Ctrl + Shift + Z for redo
-            if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key === 'z') {
-                e.preventDefault();
-                this.redo();
-            }
-            
-            // Cmd/Ctrl + Y for redo (Windows style)
-            if ((e.metaKey || e.ctrlKey) && e.key === 'y') {
-                e.preventDefault();
-                this.redo();
-            }
-        });
+        // Note: Undo/Redo shortcuts are now handled by the main keyboard shortcuts system
+        // This method is kept for backward compatibility but does nothing
     }
     
     /**

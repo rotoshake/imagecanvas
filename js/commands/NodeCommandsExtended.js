@@ -802,6 +802,11 @@ class DuplicateNodesCommand extends Command {
         } else {
             const offset = this.params.offset || [20, 20];
             
+            // Track ID mappings for parent-child relationships
+            const idMapping = new Map(); // Maps old IDs to new IDs
+            const groupsToUpdate = []; // Groups that need their childNodes updated
+            
+            // First pass: duplicate all nodes and track ID mappings
             for (const nodeId of this.params.nodeIds) {
                 const originalNode = graph.getNodeById(nodeId);
                 if (!originalNode) continue;
@@ -815,7 +820,11 @@ class DuplicateNodesCommand extends Command {
                     duplicate.pos[1] += offset[1];
                     
                     // Generate new ID
-                    duplicate.id = Date.now() + Math.floor(Math.random() * 1000);
+                    const newId = Date.now() + Math.floor(Math.random() * 1000);
+                    duplicate.id = newId;
+                    
+                    // Track the ID mapping
+                    idMapping.set(originalNode.id, newId);
                     
                     // Add stable operation reference for sync tracking
                     // Use the operation ID from params if provided
@@ -839,7 +848,24 @@ class DuplicateNodesCommand extends Command {
                     
                     createdNodes.push(duplicate);
                     this.undoData.createdNodeIds.push(duplicate.id);
+                    
+                    // If this is a group, we'll need to update its childNodes
+                    if (duplicate.type === 'container/group' && duplicate.childNodes && duplicate.childNodes.size > 0) {
+                        groupsToUpdate.push(duplicate);
+                    }
                 }
+            }
+            
+            // Second pass: update group childNodes with new IDs
+            for (const group of groupsToUpdate) {
+                const newChildNodes = new Set();
+                for (const oldChildId of group.childNodes) {
+                    const newChildId = idMapping.get(oldChildId);
+                    if (newChildId) {
+                        newChildNodes.add(newChildId);
+                    }
+                }
+                group.childNodes = newChildNodes;
             }
         }
         
@@ -882,7 +908,7 @@ class DuplicateNodesCommand extends Command {
     }
     
     serializeNode(node) {
-        return {
+        const serialized = {
             type: node.type,
             pos: [...node.pos],
             size: [...node.size],
@@ -892,6 +918,13 @@ class DuplicateNodesCommand extends Command {
             aspectRatio: node.aspectRatio,
             rotation: node.rotation
         };
+        
+        // Include childNodes for group nodes
+        if (node.type === 'container/group' && node.childNodes) {
+            serialized.childNodes = Array.from(node.childNodes);
+        }
+        
+        return serialized;
     }
     
     createNodeFromData(nodeData, context) {
@@ -1017,6 +1050,11 @@ class DuplicateNodesCommand extends Command {
             );
         }
         
+        // Initialize childNodes for group nodes
+        if (node.type === 'container/group' && nodeData.childNodes) {
+            node.childNodes = new Set(nodeData.childNodes);
+        }
+        
         return node;
     }
 }
@@ -1051,9 +1089,13 @@ class PasteNodesCommand extends Command {
     async execute(context) {
         const { graph } = context;
         
+        console.log('📋 PasteNodesCommand.execute called with origin:', this.origin);
+        
         // Check if optimistic updates are disabled - if so, skip local graph modification
         const optimisticEnabled = window.app?.operationPipeline?.stateSyncManager?.optimisticEnabled === true;
         const isRemoteOrigin = this.origin === 'remote' || this.origin === 'server';
+        
+        console.log('📋 Optimistic enabled:', optimisticEnabled, 'Is remote:', isRemoteOrigin);
         
         // Initialize undoData if not already done by prepareUndoData
         if (!this.undoData) {
@@ -1073,7 +1115,13 @@ class PasteNodesCommand extends Command {
         
         const clipboardCenter = [(minX + maxX) / 2, (minY + maxY) / 2];
         
-        for (const data of nodeData) {
+        // Track nodes by their original index for parent-child mapping
+        const nodesByIndex = new Map();
+        
+        // First pass: create all nodes
+        console.log(`📋 Creating ${nodeData.length} nodes...`);
+        nodeData.forEach((data, index) => {
+            console.log(`📋 Creating node ${index} of type ${data.type}`);
             const node = this.createNodeFromData(data, context);
             if (node) {
                 // Position relative to target position
@@ -1086,7 +1134,7 @@ class PasteNodesCommand extends Command {
                 node.pos[1] = targetPosition[1] + offsetFromCenter[1];
                 
                 // Generate new ID
-                node.id = Date.now() + Math.floor(Math.random() * 1000);
+                node.id = Date.now() + Math.floor(Math.random() * 1000) + index;
                 
                 // Mark as temporary for optimistic updates
                 if (optimisticEnabled && !isRemoteOrigin) {
@@ -1094,14 +1142,33 @@ class PasteNodesCommand extends Command {
                     node._temporaryCreatedAt = Date.now();
                 }
                 
-                // Only add to graph if optimistic updates are enabled OR this is a server/remote operation
-                if (optimisticEnabled || isRemoteOrigin) {
-                    graph.add(node);
-                }
+                // Always add to graph for paste operations
+                graph.add(node);
                 createdNodes.push(node);
+                nodesByIndex.set(index, node);
                 this.undoData.createdNodeIds.push(node.id);
             }
-        }
+        });
+        
+        // Second pass: recreate parent-child relationships
+        console.log('📋 Recreating parent-child relationships...');
+        nodeData.forEach((data, index) => {
+            console.log(`📋 Checking node ${index}:`, data._copiedChildIndices);
+            if (data._copiedChildIndices && data._copiedChildIndices.length > 0) {
+                const parentNode = nodesByIndex.get(index);
+                console.log(`📋 Found parent group ${parentNode?.id} with child indices:`, data._copiedChildIndices);
+                if (parentNode && parentNode.type === 'container/group') {
+                    // Add children to this group
+                    for (const childIndex of data._copiedChildIndices) {
+                        const childNode = nodesByIndex.get(childIndex);
+                        if (childNode) {
+                            console.log(`📋 Adding child ${childNode.id} to group ${parentNode.id}`);
+                            parentNode.addChildNode(childNode.id);
+                        }
+                    }
+                }
+            }
+        });
         
         // Select the created nodes for optimistic updates
         if (optimisticEnabled && !isRemoteOrigin && createdNodes.length > 0 && context.canvas?.selection) {
@@ -1262,6 +1329,11 @@ class PasteNodesCommand extends Command {
                 nodeData.properties.filename,
                 nodeData.properties.hash
             );
+        }
+        
+        // Initialize childNodes for group nodes
+        if (node.type === 'container/group' && nodeData.childNodes) {
+            node.childNodes = new Set(nodeData.childNodes);
         }
         
         return node;

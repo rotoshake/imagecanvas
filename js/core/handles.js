@@ -57,7 +57,11 @@ class HandleDetector {
         if (groupNode.isCollapsed) return false;
         
         const titleBarHeight = groupNode.getScreenSpaceTitleBarHeightForViewport(this.viewport);
-        const handleSize = 12;
+        
+        // Make handle size screen-space aware (constant size on screen regardless of zoom)
+        const screenSpaceHandleSize = CONFIG.HANDLES.SIZE || 12; // Use same size as regular nodes
+        const handleSize = screenSpaceHandleSize / this.viewport.scale;
+        
         const handles = [
             { x: groupNode.pos[0] + groupNode.size[0] - handleSize/2, y: groupNode.pos[1] + groupNode.size[1] - handleSize/2 }, // SE
             { x: groupNode.pos[0] + handleSize/2, y: groupNode.pos[1] + groupNode.size[1] - handleSize/2 }, // SW
@@ -108,12 +112,29 @@ class HandleDetector {
         const candidates = [...selectedNodes, ...this.getUnselectedNodes(selectedNodes)];
         
         for (const node of candidates) {
-            if (this.isNodeResizeHandle(x, y, node)) {
-                return { 
-                    type: 'single-resize', 
-                    node: node,
-                    isMultiContext: selectedNodes.length > 1 && this.selection.isSelected(node)
-                };
+            // Special handling for group nodes
+            if (node.type === 'container/group') {
+                // Convert canvas coordinates to graph coordinates for group handle detection
+                const [graphX, graphY] = this.viewport.convertOffsetToGraph(x, y);
+                const isInHandle = this.isGroupResizeHandleArea(graphX, graphY, node);
+                // console.log(`Checking group ${node.id} at canvas(${x}, ${y}) -> graph(${graphX}, ${graphY}): ${isInHandle}`);
+                if (isInHandle) {
+                    // console.log('Group resize handle detected!');
+                    return { 
+                        type: 'single-resize', 
+                        node: node,
+                        isMultiContext: selectedNodes.length > 1 && this.selection.isSelected(node)
+                    };
+                }
+            } else {
+                // Regular nodes
+                if (this.isNodeResizeHandle(x, y, node)) {
+                    return { 
+                        type: 'single-resize', 
+                        node: node,
+                        isMultiContext: selectedNodes.length > 1 && this.selection.isSelected(node)
+                    };
+                }
             }
         }
         

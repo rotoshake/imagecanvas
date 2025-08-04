@@ -20,15 +20,7 @@ class PersistenceHandler {
         // With state-based sync, the server handles all persistence
         // The server maintains the authoritative state and saves it
         
-        // We can still listen for manual save requests
-        window.addEventListener('keydown', (e) => {
-            // Ctrl/Cmd + S
-            if ((e.ctrlKey || e.metaKey) && e.key === 's') {
-                e.preventDefault();
-                
-                // Could show a notification that changes are automatically saved
-            }
-        });
+        // Note: Ctrl/Cmd + S shortcut is now handled by the main keyboard shortcuts system
         
         // The server automatically persists state changes
         // No need for client-side auto-save

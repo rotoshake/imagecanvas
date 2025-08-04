@@ -1065,7 +1065,7 @@ class GroupNodeCommand extends Command {
             group.size = [...this.params.groupSize];
         }
         
-        // Add nodes to group
+        // Add nodes to group (addChildNode will automatically remove them from any existing groups)
         this.params.nodeIds.forEach(nodeId => {
             group.addChildNode(nodeId);
         });
@@ -1090,14 +1090,10 @@ class GroupNodeCommand extends Command {
             throw new Error('Group or node not found');
         }
         
-        // Remove from previous group if exists
+        // Store previous group for undo
         const previousGroup = this.findNodeGroup(graph, node.id);
-        if (previousGroup) {
-            previousGroup.removeChildNode(node.id);
-            // Don't update bounds here - let the remove command handle it
-        }
         
-        // Add to new group
+        // Add to new group (this will automatically remove from any previous group)
         group.addChildNode(node.id);
         
         // Don't update bounds here - let the canvas handle it after all operations complete

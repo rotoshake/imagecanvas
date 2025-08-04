@@ -462,6 +462,11 @@ class BulkOperationManager {
             aspectRatio: node.aspectRatio
         };
         
+        // Preserve copy/paste metadata
+        if (node._copiedChildIndices) {
+            optimized._copiedChildIndices = node._copiedChildIndices;
+        }
+        
         // Optimize based on node type
         if (node.type === 'media/image' && node.properties.hash) {
             // For images with server URLs, send minimal data

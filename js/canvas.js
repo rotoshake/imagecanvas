@@ -20,6 +20,9 @@ class ImageCanvas {
         this.animationSystem = new AnimationSystem();
         this.alignmentManager = new AutoAlignmentManager(this);
         
+        // Keyboard shortcuts system
+        this.shortcutManager = null; // Will be initialized after config loads
+        
         // State
         this.dirty_canvas = true;
         this.dirty_nodes = new Set(); // Track which specific nodes need redrawing
@@ -66,6 +69,7 @@ class ImageCanvas {
         
         // Initialize
         this.setupEventListeners();
+        this.initializeShortcutManager();
         this.viewport.applyDPI();
         this.animationSystem.start();
         this.startRenderLoop();
@@ -193,6 +197,115 @@ class ImageCanvas {
         
         // Selection callbacks
         this.selection.addCallback(this.onSelectionChanged.bind(this));
+    }
+    
+    initializeShortcutManager() {
+        // Initialize keyboard shortcut manager if available
+        if (typeof KeyboardShortcutManager !== 'undefined') {
+            this.shortcutManager = new KeyboardShortcutManager(this);
+        } else {
+            console.warn('KeyboardShortcutManager not available - using fallback keyboard handling');
+        }
+    }
+    
+    // Helper methods to check if drag shortcuts are enabled
+    isPanDragEnabled(event) {
+        if (!this.shortcutManager) {
+            // Fallback to hardcoded behavior
+            return event.ctrlKey || event.metaKey || this.spacePressed;
+        }
+        
+        // Check if pan shortcuts match current event
+        const panShortcut = this.shortcutManager.getShortcut('NAVIGATION', 'PAN');
+        const panAltShortcut = this.shortcutManager.getShortcut('NAVIGATION', 'PAN_ALT');
+        
+        // Space key panning
+        if (panShortcut && this.spacePressed) {
+            return true;
+        }
+        
+        // Ctrl/Cmd panning (if enabled in config)
+        if (panAltShortcut && (event.ctrlKey || event.metaKey)) {
+            return true;
+        }
+        
+        return false;
+    }
+    
+    isDuplicateDragEnabled(event) {
+        if (!this.shortcutManager) {
+            // Fallback to hardcoded behavior
+            return event.altKey;
+        }
+        
+        const duplicateShortcut = this.shortcutManager.getShortcut('NODE_OPERATIONS', 'DUPLICATE_DRAG');
+        return duplicateShortcut && window.matchesShortcut && window.matchesShortcut(event, duplicateShortcut);
+    }
+    
+    isAutoAlignDragEnabled(event) {
+        if (!this.shortcutManager) {
+            // Fallback to hardcoded behavior
+            return event.shiftKey;
+        }
+        
+        const alignShortcut = this.shortcutManager.getShortcut('SELECTION', 'AUTO_ALIGN');
+        return alignShortcut && window.matchesShortcut && window.matchesShortcut(event, alignShortcut);
+    }
+    
+    isToggleSelectEnabled(event) {
+        if (!this.shortcutManager) {
+            // Fallback to hardcoded behavior
+            return event.shiftKey && !event.ctrlKey && !event.metaKey;
+        }
+        
+        const toggleShortcut = this.shortcutManager.getShortcut('SELECTION', 'TOGGLE_SELECT');
+        return toggleShortcut && event.shiftKey && !event.ctrlKey && !event.metaKey;
+    }
+    
+    isZoomModifierEnabled(event) {
+        // For now, keep zoom modifier hardcoded since it's not in the config
+        // This could be made configurable in the future
+        return event.ctrlKey || event.metaKey;
+    }
+    
+    isGridAlignEnabled(event) {
+        if (!this.shortcutManager) {
+            // Fallback to hardcoded behavior
+            return (event.ctrlKey || event.metaKey) && event.shiftKey;
+        }
+        
+        const gridAlignShortcut = this.shortcutManager.getShortcut('SELECTION', 'GRID_ALIGN');
+        return gridAlignShortcut && (event.ctrlKey || event.metaKey) && event.shiftKey;
+    }
+    
+    isRotationSnapEnabled(event) {
+        if (!this.shortcutManager) {
+            // Fallback to hardcoded behavior
+            return event.shiftKey;
+        }
+        
+        const rotationSnapShortcut = this.shortcutManager.getShortcut('SELECTION', 'ROTATION_SNAP');
+        return rotationSnapShortcut && event.shiftKey;
+    }
+    
+    isResizeAspectLockEnabled(event) {
+        if (!this.shortcutManager) {
+            // Fallback to hardcoded behavior
+            return event.shiftKey;
+        }
+        
+        const aspectLockShortcut = this.shortcutManager.getShortcut('SELECTION', 'RESIZE_ASPECT_LOCK');
+        return aspectLockShortcut && event.shiftKey;
+    }
+    
+    isResizeFromCenterEnabled(event) {
+        if (!this.shortcutManager) {
+            // Fallback to hardcoded behavior
+            return event.ctrlKey || event.metaKey;
+        }
+        
+        const resizeFromCenterShortcut = this.shortcutManager.getShortcut('SELECTION', 'RESIZE_FROM_CENTER');
+        return resizeFromCenterShortcut && (event.ctrlKey || event.metaKey);
     }
     
     startRenderLoop() {
@@ -746,7 +859,7 @@ Mode: ${this.fpsTestMode}`;
         }
         
         // GRID ALIGN MODE TRIGGER (TAKES PRECEDENCE)
-        if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.button === 0) {
+        if (this.isGridAlignEnabled(e) && e.button === 0) {
             
             if (this.alignmentManager && this.alignmentManager.startGridAlign(this.mouseState.graph)) {
                 e.preventDefault();
@@ -867,7 +980,7 @@ Mode: ${this.fpsTestMode}`;
         const mousePos = this.mouseState.canvas || [0, 0];
         
         // Check for pinch zoom (ctrl key or cmd key on Mac)
-        if (e.ctrlKey || e.metaKey) {
+        if (this.isZoomModifierEnabled(e)) {
             // Direct pinch zoom - no momentum
             const zoomScale = 1 - (e.deltaY * 0.01);
             const currentScale = this.viewport.scale;
@@ -913,9 +1026,12 @@ Mode: ${this.fpsTestMode}`;
     }
     
     onDoubleClick(e) {
+        console.log('Double-click detected at canvas:', this.mouseState.canvas);
+        
         // Check for double-click on handles first
         const rotationHandle = this.handleDetector.getRotationHandle(...this.mouseState.canvas);
         if (rotationHandle) {
+            console.log('Rotation handle double-click');
             const nodes = this.selection.getSelectedNodes();
             if (nodes.length > 0) {
                 window.app.undoManager.beginInteraction(nodes);
@@ -926,15 +1042,34 @@ Mode: ${this.fpsTestMode}`;
         }
         
         const resizeHandle = this.handleDetector.getResizeHandle(...this.mouseState.canvas);
+        console.log('Resize handle detected:', resizeHandle);
         if (resizeHandle) {
             const nodes = this.selection.getSelectedNodes();
+            console.log('Selected nodes for resize:', nodes);
             if (nodes.length > 0) {
                 // Check if all selected nodes are groups
                 const allGroups = nodes.every(n => n.type === 'container/group');
+                console.log('All groups?', allGroups);
                 
                 if (allGroups) {
+                    console.log('Double-click resize: Fitting groups to children');
+                    
+                    // Begin undo interaction for all groups
+                    window.app.undoManager.beginInteraction(nodes);
+                    
+                    // Collect resize data for all groups
+                    const nodeIds = [];
+                    const positions = [];
+                    const sizes = [];
+                    
                     // For groups, animate to fit contents (shrinking allowed)
                     for (const groupNode of nodes) {
+                        console.log(`Processing group ${groupNode.id}, current bounds:`, {
+                            pos: [...groupNode.pos],
+                            size: [...groupNode.size],
+                            childCount: groupNode.childNodes?.size || 0
+                        });
+                        
                         if (groupNode.updateBounds) {
                             // Store current bounds for undo
                             const oldBounds = {
@@ -943,26 +1078,39 @@ Mode: ${this.fpsTestMode}`;
                             };
                             
                             // Update bounds with shrinking allowed (expandOnly = false)
-                            groupNode.updateBounds(false);
+                            console.log('Calling updateBounds(false) to fit children...');
+                            const newBounds = groupNode.updateBounds(false);
+                            console.log('updateBounds returned:', newBounds);
                             
-                            // Animate to the new bounds
-                            if (groupNode.animateToBounds) {
-                                groupNode.animateToBounds(groupNode.pos[0], groupNode.pos[1], groupNode.size[0], groupNode.size[1]);
-                            }
+                            // The updateBounds method already starts the animation internally
+                            // No need to call animateToBounds again here
                             
-                            // Send resize command to sync
-                            // Use the actual new values after updateBounds
-                            if (window.app?.operationPipeline) {
-                                const command = new window.NodeCommands.GroupNodeCommand({
-                                    action: 'group_resize',
-                                    groupId: groupNode.id,
-                                    size: [...groupNode.size],
-                                    position: [...groupNode.pos]
-                                });
-                                window.app.operationPipeline.executeCommand(command);
+                            // Collect data for undo system
+                            if (newBounds) {
+                                nodeIds.push(groupNode.id);
+                                positions.push([...newBounds.pos]);
+                                sizes.push([...newBounds.size]);
+                                
+                                // Send resize command to sync using the NEW bounds
+                                if (window.app?.operationPipeline) {
+                                    const command = new window.NodeCommands.GroupNodeCommand({
+                                        action: 'group_resize',
+                                        groupId: groupNode.id,
+                                        size: [...newBounds.size],
+                                        position: [...newBounds.pos]
+                                    });
+                                    window.app.operationPipeline.executeCommand(command);
+                                }
                             }
                         }
                     }
+                    
+                    // End undo interaction with group resize data
+                    window.app.undoManager.endInteraction('group_resize', { 
+                        nodeIds, 
+                        positions,
+                        sizes
+                    });
                 } else {
                     // For non-group nodes, reset aspect ratio as before
                     window.app.undoManager.beginInteraction(nodes);
@@ -1078,7 +1226,8 @@ Mode: ${this.fpsTestMode}`;
         
         if (this.isEditingText()) return;
         
-        if (this.handleKeyboardShortcut(e)) {
+        // Use shortcut manager for all keyboard shortcuts
+        if (this.shortcutManager && this.shortcutManager.handleKeyEvent(e)) {
             e.preventDefault();
         }
     }
@@ -1137,8 +1286,8 @@ Mode: ${this.fpsTestMode}`;
     // ===================================
     
     handlePanMode(e) {
-        // Ctrl/Cmd+drag or Space+drag anywhere for canvas pan (highest priority)
-        if (e.button === 0 && (e.ctrlKey || e.metaKey || this.spacePressed)) {
+        // Check for canvas pan using configurable shortcuts
+        if (e.button === 0 && this.isPanDragEnabled(e)) {
             this.interactionState.dragging.canvas = true;
             // Update cursor to grabbing when dragging
             if (this.canvas.style) {
@@ -1147,8 +1296,8 @@ Mode: ${this.fpsTestMode}`;
             return true;
         }
         
-        // Alt+drag for node duplication
-        if (e.button === 0 && e.altKey) {
+        // Alt+drag for node duplication (if enabled in config)
+        if (e.button === 0 && this.isDuplicateDragEnabled(e)) {
             const result = this.handleDetector.getNodeAtPosition(...this.mouseState.graph, this.graph.nodes);
             if (result) {
                 const node = result.node || result;
@@ -1221,8 +1370,8 @@ Mode: ${this.fpsTestMode}`;
     }
     
     handleAutoAlign(e) {
-        // Auto-align mode: Shift + left click on empty space with multi-selection
-        if (e.shiftKey && e.button === 0 && this.selection.size() > 1 &&
+        // Auto-align mode: Shift + left click on empty space with multi-selection (if enabled in config)
+        if (this.isAutoAlignDragEnabled(e) && e.button === 0 && this.selection.size() > 1 &&
             !this.handleDetector.getNodeAtPosition(...this.mouseState.graph, this.graph.nodes)) {
             
             if (this.alignmentManager && this.alignmentManager.startAutoAlign(this.mouseState.graph)) {
@@ -1246,8 +1395,8 @@ Mode: ${this.fpsTestMode}`;
     // ===================================
     
     startNodeDrag(node, e) {
-        if (e.shiftKey && !e.ctrlKey && !e.metaKey) {
-            // Shift-click (but not Ctrl+Shift): toggle selection
+        if (this.isToggleSelectEnabled(e)) {
+            // Shift-click (but not Ctrl+Shift): toggle selection (if enabled in config)
             if (this.selection.isSelected(node)) {
                 // Remove from selection
                 this.selection.deselectNode(node);
@@ -1384,9 +1533,17 @@ Mode: ${this.fpsTestMode}`;
         this.interactionState.selecting.active = true;
         this.interactionState.selecting.startGraph = [...this.mouseState.graph];
         
-        this.selection.startSelection(this.mouseState.graph);
+        // Pass modifier keys to selection manager
+        const modifiers = {
+            shiftKey: e.shiftKey,
+            ctrlKey: e.ctrlKey || e.metaKey,
+            altKey: e.altKey
+        };
         
-        if (!e.shiftKey) {
+        this.selection.startSelection(this.mouseState.graph, modifiers);
+        
+        // Only clear selection for replace mode (no modifiers)
+        if (!e.shiftKey && !e.ctrlKey && !e.metaKey) {
             this.selection.clear();
         }
     }
@@ -1510,6 +1667,9 @@ Mode: ${this.fpsTestMode}`;
         const movedGroups = new Map(); // Track group movements for child updates
         const draggedNodes = [];
         
+        // Build a set of dragged node IDs for quick lookup
+        const draggedNodeIds = new Set(this.interactionState.dragging.offsets.keys());
+        
         // First update positions
         for (const [nodeId, offset] of this.interactionState.dragging.offsets) {
             const node = this.graph.getNodeById(nodeId);
@@ -1539,9 +1699,10 @@ Mode: ${this.fpsTestMode}`;
         }
         
         // Move child nodes of any groups that were moved
+        // Pass the set of dragged node IDs so children that are also being dragged are skipped
         for (const [groupNode, delta] of movedGroups) {
             if (groupNode.moveChildNodes) {
-                groupNode.moveChildNodes(delta.deltaX, delta.deltaY);
+                groupNode.moveChildNodes(delta.deltaX, delta.deltaY, draggedNodeIds);
             }
         }
         
@@ -1565,9 +1726,9 @@ Mode: ${this.fpsTestMode}`;
         const mouseY = this.mouseState.graph[1];
         
         if (this.interactionState.resizing.type === 'single-resize') {
-            this.updateSingleResize(mouseX, mouseY, e.shiftKey, e.ctrlKey || e.metaKey);
+            this.updateSingleResize(mouseX, mouseY, this.isResizeAspectLockEnabled(e), this.isResizeFromCenterEnabled(e));
         } else if (this.interactionState.resizing.type === 'multi-resize') {
-            this.updateMultiResize(mouseX, mouseY, e.shiftKey, e.ctrlKey || e.metaKey);
+            this.updateMultiResize(mouseX, mouseY, this.isResizeAspectLockEnabled(e), this.isResizeFromCenterEnabled(e));
         }
     }
     
@@ -1883,8 +2044,8 @@ Mode: ${this.fpsTestMode}`;
                     
                     let newRotation = nodeInitial.rotation + deltaDegrees;
                     
-                    // Snap to absolute angles when Shift is held
-                    if (e.shiftKey) {
+                    // Snap to absolute angles when Shift is held (if enabled in config)
+                    if (this.isRotationSnapEnabled(e)) {
                         const snapAngle = CONFIG.HANDLES.ROTATION_SNAP_ANGLE;
                         newRotation = Math.round(newRotation / snapAngle) * snapAngle;
                     }
@@ -1895,8 +2056,8 @@ Mode: ${this.fpsTestMode}`;
                 // Single node: original behavior
                 let newRotation = initialRotation + deltaDegrees;
                 
-                // Snap to absolute angles when Shift is held
-                if (e.shiftKey) {
+                // Snap to absolute angles when Shift is held (if enabled in config)
+                if (this.isRotationSnapEnabled(e)) {
                     const snapAngle = CONFIG.HANDLES.ROTATION_SNAP_ANGLE;
                     newRotation = Math.round(newRotation / snapAngle) * snapAngle;
                 }
@@ -1909,8 +2070,8 @@ Mode: ${this.fpsTestMode}`;
         } else {
             // Multi-rotation: rotate around group center
             
-            // Snap the delta angle when Shift is held (for orbital rotation)
-            if (e.shiftKey) {
+            // Snap the delta angle when Shift is held (for orbital rotation, if enabled in config)
+            if (this.isRotationSnapEnabled(e)) {
                 const snapAngle = CONFIG.HANDLES.ROTATION_SNAP_ANGLE;
                 const snappedDeltaDegrees = Math.round(deltaDegrees / snapAngle) * snapAngle;
                 deltaAngle = snappedDeltaDegrees * Math.PI / 180;
@@ -2516,272 +2677,6 @@ Mode: ${this.fpsTestMode}`;
     // KEYBOARD SHORTCUTS
     // ===================================
     
-    handleKeyboardShortcut(e) {
-        // Don't handle shortcuts when typing in input fields
-        if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') {
-            return false;
-        }
-        
-        // Check gallery mode first - it handles its own keyboard events
-        if (this.galleryViewManager && this.galleryViewManager.active) {
-            // Gallery mode handles its own events through its event listener
-            return false;
-        }
-        
-        const key = e.key.toLowerCase();
-        const ctrl = e.ctrlKey || e.metaKey;
-        const shift = e.shiftKey;
-        const alt = e.altKey;
-        
-        // FPS Test Mode shortcuts (Ctrl+Shift+F, then number)
-        if (ctrl && shift && key === 'f') {
-            console.log('🧪 FPS Test Menu triggered');
-            this.showFPSTestMenu();
-            return true;
-        }
-        
-        // Save
-        if (ctrl && key === 's') {
-            if (window.canvasNavigator && !window.canvasNavigator.currentCanvasId && this.graph.nodes.length > 0) {
-                // No current canvas but we have content - create one automatically
-                const timestamp = new Date().toLocaleString();
-                window.canvasNavigator.saveAsNewCanvas(`Untitled Canvas - ${timestamp}`, true);
-                if (this.showNotification) {
-                    this.showNotification({
-                        type: 'success',
-                        message: 'Canvas created and saved'
-                    });
-                }
-            } else if (this.collaborativeManager && this.collaborativeManager.save) {
-                this.collaborativeManager.save();
-            } else {
-                // Save to localStorage for single-user mode
-                this.stateManager.saveState();
-            }
-            return true;
-        }
-        
-        // Undo/Redo - Let ClientUndoManager handle these shortcuts
-        // Return true to prevent default handling and avoid double processing
-        if (ctrl && key === 'z') {
-            // Undo/Redo handled by ClientUndoManager
-            return true;
-        }
-        if (ctrl && shift && key === 'z') {
-            // Redo handled by ClientUndoManager
-            return true;
-        }
-        if (ctrl && key === 'y') {
-            // Redo (Windows style) handled by ClientUndoManager
-            return true;
-        }
-        
-        // Copy/Cut/Paste
-        if (ctrl && key === 'c') {
-            this.copySelected();
-            return true;
-        }
-        if (ctrl && key === 'x') {
-            this.cutSelected();
-            return true;
-        }
-        if (ctrl && key === 'v') {
-            this.paste();
-            return true;
-        }
-        if (ctrl && key === 'd') {
-            this.duplicateSelected();
-            return true;
-        }
-        
-        // Group selected nodes (or create empty group)
-        if (key === 'g' && !ctrl && !shift && !alt) {
-            this.createGroupFromSelected();
-            return true;
-        }
-        
-        // Selection
-        if (ctrl && key === 'a') {
-            this.selectAll();
-            return true;
-        }
-        
-        // Delete
-        if (key === 'delete' || key === 'backspace') {
-            this.deleteSelected();
-            return true;
-        }
-        
-        // View controls
-        if (key === 'f') {
-            this.zoomToFit();
-            return true;
-        }
-        if (key === 'h') {
-            this.resetView();
-            return true;
-        }
-        
-        // Force sync with server
-        if (key === 'r' && !ctrl && !shift && !alt) {
-            // Only allow sync if we have a network connection
-            if (window.app?.stateSyncManager?.network) {
-                console.log('🔄 Manual sync triggered with R key');
-                
-                // Show notification that sync is starting
-                if (window.unifiedNotifications) {
-                    window.unifiedNotifications.info('Syncing with server...', {
-                        id: 'manual-sync',
-                        duration: 2000
-                    });
-                }
-                
-                // Request full sync from server (true = manual sync)
-                window.app.stateSyncManager.requestFullSync(true);
-                
-                // The sync completion will be handled by the existing handleFullStateSync method
-                // which will update the notification when done
-                
-                return true;
-            } else {
-                console.log('⚠️ Cannot sync - no network connection');
-                if (window.unifiedNotifications) {
-                    window.unifiedNotifications.warning('Cannot sync - not connected to server', {
-                        duration: 3000
-                    });
-                }
-            }
-            return true;
-        }
-        
-        // Zoom controls
-        if (key === '=' || key === '+') {
-            this.keyboardZoom(2.0);
-            return true;
-        }
-        if (key === '-') {
-            this.keyboardZoom(0.5);
-            return true;
-        }
-        
-        // Layer controls
-        if (key === '[') {
-            if (shift) {
-                this.sendSelectedToBack();
-            } else {
-                this.moveSelectedDown();
-            }
-            return true;
-        }
-        if (key === ']') {
-            if (shift) {
-                this.bringSelectedToFront();
-            } else {
-                this.moveSelectedUp();
-            }
-            return true;
-        }
-        
-        // Create new text node
-        if (key === 't' && !shift) {
-            this.createTextNodeAt(this.mouseState.graph);
-            return true;
-        }
-        
-        // Create new shape node (plugin test)
-        if (key === 's' && !ctrl && !shift && !alt) {
-            if (window.app?.nodeCreationMenu) {
-                window.app.nodeCreationMenu.createNodeAtCenter('shape');
-            }
-            return true;
-        }
-        
-        // Toggle properties panel
-        if (key === 'p' && !ctrl && !shift && !alt) {
-            if (window.propertiesInspector) {
-                window.propertiesInspector.toggle();
-            }
-            return true;
-        }
-        
-        // Toggle color correction panel
-        if (key === 'c' && !ctrl && !shift && !alt) {
-            if (window.colorCorrectionPanel) {
-                window.colorCorrectionPanel.toggle();
-            }
-            return true;
-        }
-        
-        // Toggle user profile panel
-        if (key === 'u' && !ctrl && !shift && !alt) {
-            if (window.app?.userProfilePanel) {
-                window.app.userProfilePanel.toggle();
-            }
-            return true;
-        }
-        
-        // Toggle title visibility
-        if (key === 't' && shift) {
-            this.toggleTitleVisibility();
-            return true;
-        }
-        
-        // Alignment shortcuts
-        if (key === '1') {
-            this.alignSelected('horizontal');
-            return true;
-        }
-        if (key === '2') {
-            this.alignSelected('vertical');
-            return true;
-        }
-        
-        // Arrow key navigation
-        if (CONFIG.NAVIGATION.ARROW_KEY_ENABLED && !ctrl && !alt) {
-            const directionMap = {
-                'arrowup': 'up',
-                'arrowdown': 'down',
-                'arrowleft': 'left',
-                'arrowright': 'right'
-            };
-            
-            const direction = directionMap[key];
-            if (direction) {
-                const selectedNodes = this.selection.getSelectedNodes();
-                let fromNode = null;
-                
-                if (selectedNodes.length > 0) {
-                    // Use the first selected node as reference
-                    fromNode = selectedNodes[0];
-                } else {
-                    // No nodes selected - start with the node closest to viewport center
-                    fromNode = this.findNodeClosestToViewportCenter();
-                    if (fromNode) {
-                        // Select this node first
-                        this.selection.selectNode(fromNode, true);
-                        this.centerOnSelection();
-                        return true;
-                    }
-                }
-                
-                if (fromNode) {
-                    const targetNode = this.findNodeInDirection(fromNode, direction);
-                    
-                    if (targetNode) {
-                        // Clear current selection
-                        this.selection.clear();
-                        // Select the target node
-                        this.selection.selectNode(targetNode, true);
-                        // Center on the node without zooming
-                        this.centerOnSelection();
-                    }
-                }
-                return true;
-            }
-        }
-        
-        return false;
-    }
     
     // ===================================
     // UTILITY METHODS
@@ -2789,20 +2684,58 @@ Mode: ${this.fpsTestMode}`;
     
     copySelected() {
         const selected = this.selection.getSelectedNodes();
-        if (selected.length === 0) return;
-        
-        // Serialize nodes and optimize if BulkOperationManager is available
-        if (window.app?.bulkOperationManager) {
-            this.clipboard = selected.map(node => {
-                const serialized = this.serializeNode(node);
-                // Optimize large media data
-                return window.app.bulkOperationManager.optimizeNodeData(serialized);
-            });
-        } else {
-            this.clipboard = selected.map(node => this.serializeNode(node));
+        if (selected.length === 0) {
+            console.log('⚠️ No nodes selected to copy');
+            return;
         }
         
-        console.log(`📋 Copied ${selected.length} nodes to clipboard`);
+        // Build a set of selected node IDs for quick lookup
+        const selectedIds = new Set(selected.map(n => n.id));
+        
+        // Serialize nodes and track parent-child relationships
+        const serializedNodes = [];
+        const parentChildMap = new Map(); // Maps group node index to child node indices
+        
+        selected.forEach((node, index) => {
+            const serialized = this.serializeNode(node);
+            
+            // For group nodes, track which selected children belong to this group
+            if (node.type === 'container/group' && node.childNodes && node.childNodes.size > 0) {
+                const childIndices = [];
+                
+                // Check each child to see if it's also being copied
+                for (const childId of node.childNodes) {
+                    if (selectedIds.has(childId)) {
+                        // Find the index of this child in the selected array
+                        const childIndex = selected.findIndex(n => n.id === childId);
+                        if (childIndex !== -1) {
+                            childIndices.push(childIndex);
+                        }
+                    }
+                }
+                
+                if (childIndices.length > 0) {
+                    parentChildMap.set(index, childIndices);
+                    // Store the child relationships in the serialized data
+                    serialized._copiedChildIndices = childIndices;
+                    console.log(`📋 Group ${node.id} has ${childIndices.length} children being copied:`, childIndices);
+                }
+            }
+            
+            serializedNodes.push(serialized);
+        });
+        
+        // Store the serialized nodes with relationship data
+        if (window.app?.bulkOperationManager) {
+            this.clipboard = serializedNodes.map(node => {
+                // Optimize large media data
+                return window.app.bulkOperationManager.optimizeNodeData(node);
+            });
+        } else {
+            this.clipboard = serializedNodes;
+        }
+        
+        console.log(`📋 Copied ${selected.length} nodes to clipboard, clipboard now has ${this.clipboard.length} items`);
         
         // Log node types for debugging
         const nodeTypes = {};
@@ -2827,7 +2760,10 @@ Mode: ${this.fpsTestMode}`;
     }
     
     async paste() {
-        if (!this.clipboard || this.clipboard.length === 0) return;
+        if (!this.clipboard || this.clipboard.length === 0) {
+            console.log('⚠️ Clipboard is empty, nothing to paste');
+            return;
+        }
         
         console.log(`📋 Starting paste operation with ${this.clipboard.length} nodes`);
         
@@ -2857,6 +2793,7 @@ Mode: ${this.fpsTestMode}`;
                         });
                     }
                     
+                    console.log('📋 Pasting nodes with data:', this.clipboard);
                     result = await window.app.operationPipeline.execute('node_paste', {
                         nodeData: this.clipboard,
                         targetPosition: mouseGraphPos
@@ -2870,6 +2807,7 @@ Mode: ${this.fpsTestMode}`;
                 
                 
                 if (result && result.result && result.result.nodes) {
+                    console.log(`📋 Paste operation result:`, result);
                     console.log(`📋 Paste operation completed: ${result.result.nodes.length} nodes created`);
                     
                     // Clear selection first
@@ -3816,10 +3754,11 @@ Mode: ${this.fpsTestMode}`;
             rotation: node.rotation
         };
         
-        // For group nodes, clear childNodes when copying
-        // The copied group should start empty
+        // For group nodes, we'll handle childNodes separately during paste
+        // to ensure proper parent-child relationships with new IDs
         if (node.type === 'container/group' && serialized.properties) {
             serialized.properties = { ...serialized.properties };
+            // Keep childNodes empty - relationships will be recreated during paste
             serialized.properties.childNodes = [];
         }
         
