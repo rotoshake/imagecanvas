@@ -308,35 +308,45 @@ class ImageCanvas {
             // Update general animations (integrated for 120 FPS performance)
             const hasActiveAnimations = this.animationSystem && this.animationSystem.updateAnimations(deltaTime);
             
-            // Check if any videos need updates
+            // Check if any videos need updates - early exit if no video nodes exist
             let hasVideoUpdates = false;
             let videoOnlyUpdate = false;
             
-            if (this.dirty_nodes.size > 0) {
-                // Check if we only have video node updates
-                videoOnlyUpdate = true;
-                for (const nodeId of this.dirty_nodes) {
-                    const node = this.graph.getNodeById(nodeId);
-                    if (!node || node.type !== 'media/video') {
-                        videoOnlyUpdate = false;
-                        break;
-                    }
-                    if (node.video && !node.video.paused) {
-                        hasVideoUpdates = true;
-                    }
-                }
+            // Check whether graph has video nodes - recheck periodically or when nodes change
+            // Invalidate cache if node count changed
+            const currentNodeCount = this.graph.nodes ? this.graph.nodes.length : 0;
+            if (this._hasVideoNodes === undefined || this._lastNodeCount !== currentNodeCount) {
+                this._hasVideoNodes = this.graph.nodes && this.graph.nodes.some(n => n.type === 'media/video');
+                this._lastNodeCount = currentNodeCount;
             }
             
-            // Also check for any playing videos that might not be in dirty_nodes yet
-            if (!hasVideoUpdates && this.graph.nodes) {
-                hasVideoUpdates = this.graph.nodes.some(node => 
-                    node.type === 'media/video' && node.video && !node.video.paused
-                );
+            if (this._hasVideoNodes) {
+                if (this.dirty_nodes.size > 0) {
+                    // Check if we only have video node updates
+                    videoOnlyUpdate = true;
+                    for (const nodeId of this.dirty_nodes) {
+                        const node = this.graph.getNodeById(nodeId);
+                        if (!node || node.type !== 'media/video') {
+                            videoOnlyUpdate = false;
+                            break;
+                        }
+                        if (node.video && !node.video.paused) {
+                            hasVideoUpdates = true;
+                        }
+                    }
+                }
+                
+                // Also check for any playing videos that might not be in dirty_nodes yet
+                if (!hasVideoUpdates && this.graph.nodes) {
+                    hasVideoUpdates = this.graph.nodes.some(node => 
+                        node.type === 'media/video' && node.video && !node.video.paused
+                    );
+                }
             }
             
             const hasActiveAlignment = this.alignmentManager && this.alignmentManager.isAnimating();
             const hasActiveViewportAnimation = this.viewport && this.viewport.isAnimating;
-            const hasGroupAnimations = this._animatingGroups.size > 0;
+            const hasGroupAnimations = this._animatingGroups && this._animatingGroups.size > 0;
             
             if (hasVideoUpdates) {
                 shouldDraw = true;
@@ -2497,7 +2507,9 @@ Mode: ${this.fpsTestMode}`;
     isInteracting() {
         return this.interactionState.dragging.node ||
                this.interactionState.resizing.active ||
-               this.interactionState.rotating.active;
+               this.interactionState.rotating.active ||
+               this.interactionState.dragging.canvas ||
+               this.viewport?.isAnimating;
     }
     
     // ===================================

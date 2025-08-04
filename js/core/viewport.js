@@ -264,8 +264,9 @@ class ViewportManager {
         };
     }
     
-    isNodeVisible(node, margin = 0) {
-        const viewport = this.getViewport();
+    isNodeVisible(node, margin = 0, viewport = null) {
+        // Allow passing in viewport to avoid recalculation
+        viewport = viewport || this.getViewport();
         
         // Use animated position if available, otherwise use actual position
         const pos = this.getNodePosition(node);
@@ -332,7 +333,26 @@ class ViewportManager {
     }
     
     getVisibleNodes(nodes, margin = CONFIG.PERFORMANCE.VISIBILITY_MARGIN) {
-        return nodes.filter(node => this.isNodeVisible(node, margin));
+        // Optimize by calculating viewport once for all nodes
+        const viewport = this.getViewport();
+        const vx = viewport.x - margin;
+        const vy = viewport.y - margin;
+        const vw = viewport.width + margin * 2;
+        const vh = viewport.height + margin * 2;
+        
+        return nodes.filter(node => {
+            // Fast path for non-rotated nodes (most common case)
+            if (!node.rotation || node.rotation === 0) {
+                const pos = this.getNodePosition(node);
+                return !(pos[0] + node.size[0] < vx ||
+                        pos[0] > vx + vw ||
+                        pos[1] + node.size[1] < vy ||
+                        pos[1] > vy + vh);
+            }
+            
+            // Slower path for rotated nodes
+            return this.isNodeVisible(node, margin, viewport);
+        });
     }
     
     getScreenBounds() {

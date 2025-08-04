@@ -23,7 +23,7 @@ class TextureLODManager {
         // Configuration
         this.maxTextureMemory = options.maxMemory || 512 * 1024 * 1024; // 512MB default
         this.maxTextures = options.maxTextures || 500;
-        this.uploadBudgetMs = options.uploadBudget || 2; // 2ms per frame
+        this.uploadBudgetMs = options.uploadBudget || 1; // 1ms per frame (was 2ms) - more conservative
         this.canvas = options.canvas; // Canvas reference for viewport state checks
         this.maxFullResTextures = 10; // Allow more full-res textures since we have 1.5GB limit
         this.qualityMultiplier = options.qualityMultiplier || 1.2; // Adjustable quality vs performance
@@ -240,8 +240,11 @@ class TextureLODManager {
         // Process uploads in parallel but respect frame budget
         const uploads = [];
         
+        // Reduce budget during any kind of animation or interaction
+        const budgetMs = this.canvas?.isInteracting ? 0.5 : this.uploadBudgetMs;
+        
         while (this.uploadQueue.length > 0 && 
-               performance.now() - startTime < this.uploadBudgetMs) {
+               performance.now() - startTime < budgetMs) {
             const upload = this.uploadQueue.shift();
             if (!upload) break;
             
@@ -263,7 +266,8 @@ class TextureLODManager {
             uploaded++;
             
             // Limit concurrent uploads to prevent too many ImageBitmap creations
-            if (uploads.length >= 3) {
+            // Reduce to 1 upload at a time to minimize blocking
+            if (uploads.length >= 1) {
                 break;
             }
         }
@@ -310,7 +314,7 @@ class TextureLODManager {
                 // ALWAYS use createImageBitmap for guaranteed decoded image
                 // Never fall back to raw image to avoid synchronous decode
                 try {
-                    decodedSource = await createImageBitmap(source);
+                    decodedSource = await createImageBitmap(source, { imageOrientation: 'from-image' });
                 } catch (error) {
                     console.error('Failed to create ImageBitmap, skipping texture upload:', error);
                     this.activeUploads.delete(queueKey);
@@ -322,6 +326,26 @@ class TextureLODManager {
             // Create texture
             const texture = gl.createTexture();
             gl.bindTexture(gl.TEXTURE_2D, texture);
+            
+            // Check once more if we should defer before the expensive texImage2D call
+            if (this.canvas?.viewport?.isAnimating) {
+                // Abort upload and put back in queue
+                gl.deleteTexture(texture);
+                this.uploadQueue.unshift({ hash, lodSize, source: decodedSource, priority: upload.priority });
+                this.activeUploads.delete(queueKey);
+                // Clean up ImageBitmap if we created one
+                if (decodedSource !== source && decodedSource instanceof ImageBitmap) {
+                    decodedSource.close();
+                }
+                setTimeout(() => this.processUploads(), 100);
+                return;
+            }
+            
+            // Check texture size and warn if it's very large
+            const textureSize = (decodedSource.width || source.width) * (decodedSource.height || source.height) * 4;
+            if (textureSize > 16 * 1024 * 1024) { // > 16MB
+                console.warn(`⚠️ Large texture upload: ${(textureSize / 1024 / 1024).toFixed(1)}MB may cause frame drops`);
+            }
             
             // Upload texture data with decoded source
             gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, decodedSource);

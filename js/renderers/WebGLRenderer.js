@@ -1211,21 +1211,50 @@ class WebGLRenderer {
         this._hasCleared = true;
         this._willDrawWebGL = false;
         
-        // Process texture uploads within budget (non-blocking)
+        // Schedule texture uploads using requestIdleCallback for better performance
         if (this.lodManager && !this._processingUploads) {
             this._processingUploads = true;
-            this.lodManager.processUploads().then(uploaded => {
-                this.stats.texturesUploaded = uploaded;
-                this._processingUploads = false;
-                // Request redraw if textures were uploaded
-                // But only if we're not already in a render loop
-                if (uploaded > 0 && this.canvas && !this.canvas.dirty_canvas) {
-                    this.canvas.dirty_canvas = true;
+            
+            // Use requestIdleCallback if available, otherwise fall back to setTimeout
+            const scheduleUpload = () => {
+                if ('requestIdleCallback' in window) {
+                    requestIdleCallback((deadline) => {
+                        // Only process uploads if we have idle time
+                        if (deadline.timeRemaining() > 2) {
+                            this.lodManager.processUploads().then(uploaded => {
+                                this.stats.texturesUploaded = uploaded;
+                                this._processingUploads = false;
+                                // Request redraw if textures were uploaded
+                                if (uploaded > 0 && this.canvas && !this.canvas.dirty_canvas) {
+                                    this.canvas.dirty_canvas = true;
+                                }
+                            }).catch(error => {
+                                console.error('Error processing texture uploads:', error);
+                                this._processingUploads = false;
+                            });
+                        } else {
+                            // Not enough idle time, reschedule
+                            this._processingUploads = false;
+                        }
+                    }, { timeout: 100 });
+                } else {
+                    // Fallback for browsers without requestIdleCallback
+                    setTimeout(() => {
+                        this.lodManager.processUploads().then(uploaded => {
+                            this.stats.texturesUploaded = uploaded;
+                            this._processingUploads = false;
+                            if (uploaded > 0 && this.canvas && !this.canvas.dirty_canvas) {
+                                this.canvas.dirty_canvas = true;
+                            }
+                        }).catch(error => {
+                            console.error('Error processing texture uploads:', error);
+                            this._processingUploads = false;
+                        });
+                    }, 16); // Next frame
                 }
-            }).catch(error => {
-                console.error('Error processing texture uploads:', error);
-                this._processingUploads = false;
-            });
+            };
+            
+            scheduleUpload();
         }
         
         // Process atlas packing within budget
@@ -1554,12 +1583,12 @@ class WebGLRenderer {
         this.gl.activeTexture(this.gl.TEXTURE0);
         this.gl.bindTexture(this.gl.TEXTURE_2D, null);
         
-        // Periodically clean up textures for non-visible nodes (every 60 frames)
-        if (this.framesSinceInit % 60 === 0 && this.lodManager && this.canvas) {
-            // Get visible nodes from viewport
+        // Periodically clean up textures for non-visible nodes (every 300 frames = 5 seconds)
+        if (this.framesSinceInit % 300 === 0 && this.lodManager && this.canvas) {
+            // Get visible nodes from viewport with larger margin to keep nearby nodes loaded
             const visibleNodes = this.canvas.viewport.getVisibleNodes(
                 this.canvas.graph.nodes,
-                200 // margin
+                800 // much larger margin to keep nearby nodes loaded
             );
             
             // Clear high zoom tracking and rebuild
@@ -1586,9 +1615,9 @@ class WebGLRenderer {
             }
             
             // Unload high-res textures for non-visible nodes
-            // Use aggressive mode if memory is getting high
-            const memoryPressure = this.lodManager.totalMemory > 350 * 1024 * 1024; // > 350MB
-            this.lodManager.unloadNonVisibleHighRes(visibleHashes, 256, memoryPressure);
+            // Use aggressive mode only if memory is really high
+            const memoryPressure = this.lodManager.totalMemory > 600 * 1024 * 1024; // > 600MB (was 350MB)
+            this.lodManager.unloadNonVisibleHighRes(visibleHashes, 512, memoryPressure); // Keep up to 512px (was 256px)
             
             // Debug: Log cache contents when memory is high
             if (this.lodManager.totalMemory > 300 * 1024 * 1024) { // > 300MB
@@ -1752,26 +1781,9 @@ class WebGLRenderer {
                         
                         // Just render with existing texture, skip all LOD calculations
                         return this._renderWithTexture(ctx2d, node, texture);
-                    } else {
-                        // No texture available yet - need to request one!
-                        const now = Date.now();
-                        const lastRequest = this.lastTextureRequest.get(nodeId);
-                        const optimalLOD = this.lodManager.getOptimalLOD(screenWidth, screenHeight);
-                        
-                        if (!lastRequest || 
-                            lastRequest.hash !== node.properties.hash ||
-                            lastRequest.lodSize !== optimalLOD ||
-                            now - lastRequest.timestamp > this.textureRequestCooldown) {
-                            
-                            this.lastTextureRequest.set(nodeId, {
-                                hash: node.properties.hash,
-                                lodSize: optimalLOD,
-                                timestamp: now
-                            });
-                            
-                            this._requestTexture(node, screenWidth, screenHeight);
-                        }
                     }
+                    // No texture available in early exit path - don't request one
+                    // This prevents the evict->request cycle for unchanged nodes
                 }
                 
                 // No texture available, fall back to Canvas2D

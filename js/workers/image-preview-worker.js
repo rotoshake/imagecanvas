@@ -22,7 +22,7 @@ class WorkerImageProcessor {
         try {
             // Create ImageBitmap from the buffer
             const blob = new Blob([fileBuffer], { type: mimeType });
-            const bitmap = await createImageBitmap(blob);
+            const bitmap = await createImageBitmap(blob, { imageOrientation: 'from-image' });
             
             const result = {
                 fileName,
@@ -42,7 +42,8 @@ class WorkerImageProcessor {
                     const resizedBitmap = await createImageBitmap(bitmap, {
                         resizeWidth: previewWidth,
                         resizeHeight: previewHeight,
-                        resizeQuality: 'medium'
+                        resizeQuality: 'medium',
+                        imageOrientation: 'from-image'
                     });
                     
                     // Convert to blob using OffscreenCanvas
@@ -83,7 +84,7 @@ class WorkerImageProcessor {
         try {
             // For dimension-only reading, we can use the same approach but skip preview generation
             const blob = new Blob([fileBuffer], { type: mimeType });
-            const bitmap = await createImageBitmap(blob);
+            const bitmap = await createImageBitmap(blob, { imageOrientation: 'from-image' });
             
             const result = {
                 fileName,

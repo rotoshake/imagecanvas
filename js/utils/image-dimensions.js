@@ -16,7 +16,7 @@ class ImageDimensionReader {
         // For browsers that support createImageBitmap (fastest method)
         if (typeof createImageBitmap !== 'undefined') {
             try {
-                const bitmap = await createImageBitmap(file);
+                const bitmap = await createImageBitmap(file, { imageOrientation: 'from-image' });
                 const dimensions = {
                     width: bitmap.width,
                     height: bitmap.height
@@ -207,7 +207,7 @@ class ImageDimensionReader {
         try {
             // Use createImageBitmap for fastest loading (supports partial data)
             if (typeof createImageBitmap !== 'undefined') {
-                bitmap = await createImageBitmap(file);
+                bitmap = await createImageBitmap(file, { imageOrientation: 'from-image' });
                 dimensions = {
                     width: bitmap.width,
                     height: bitmap.height
@@ -233,7 +233,8 @@ class ImageDimensionReader {
                         resizedBitmap = await createImageBitmap(bitmap, {
                             resizeWidth: previewWidth,
                             resizeHeight: previewHeight,
-                            resizeQuality: 'medium'
+                            resizeQuality: 'medium',
+                            imageOrientation: 'from-image'
                         });
                     } else {
                         // Fallback: canvas-based resize
@@ -282,7 +283,7 @@ class ImageDimensionReader {
      */
     static async createBitmapFromFile(file) {
         if (typeof createImageBitmap !== 'undefined') {
-            return await createImageBitmap(file);
+            return await createImageBitmap(file, { imageOrientation: 'from-image' });
         }
         
         // Ultimate fallback: use Image element

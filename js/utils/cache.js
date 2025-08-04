@@ -153,6 +153,11 @@ class ThumbnailCache {
         // Initialize persistent storage
         this._initializePersistentStorage();
         
+        // Performance optimization: cache visible node tracking
+        this._visibleNodeCache = null;
+        this._lastViewportUpdate = 0;
+        this._viewportCacheTimeout = 100; // ms - only update every 100ms max
+        
         console.log(`🧹 ThumbnailCache initialized with ${this.maxHashEntries} entries / ${(this.maxMemoryBytes / (1024 * 1024)).toFixed(0)}MB limit`);
     }
     
@@ -340,20 +345,23 @@ class ThumbnailCache {
         
         if (!needCountEviction && !needMemoryEviction) return;
         
+        // Skip expensive visible node detection if we're not under extreme pressure
+        const underExtremePressure = this.currentMemoryUsage > this.maxMemoryBytes * 1.2;
+        
         // Calculate targets
         const entriesToRemove = needCountEviction ? this.cache.size - this.maxHashEntries : 0;
         const memoryToFree = needMemoryEviction ? this.currentMemoryUsage - (this.maxMemoryBytes * 0.9) : 0; // Free to 90% of limit
         
-        // Get currently visible nodes to protect them from eviction
-        const visibleHashes = this._getVisibleNodeHashes();
+        // Get currently visible nodes to protect them from eviction - only if under extreme pressure
+        const visibleHashes = underExtremePressure ? this._getVisibleNodeHashes() : new Set();
         
         // Sort entries by priority: visible nodes last (lowest priority for eviction)
         const sortedEntries = Array.from(this.accessOrder.entries())
             .map(([hash, accessTime]) => ({
                 hash,
                 accessTime,
-                isVisible: visibleHashes.has(hash),
-                priority: visibleHashes.has(hash) ? 1000000 + accessTime : accessTime // Visible nodes get high priority
+                isVisible: underExtremePressure ? visibleHashes.has(hash) : false,
+                priority: (underExtremePressure && visibleHashes.has(hash)) ? 1000000 + accessTime : accessTime // Visible nodes get high priority
             }))
             .sort((a, b) => a.priority - b.priority); // Lowest priority first (oldest non-visible)
         
@@ -397,6 +405,13 @@ class ThumbnailCache {
     
     // Get hashes of currently visible nodes
     _getVisibleNodeHashes() {
+        // Use cached result if still valid
+        const now = Date.now();
+        if (this._visibleNodeCache && 
+            (now - this._lastViewportUpdate) < this._viewportCacheTimeout) {
+            return this._visibleNodeCache;
+        }
+        
         const visibleHashes = new Set();
         
         try {
@@ -430,6 +445,10 @@ class ThumbnailCache {
         } catch (error) {
             
         }
+        
+        // Cache the result
+        this._visibleNodeCache = visibleHashes;
+        this._lastViewportUpdate = now;
         
         return visibleHashes;
     }

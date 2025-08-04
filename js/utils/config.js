@@ -54,7 +54,13 @@ const CONFIG = {
         USE_FPS_LIMIT: false, // Set to false to use natural RAF vsync timing
         THUMBNAIL_THRESHOLD: 50, // pixels - use thumbnail when video node is smaller than this on screen
         VISIBILITY_MARGIN: 200,
-        BATCH_SIZE: 100
+        BATCH_SIZE: 100,
+        
+        // Performance optimization toggles
+        ENABLE_GROUP_PADDING_ANIMATION: false, // Disable for better performance
+        CACHE_VISIBLE_NODES_TIMEOUT: 100, // ms - how often to update visible node cache
+        ENABLE_CONTINUOUS_VIDEO_CHECKS: true, // Set to false to reduce video check overhead
+        ENABLE_AGGRESSIVE_EVICTION: false // Only check visible nodes during extreme memory pressure
     },
     
     ALIGNMENT: {

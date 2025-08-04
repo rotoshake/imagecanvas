@@ -65,6 +65,16 @@ class GroupNode extends BaseNode {
             hide_title: true, // Disable floating title since we have title bar
             render_behind_nodes: true // Groups render behind regular nodes
         };
+        
+        // Track original position for temp padding removal
+        this._tempPaddingApplied = 0;
+        this._lastPaddingScale = null;
+        
+        // Performance optimization: cache child bounds calculations
+        this._cachedMinChildY = undefined;
+        this._cachedChildCount = 0;
+        this._cachedBoundsVersion = 0;
+        this._boundsVersion = 0;
     }
     
     /**
@@ -318,6 +328,9 @@ class GroupNode extends BaseNode {
      * @returns {{pos: number[], size: number[]}} The target bounds (for server sync)
      */
     updateBounds(expandOnly = false, useTargetPositions = false) {
+        // Increment bounds version to invalidate caches
+        this._boundsVersion = (this._boundsVersion || 0) + 1;
+        
         if (this.isCollapsed) {
             this.size = [...this.collapsedSize];
             return {
@@ -731,10 +744,10 @@ class GroupNode extends BaseNode {
         const viewport = passedViewport || this.graph?.canvas?.viewport;
         
         // Temporary padding adjustment based on zoom - only check when zoom changes
-        const PADDING_ENABLED = true; // Toggle this to test performance
+        const PADDING_ENABLED = false; // Disabled for performance - was causing continuous calculations
         if (PADDING_ENABLED && viewport && !this.isCollapsed && this.childNodes.size > 0) {
-            // Only process when zoom changes significantly
-            if (!this._lastPaddingScale || Math.abs(viewport.scale - this._lastPaddingScale) > 0.01) {
+            // Only process when zoom changes significantly (more aggressive threshold)
+            if (!this._lastPaddingScale || Math.abs(viewport.scale - this._lastPaddingScale) > 0.1) {
                 this._lastPaddingScale = viewport.scale;
                 
                 // Use the current size to determine title bar mode (before any adjustments)
@@ -755,16 +768,29 @@ class GroupNode extends BaseNode {
                 const targetScreenGap = 10;
                 const requiredWorldGap = targetScreenGap / viewport.scale;
                 
-                // Find topmost child Y position efficiently
+                // Find topmost child Y position - use cached value if available
                 let minChildY = Infinity;
-                const graph = this.graph || window.app?.graph;
-                if (graph) {
-                    for (const nodeId of this.childNodes) {
-                        const node = graph.getNodeById(nodeId);
-                        if (node && node.pos) {
-                            minChildY = Math.min(minChildY, node.pos[1]);
+                
+                // Check if we have a cached value that's still valid
+                if (this._cachedMinChildY !== undefined && 
+                    this._cachedChildCount === this.childNodes.size &&
+                    this._cachedBoundsVersion === this._boundsVersion) {
+                    minChildY = this._cachedMinChildY;
+                } else {
+                    // Calculate and cache
+                    const graph = this.graph || window.app?.graph;
+                    if (graph) {
+                        for (const nodeId of this.childNodes) {
+                            const node = graph.getNodeById(nodeId);
+                            if (node && node.pos) {
+                                minChildY = Math.min(minChildY, node.pos[1]);
+                            }
                         }
                     }
+                    // Cache the result
+                    this._cachedMinChildY = minChildY;
+                    this._cachedChildCount = this.childNodes.size;
+                    this._cachedBoundsVersion = this._boundsVersion || 0;
                 }
                 
                 if (minChildY !== Infinity) {
