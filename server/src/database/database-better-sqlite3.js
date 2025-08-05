@@ -191,8 +191,13 @@ class DatabaseWrapper {
         return result.lastID;
     }
     
-    async getUserById(id) {
+    async getUser(id) {
         return this.get('SELECT * FROM users WHERE id = ?', [id]);
+    }
+    
+    async getUserById(id) {
+        // Alias for backward compatibility
+        return this.getUser(id);
     }
     
     async getUserByUsername(username) {
@@ -207,12 +212,17 @@ class DatabaseWrapper {
         return result.lastID;
     }
     
-    async getCanvasById(id) {
+    async getCanvas(id) {
         const canvas = await this.get('SELECT * FROM canvases WHERE id = ?', [id]);
         if (canvas && canvas.canvas_data) {
             canvas.canvas_data = JSON.parse(canvas.canvas_data);
         }
         return canvas;
+    }
+    
+    async getCanvasById(id) {
+        // Alias for backward compatibility
+        return this.getCanvas(id);
     }
     
     async getAllCanvases() {
