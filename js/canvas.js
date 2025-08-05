@@ -1121,6 +1121,20 @@ Mode: ${this.fpsTestMode}`;
             return;
         }
         
+        // Clean up oversized textures (Shift+C)
+        if ((e.key === 'C' || e.key === 'c') && e.shiftKey && !e.ctrlKey && !e.metaKey) {
+            console.log('Shift+C pressed, cleaning up oversized textures...');
+            if (this.renderer?.lodManager && this.viewport) {
+                const visibleNodes = this.viewport.getVisibleNodes(this.graph?.nodes || [], 200);
+                const evicted = this.renderer.lodManager.evictOversizedForScreenSpace(visibleNodes);
+                console.log(`✅ Cleanup complete - evicted ${evicted} oversized textures`);
+                
+                // Force a redraw
+                this.dirty_canvas = true;
+            }
+            return;
+        }
+        
         // Check for title double-click first (since title area is outside node bounds)
         const nodes = this.graph.nodes || [];
         for (let i = nodes.length - 1; i >= 0; i--) {
@@ -1215,6 +1229,11 @@ Mode: ${this.fpsTestMode}`;
     }
     
     onKeyDown(e) {
+        // Debug log
+        if (e.shiftKey && (e.key === 'M' || e.key === 'm')) {
+            console.log('Key event:', e.key, 'Shift:', e.shiftKey, 'Ctrl:', e.ctrlKey, 'Meta:', e.metaKey);
+        }
+        
         // Track spacebar press for panning
         if (e.key === ' ' || e.code === 'Space') {
             this.spacePressed = true;
@@ -1225,6 +1244,43 @@ Mode: ${this.fpsTestMode}`;
         }
         
         if (this.isEditingText()) return;
+        
+        // Debug memory usage when zoomed out (Shift+M)
+        if ((e.key === 'M' || e.key === 'm') && e.shiftKey && !e.ctrlKey && !e.metaKey) {
+            console.log('Shift+M pressed, checking for lodManager...');
+            if (this.renderer?.lodManager) {
+                const stats = this.renderer.lodManager.getStats();
+                console.log('📊 Texture Memory Breakdown:', stats.memoryByLOD);
+                console.log(`Total textures: ${stats.textureCount}`);
+                console.log(`Total memory: ${(stats.totalMemory / 1024 / 1024).toFixed(1)}MB`);
+                
+                // Log details for each LOD
+                Object.entries(stats.memoryByLOD).forEach(([lod, data]) => {
+                    if (lod !== 'total') {
+                        console.log(`  ${lod}: ${data.count} textures, ${(data.memory / 1024 / 1024).toFixed(1)}MB`);
+                    }
+                });
+                
+                // Log current viewport info
+                console.log(`Current zoom: ${(this.viewport.scale * 100).toFixed(0)}%`);
+                
+                // Check WebGL limits
+                if (this.renderer?.gl) {
+                    const gl = this.renderer.gl;
+                    const maxTextureSize = gl.getParameter(gl.MAX_TEXTURE_SIZE);
+                    const maxTextureUnits = gl.getParameter(gl.MAX_TEXTURE_IMAGE_UNITS);
+                    console.log(`WebGL Limits: Max texture size: ${maxTextureSize}px, Max texture units: ${maxTextureUnits}`);
+                    
+                    // Check if we're hitting texture unit limits
+                    const activeTextures = this.renderer.lodManager?.accessOrder?.length || 0;
+                    if (activeTextures > maxTextureUnits) {
+                        console.warn(`⚠️ Active textures (${activeTextures}) exceeds max texture units (${maxTextureUnits})`);
+                    }
+                }
+            }
+            e.preventDefault();
+            return;
+        }
         
         // Use shortcut manager for all keyboard shortcuts
         if (this.shortcutManager && this.shortcutManager.handleKeyEvent(e)) {
@@ -4617,6 +4673,13 @@ Mode: ${this.fpsTestMode}`;
         // Draw all visible nodes sorted by z-index
         // Sort visible nodes by z-index (lower z-index drawn first)
         const sortedNodes = [...visibleNodes].sort((a, b) => {
+            // Loading images should render on top of everything else
+            const aLoading = a.type === 'media/image' && (!a.img || a.loadingState === 'loading' || a.loadingState === 'webgl-only' || a._webglWaiting);
+            const bLoading = b.type === 'media/image' && (!b.img || b.loadingState === 'loading' || b.loadingState === 'webgl-only' || b._webglWaiting);
+            
+            if (aLoading && !bLoading) return 1; // a renders after b
+            if (!aLoading && bLoading) return -1; // b renders after a
+            
             // Get effective z-index (considering group membership)
             const aZ = this.getEffectiveZIndex(a);
             const bZ = this.getEffectiveZIndex(b);
@@ -5226,9 +5289,13 @@ Mode: ${this.fpsTestMode}`;
         ctx.save();
         ctx.setTransform(this.viewport.dpr, 0, 0, this.viewport.dpr, 0, 0);
         
+        // Check if we'll show GPU memory
+        const hasGPUMemory = !!(this.renderer?.lodManager);
+        
         // Position in lower left
-        const statsHeight = this.fpsTestMode !== 'normal' ? 100 : 80;
-        const statsWidth = 160;
+        const baseHeight = hasGPUMemory ? 94 : 80; // Extra height for GPU line
+        const statsHeight = this.fpsTestMode !== 'normal' ? baseHeight + 20 : baseHeight;
+        const statsWidth = 180; // Slightly wider for GPU text
         const margin = 10;
         const yPos = (this.canvas.height / this.viewport.dpr) - statsHeight - margin;
         
@@ -5243,13 +5310,23 @@ Mode: ${this.fpsTestMode}`;
         ctx.font = `12px ${FONT_CONFIG.MONO_FONT_CANVAS}`;
         ctx.fillStyle = '#fff';
         
-        // Get memory usage - prefer real browser memory over estimates
+        // Get memory usage - show both GPU and CPU memory
         let memoryDisplay = 'N/A';
+        let gpuMemoryDisplay = '';
+        
+        // Get GPU texture memory from WebGL renderer
+        if (this.renderer?.lodManager) {
+            const gpuMB = Math.round(this.renderer.lodManager.totalMemory / 1024 / 1024);
+            const gpuLimit = Math.round(this.renderer.lodManager.maxTextureMemory / 1024 / 1024);
+            const gpuPercent = Math.round((this.renderer.lodManager.totalMemory / this.renderer.lodManager.maxTextureMemory) * 100);
+            gpuMemoryDisplay = `GPU: ${gpuMB}MB/${gpuLimit}MB (${gpuPercent}%)`;
+        }
+        
+        // Get total process memory
         if (performance.memory) {
             const usedMB = Math.round(performance.memory.usedJSHeapSize / 1024 / 1024);
-            const limitMB = Math.round(performance.memory.jsHeapSizeLimit / 1024 / 1024);
-            const percent = Math.round((performance.memory.usedJSHeapSize / performance.memory.jsHeapSizeLimit) * 100);
-            memoryDisplay = `${usedMB}MB (${percent}%)`;
+            const totalMB = Math.round(performance.memory.totalJSHeapSize / 1024 / 1024);
+            memoryDisplay = `JS: ${usedMB}MB/${totalMB}MB`;
         } else if (window.memoryManager) {
             const memoryStats = window.memoryManager.getMemoryStats();
             memoryDisplay = memoryStats ? memoryStats.formatted : 'N/A';
@@ -5260,8 +5337,13 @@ Mode: ${this.fpsTestMode}`;
             `Nodes: ${this.graph.nodes.length}`,
             `Selected: ${this.selection.size()}`,
             `Scale: ${(this.viewport.scale * 100).toFixed(0)}%`,
-            `Memory: ${memoryDisplay}`
+            memoryDisplay
         ];
+        
+        // Add GPU memory as separate line if available
+        if (gpuMemoryDisplay) {
+            stats.push(gpuMemoryDisplay);
+        }
         
         // Add test mode indicator if active
         if (this.fpsTestMode !== 'normal') {
@@ -5275,9 +5357,16 @@ Mode: ${this.fpsTestMode}`;
         }
         
         stats.forEach((stat, i) => {
-            // Color memory stat based on usage level
-            if (stat.startsWith('Memory:') && performance.memory) {
-                const percent = Math.round((performance.memory.usedJSHeapSize / performance.memory.jsHeapSizeLimit) * 100);
+            // Color GPU memory stat based on usage level
+            if (stat.startsWith('GPU:') && this.renderer?.lodManager) {
+                const gpuPercent = Math.round((this.renderer.lodManager.totalMemory / this.renderer.lodManager.maxTextureMemory) * 100);
+                if (gpuPercent >= 95) ctx.fillStyle = '#f44336'; // Red
+                else if (gpuPercent >= 75) ctx.fillStyle = '#ff9800'; // Orange
+                else ctx.fillStyle = '#4caf50'; // Green
+            }
+            // Color JS memory stat based on usage level
+            else if (stat.startsWith('JS:') && performance.memory) {
+                const percent = Math.round((performance.memory.usedJSHeapSize / performance.memory.totalJSHeapSize) * 100);
                 if (percent >= 95) ctx.fillStyle = '#f44336'; // Red
                 else if (percent >= 75) ctx.fillStyle = '#ff9800'; // Orange
                 else ctx.fillStyle = '#4caf50'; // Green

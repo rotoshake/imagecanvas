@@ -234,7 +234,7 @@ class MemoryManager {
         
         // Use requestIdleCallback to perform cleanup during idle time
         const performCleanupWork = (deadline) => {
-            console.log(`🧹 Starting memory cleanup (${Math.round(this.getMemoryUsagePercent())}% used)`);
+            // console.log(`🧹 Starting memory cleanup (${Math.round(this.getMemoryUsagePercent())}% used)`);
             
             const candidates = this.getUnloadCandidates(visibleNodes, allNodes, viewport);
             let freedMemory = 0;

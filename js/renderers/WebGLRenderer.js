@@ -138,8 +138,8 @@ class WebGLRenderer {
         this.failedRequests = new Map(); // requestKey -> { timestamp, retryCount }
         this.failedRequestTTL = 5 * 60 * 1000; // 5 minutes TTL for failed requests
         
-        // LOD calculation cache to prevent repeated calculations
-        this.lodCache = new Map(); // nodeId -> { screenSize, optimalLOD, lastUpdate }
+        // Use global LOD cache for better performance
+        this.lodCache = new window.LODCache();
         
         // Texture request throttling to prevent spam
         this.lastTextureRequest = new Map(); // nodeId -> { hash, lodSize, timestamp }
@@ -1534,6 +1534,9 @@ class WebGLRenderer {
         this.gl.activeTexture(this.gl.TEXTURE0);
         this.gl.bindTexture(this.gl.TEXTURE_2D, null);
 
+        // Clear waiting flag since we successfully rendered
+        node._webglWaiting = false;
+        
         // Return true to indicate we successfully rendered the node
         return true;
     }
@@ -1546,12 +1549,8 @@ class WebGLRenderer {
         const now = Date.now();
         const maxAge = 10000; // 10 seconds
         
-        // Clean up LOD cache
-        for (const [nodeId, entry] of this.lodCache) {
-            if (now - entry.lastUpdate > maxAge) {
-                this.lodCache.delete(nodeId);
-            }
-        }
+        // The LODCache handles its own cleanup internally
+        // No need to manually clean it up here
         
         // Clean up texture request cache
         for (const [nodeId, entry] of this.lastTextureRequest) {
@@ -1564,6 +1563,14 @@ class WebGLRenderer {
         for (const [nodeId, entry] of this.renderedNodes) {
             if (now - (entry.lastAccess || 0) > 5000) {
                 this.renderedNodes.delete(nodeId);
+            }
+        }
+        
+        // Clean up regeneration tracking set periodically (every 60 seconds)
+        if (this._hasRequestedRegeneration && this._hasRequestedRegeneration.size > 0) {
+            if (!this._lastRegenerationCleanup || now - this._lastRegenerationCleanup > 60000) {
+                this._hasRequestedRegeneration.clear();
+                this._lastRegenerationCleanup = now;
             }
         }
     }
@@ -1612,6 +1619,12 @@ class WebGLRenderer {
                         this.lodManager.markHighZoomNode(node.properties.hash);
                     }
                 }
+            }
+            
+            // First evict any textures that are oversized for current screen space
+            // This runs every 10 frames to avoid performance impact
+            if (this.framesSinceInit % 10 === 0 && visibleNodes.length > 0) {
+                this.lodManager.evictOversizedForScreenSpace(visibleNodes);
             }
             
             // Unload high-res textures for non-visible nodes
@@ -1709,6 +1722,7 @@ class WebGLRenderer {
                 if (node.type === 'media/video' && node.video && node.video.readyState >= 2) {
                     // For video nodes, use the video element directly
                     const texture = this._ensureTexture(node.video);
+                    node._webglWaiting = false; // Clear waiting flag
                     return this._renderWithTexture(ctx2d, node, texture);
                 } else if (this.lodManager && node.properties?.hash) {
                     const screenWidth = node.size[0] * vp.scale;
@@ -1718,32 +1732,58 @@ class WebGLRenderer {
                     // For high DPI displays, use full DPR to get actual pixel count
                     const effectiveScreenSize = screenSize * (vp.dpr || 1);
                     
+                    // Calculate optimal LOD first (needed whether we have texture or not)
+                    this.lodCache.updateViewport(vp.scale, vp.offset);
+                    const lodDecision = this.lodCache.getLOD(node, screenWidth, screenHeight, vp.scale);
+                    
+                    let optimalLOD;
+                    if (lodDecision.source === 'full') {
+                        optimalLOD = null;
+                    } else {
+                        // Validate with LOD manager
+                        const managerLOD = this.lodManager.getOptimalLOD(effectiveScreenSize, effectiveScreenSize);
+                        if (Math.abs(lodDecision.size - managerLOD) < managerLOD * 0.2) {
+                            optimalLOD = lodDecision.size;
+                        } else {
+                            optimalLOD = managerLOD;
+                        }
+                    }
+                    
                     const texture = this.lodManager.getBestTexture(
                         node.properties.hash, 
                         effectiveScreenSize,
                         effectiveScreenSize
                     );
                     
+                    // Check if we have NO textures at all - need to trigger regeneration
+                    if (!texture && window.thumbnailCache) {
+                        const thumbnails = window.thumbnailCache.getThumbnails(node.properties.hash);
+                        if (!thumbnails || thumbnails.size === 0) {
+                            // No thumbnails exist - trigger server regeneration
+                            const serverFilename = node.properties?.serverFilename || 
+                                                  (node.properties?.serverUrl ? node.properties.serverUrl.split('/').pop() : null);
+                            
+                            if (serverFilename && !this._hasRequestedRegeneration?.has(node.properties.hash)) {
+                                if (!this._hasRequestedRegeneration) {
+                                    this._hasRequestedRegeneration = new Set();
+                                }
+                                this._hasRequestedRegeneration.add(node.properties.hash);
+                                
+                                console.log(`🔄 No thumbnails found for ${node.properties.hash.substring(0, 8)}, requesting regeneration...`);
+                                const sizes = [64, 128, 256, 512, 1024, 2048];
+                                for (const size of sizes) {
+                                    const sizeKey = `${node.properties.hash}_${size}`;
+                                    if (!this.pendingServerRequests.has(sizeKey)) {
+                                        this.pendingServerRequests.add(sizeKey);
+                                        this._requestServerThumbnail(node.properties.hash, serverFilename, size, sizeKey);
+                                    }
+                                }
+                            }
+                        }
+                    }
                     
                     if (texture) {
                         // Check if we should request a better texture even though nothing else changed
-                        // Check LOD cache first
-                        const cachedLODInfo = this.lodCache.get(nodeId);
-                        const now = Date.now();
-                        
-                        let optimalLOD;
-                        if (cachedLODInfo && Math.abs(cachedLODInfo.screenSize - effectiveScreenSize) < effectiveScreenSize * 0.05 && 
-                            now - cachedLODInfo.lastUpdate < 5000) {
-                            optimalLOD = cachedLODInfo.optimalLOD;
-                        } else {
-                            optimalLOD = this.lodManager.getOptimalLOD(effectiveScreenSize, effectiveScreenSize);
-                            // Update cache
-                            this.lodCache.set(nodeId, {
-                                screenSize: effectiveScreenSize,
-                                optimalLOD,
-                                lastUpdate: now
-                            });
-                        }
                         
                         // Find current texture's LOD
                         let currentLOD = null;
@@ -1758,7 +1798,11 @@ class WebGLRenderer {
                         }
                         
                         // Request better texture if needed
-                        if (currentLOD !== null && optimalLOD !== null && currentLOD < optimalLOD) {
+                        // Handle cases: current LOD < optimal LOD, or we need full res (optimal = null) but have LOD
+                        const needsBetterTexture = (optimalLOD === null && currentLOD !== null) || 
+                                                 (currentLOD !== null && optimalLOD !== null && currentLOD < optimalLOD);
+                        
+                        if (needsBetterTexture) {
                             const now = Date.now();
                             const lastRequest = this.lastTextureRequest.get(nodeId);
                             
@@ -1767,7 +1811,9 @@ class WebGLRenderer {
                                 lastRequest.lodSize !== optimalLOD ||
                                 now - lastRequest.timestamp > this.textureRequestCooldown) {
                                 
-                                // console.log(`📈 Early exit: Requesting better texture: current=${currentLOD}px, optimal=${optimalLOD}px`);
+                                if (window.DEBUG_LOD_STATUS) {
+                                    console.log(`📈 Early exit: Requesting better texture: current=${currentLOD}px, optimal=${optimalLOD === null ? 'FULL' : optimalLOD + 'px'}, screen=${Math.round(effectiveScreenSize)}px`);
+                                }
                                 
                                 this.lastTextureRequest.set(nodeId, {
                                     hash: node.properties.hash,
@@ -1780,13 +1826,30 @@ class WebGLRenderer {
                         }
                         
                         // Just render with existing texture, skip all LOD calculations
+                        node._webglWaiting = false; // Clear waiting flag
                         return this._renderWithTexture(ctx2d, node, texture);
                     }
-                    // No texture available in early exit path - don't request one
-                    // This prevents the evict->request cycle for unchanged nodes
+                    // No texture available - request appropriate LOD
+                    const now = Date.now();
+                    const lastRequest = this.lastTextureRequest.get(nodeId);
+                    
+                    if (!lastRequest || 
+                        lastRequest.hash !== node.properties.hash ||
+                        now - lastRequest.timestamp > this.textureRequestCooldown * 10) { // 10x cooldown for early exit
+                        
+                        this.lastTextureRequest.set(nodeId, {
+                            hash: node.properties.hash,
+                            lodSize: optimalLOD,
+                            timestamp: now
+                        });
+                        
+                        this._requestTexture(node, screenWidth, screenHeight);
+                    }
                 }
                 
-                // No texture available, fall back to Canvas2D
+                // No texture available, return false to let Canvas2D render loading state
+                // But we need to prevent it from loading full res
+                node._webglWaiting = true;
                 return false;
             }
         }
@@ -1830,59 +1893,32 @@ class WebGLRenderer {
         // This ensures we load high enough resolution textures for retina displays
         const effectiveScreenSize = screenSize * dpr;
         
-        // Check LOD cache to avoid repeated calculations
-        const cachedLOD = this.lodCache.get(nodeId);
-        const now = Date.now();
+        // Update viewport info in LOD cache
+        this.lodCache.updateViewport(vp.scale, vp.offset);
         
-        // Hysteresis for LOD switching to prevent flickering
-        const HYSTERESIS_FACTOR = 0.1; // 10% change required to switch LOD
-        let optimalLOD = null;
+        // Get LOD decision from improved cache (includes hysteresis)
+        const lodDecision = this.lodCache.getLOD(node, screenWidth, screenHeight, vp.scale);
         
-        if (cachedLOD) {
-            // Check if screen size changed significantly
-            const sizeChange = Math.abs(cachedLOD.screenSize - effectiveScreenSize) / cachedLOD.screenSize;
-            
-            if (sizeChange < HYSTERESIS_FACTOR && now - cachedLOD.lastUpdate < 5000) {
-                // Keep using cached LOD - no significant change
-                optimalLOD = cachedLOD.optimalLOD;
-            } else {
-                // Calculate new LOD
-                const newOptimalLOD = this.lodManager.getOptimalLOD(effectiveScreenSize, effectiveScreenSize);
-                
-                // Apply hysteresis: only switch if it's a different LOD level
-                if (cachedLOD.optimalLOD === newOptimalLOD || 
-                    (cachedLOD.optimalLOD !== null && newOptimalLOD !== null && 
-                     Math.abs(cachedLOD.optimalLOD - newOptimalLOD) < cachedLOD.optimalLOD * 0.25)) {
-                    // Keep current LOD - change isn't significant enough
-                    optimalLOD = cachedLOD.optimalLOD;
-                } else {
-                    // Switch to new LOD
-                    // console.log(`🔄 LOD change for ${node.id}: ${cachedLOD.optimalLOD === null ? 'full' : cachedLOD.optimalLOD + 'px'} → ${newOptimalLOD === null ? 'full' : newOptimalLOD + 'px'}`);
-                    optimalLOD = newOptimalLOD;
-                }
-                
-                // Update cache
-                this.lodCache.set(nodeId, {
-                    screenSize: effectiveScreenSize,
-                    optimalLOD,
-                    lastUpdate: now
-                });
-            }
+        // Determine optimal LOD from decision
+        let optimalLOD;
+        if (lodDecision.source === 'full') {
+            optimalLOD = null; // Full resolution
         } else {
-            // No cached LOD - calculate fresh
-            optimalLOD = this.lodManager.getOptimalLOD(effectiveScreenSize, effectiveScreenSize);
-            this.lodCache.set(nodeId, {
-                screenSize: effectiveScreenSize,
-                optimalLOD,
-                lastUpdate: now
-            });
-            
-            // DEBUG: Log fresh LOD calculation
-            if (window.DEBUG_LOD_STATUS) {
-                console.log(`🆕 Fresh LOD calc for ${node.id}: effective=${Math.round(effectiveScreenSize)}, optimal=${optimalLOD === null ? 'full' : optimalLOD + 'px'}, threshold=3000`);
+            // Use cached decision size, but validate with LOD manager
+            const managerLOD = this.lodManager.getOptimalLOD(effectiveScreenSize, effectiveScreenSize);
+            // Prefer cache decision unless manager suggests significantly different
+            if (Math.abs(lodDecision.size - managerLOD) < managerLOD * 0.2) {
+                optimalLOD = lodDecision.size;
+            } else {
+                optimalLOD = managerLOD;
+                // Clear cache for this node to recalculate
+                this.lodCache.clearNode(nodeId);
             }
-            
-            // Properties panel will be updated after rendering via post-render tracking
+        }
+        
+        // DEBUG: Log LOD decision
+        if (window.DEBUG_LOD_STATUS) {
+            console.log(`🎯 LOD decision for ${node.id}: ${optimalLOD === null ? 'full' : optimalLOD + 'px'} (screen: ${Math.round(effectiveScreenSize)}px)`);
         }
         
         // Get best available texture from LOD manager or video element
@@ -1922,16 +1958,20 @@ class WebGLRenderer {
                     // Request full resolution
                     this._requestTexture(node, screenWidth, screenHeight);
                     if (window.DEBUG_LOD_STATUS) {
-                        console.log(`🖼️ Requested full res, no fallback`);
+                        console.log(`🖼️ Requested full res, waiting for texture`);
                     }
+                    // Return false to let Canvas2D render loading state
+                    node._webglWaiting = true;
                     return false;
                 }
             } else if (!texture) {
-                // For LOD textures, use normal fallback logic
+                // For LOD textures, request and wait
                 this._requestTexture(node, screenWidth, screenHeight);
                 if (window.DEBUG_LOD_STATUS) {
-                    console.log(`🖼️ Requested ${optimalLOD}px texture, no fallback`);
+                    console.log(`🖼️ Requested ${optimalLOD}px texture, waiting`);
                 }
+                // Return false to let Canvas2D render loading state
+                node._webglWaiting = true;
                 return false;
             }
         
@@ -1982,6 +2022,7 @@ class WebGLRenderer {
                 const shouldRequestDifferent = currentLOD !== optimalLOD;
                 
                 if (shouldRequestDifferent) {
+                    const now = Date.now();
                     const lastRequest = this.lastTextureRequest.get(nodeId);
                     const requestKey = `${node.properties.hash}_${optimalLOD}`;
                     
@@ -2040,8 +2081,38 @@ class WebGLRenderer {
             // Removed: Special case for color corrections that forced full resolution
             // The LOD system now handles color-corrected images properly
             
-            // Fall back to Canvas2D only if we have no other options
+            // No texture available yet, but don't fall back to Canvas2D
             if (!texture) {
+                // Check if we should trigger thumbnail regeneration
+                if (window.thumbnailCache && node.properties?.hash && node.properties?.serverFilename) {
+                    const thumbnails = window.thumbnailCache.getThumbnails(node.properties.hash);
+                    if (!thumbnails || thumbnails.size === 0) {
+                        // No thumbnails exist - trigger server regeneration
+                        if (!this._hasRequestedRegeneration?.has(node.properties.hash)) {
+                            if (!this._hasRequestedRegeneration) {
+                                this._hasRequestedRegeneration = new Set();
+                            }
+                            this._hasRequestedRegeneration.add(node.properties.hash);
+                            
+                            console.log(`🔄 Empty node detected - requesting thumbnail regeneration for ${node.properties.hash.substring(0, 8)}...`);
+                            const sizes = [64, 128, 256, 512, 1024, 2048];
+                            for (const size of sizes) {
+                                const sizeKey = `${node.properties.hash}_${size}`;
+                                if (!this.pendingServerRequests.has(sizeKey)) {
+                                    this.pendingServerRequests.add(sizeKey);
+                                    this._requestServerThumbnail(node.properties.hash, this._getServerFilename(node), size, sizeKey);
+                                }
+                            }
+                        }
+                    }
+                }
+                
+                // We've already requested it above, just wait
+                if (window.DEBUG_LOD_STATUS) {
+                    console.log(`⏳ No texture yet for ${node.properties.hash?.substring(0, 8)} - waiting (optimal: ${optimalLOD}px)`);
+                }
+                // Return false to let Canvas2D render loading state
+                node._webglWaiting = true;
                 return false;
             }
         }
@@ -2313,6 +2384,9 @@ class WebGLRenderer {
             node.needsGLUpdate = false;
         }
         
+        // Clear waiting flag since we successfully rendered
+        node._webglWaiting = false;
+        
         return true;
     }
     
@@ -2439,6 +2513,26 @@ class WebGLRenderer {
         const dpr = this.canvas.viewport?.dpr || 1;
         const effectiveScreenSize = Math.max(screenWidth, screenHeight) * dpr;
         const optimalLOD = this.lodManager.getOptimalLOD(effectiveScreenSize, effectiveScreenSize);
+        
+        // Check if we already have a texture that's good enough
+        const existingTexture = this.lodManager.getBestTexture(hash, effectiveScreenSize, effectiveScreenSize);
+        if (existingTexture) {
+            // Check if existing texture is close enough to optimal
+            const nodeCache = this.lodManager.textureCache.get(hash);
+            if (nodeCache) {
+                for (const [lodSize, textureData] of nodeCache) {
+                    if (textureData.texture === existingTexture) {
+                        // If we already have optimal size or close enough, don't request
+                        if (lodSize === optimalLOD || 
+                            (lodSize !== null && optimalLOD !== null && Math.abs(lodSize - optimalLOD) < optimalLOD * 0.2)) {
+                            return; // Already have appropriate texture
+                        }
+                        break;
+                    }
+                }
+            }
+        }
+        
         // console.log(`📤 Requesting texture: ${optimalLOD === null ? 'full res' : optimalLOD + 'px'} for ${hash.substring(0, 8)}... (screen: ${Math.round(screenWidth)}x${Math.round(screenHeight)}, effective: ${Math.round(effectiveScreenSize)})`);
         
         // Single decision tree - no overlapping conditions
@@ -2449,6 +2543,28 @@ class WebGLRenderer {
         // 1. Try exact optimal size from thumbnails
         if (window.thumbnailCache && optimalLOD !== null) {
             const thumbnails = window.thumbnailCache.getThumbnails(hash);
+            
+            // If no thumbnails exist at all, trigger server regeneration
+            if (!thumbnails || thumbnails.size === 0) {
+                if (node.properties?.serverFilename && !this._hasRequestedRegeneration?.has(hash)) {
+                    // Track that we've requested regeneration for this hash
+                    if (!this._hasRequestedRegeneration) {
+                        this._hasRequestedRegeneration = new Set();
+                    }
+                    this._hasRequestedRegeneration.add(hash);
+                    
+                    console.log(`🔄 No thumbnails found for ${hash.substring(0, 8)}, requesting server regeneration...`);
+                    const sizes = [64, 128, 256, 512, 1024, 2048];
+                    for (const size of sizes) {
+                        const sizeKey = `${hash}_${size}`;
+                        if (!this.pendingServerRequests.has(sizeKey)) {
+                            this.pendingServerRequests.add(sizeKey);
+                            this._requestServerThumbnail(hash, this._getServerFilename(node), size, sizeKey);
+                        }
+                    }
+                }
+            }
+            
             const exactMatch = thumbnails?.get(optimalLOD);
             if (exactMatch) {
                 textureSource = exactMatch;
@@ -2456,71 +2572,91 @@ class WebGLRenderer {
             }
         }
         
-        // 2. If no exact match, check if we should generate the optimal size
+        // 2. If no exact match, request generation of the optimal size
         if (!textureSource && window.thumbnailCache && optimalLOD) {
             const thumbnails = window.thumbnailCache.getThumbnails(hash);
+            
+            // Check if we have NO thumbnails at all - need to request from server
+            if (!thumbnails || thumbnails.size === 0) {
+                if (node.properties?.serverFilename) {
+                    // No thumbnails exist - request all standard sizes from server
+                    console.log(`🔄 No thumbnails found for ${hash.substring(0, 8)}, requesting from server...`);
+                    const sizes = [64, 128, 256, 512, 1024, 2048];
+                    for (const size of sizes) {
+                        const sizeKey = `${hash}_${size}`;
+                        if (!this.pendingServerRequests.has(sizeKey)) {
+                            this.pendingServerRequests.add(sizeKey);
+                            this._requestServerThumbnail(hash, this._getServerFilename(node), size, sizeKey);
+                        }
+                    }
+                }
+            }
+            
+            // Check if we're already waiting for this exact size
+            const requestKey = `${hash}_${optimalLOD}`;
+            const alreadyWaiting = this.pendingServerRequests.has(requestKey);
+            
+            if (!alreadyWaiting && this._getServerFilename(node)) {
+                // Request the exact optimal size we need
+                this.pendingServerRequests.add(requestKey);
+                this._requestServerThumbnail(hash, this._getServerFilename(node), optimalLOD, requestKey);
+            }
+            
+            // While waiting, use the closest available size that's NOT oversized
             if (thumbnails && thumbnails.size > 0) {
-                // Find the best available thumbnail, but only if it's close to optimal
                 let bestSize = 0;
                 let bestThumbnail = null;
                 
+                // Only consider thumbnails that are <= optimal size
                 for (const [size, thumb] of thumbnails) {
-                    if (size >= optimalLOD && (!bestSize || size < bestSize)) {
-                        // Found a thumbnail that's good enough quality
-                        bestSize = size;
-                        bestThumbnail = thumb;
-                    } else if (size > bestSize) {
-                        // Keep track of largest available as fallback
+                    if (size <= optimalLOD && size > bestSize) {
                         bestSize = size;
                         bestThumbnail = thumb;
                     }
                 }
                 
-                // Check if we're already waiting for a better quality thumbnail
-                const requestKey = `${hash}_${optimalLOD}`;
-                const alreadyWaiting = this.pendingServerRequests.has(requestKey);
-                
-                // Only use existing thumbnail if it's reasonably close to optimal OR we're not waiting for better
-                if (bestSize >= optimalLOD * 0.8) {
-                    // Close enough to optimal, use it
+                // Use the best available that's not oversized
+                if (bestThumbnail) {
                     textureSource = bestThumbnail;
                     lodSize = bestSize;
-                    // console.log(`📎 Using existing ${bestSize}px thumbnail (optimal: ${optimalLOD}px`);
-                } else if (!alreadyWaiting && bestSize > 0) {
-                    // Use lower quality temporarily only if we're not already waiting for better
-                    textureSource = bestThumbnail;
-                    lodSize = bestSize;
-                    // console.log(`⏳ Using temporary ${bestSize}px thumbnail while requesting ${optimalLOD}px`);
-                    
-                    // IMPORTANT: Still need to request the optimal size from server
-                    // even though we're using a temporary texture
-                    if (bestSize < optimalLOD && node.properties?.serverFilename) {
-                        this.pendingServerRequests.add(requestKey);
-                        this._requestServerThumbnail(hash, node.properties.serverFilename, optimalLOD, requestKey);
-                    }
-                } else {
-                    // console.log(`📉 Existing ${bestSize}px thumbnail too small for optimal ${optimalLOD}px${alreadyWaiting ? ' (already waiting for better)' : ', will request'}`);
-                    // Don't set textureSource - let it fall through to server request
                 }
             }
         }
         
         // 3. Fallback to full resolution only when really needed
         if (!textureSource && node.img?.complete) {
-            // Only use full res if we truly need it and have waited for thumbnails
-            if (!optimalLOD || optimalLOD > 2048) {
-                // Only for truly large displays that exceed thumbnail capabilities
+            // Calculate actual screen space size
+            const screenSize = Math.max(screenWidth, screenHeight);
+            
+            // Only use full res if optimal LOD is null (meaning we need full resolution)
+            if (optimalLOD === null) {
                 textureSource = node.img;
                 lodSize = null; // null = full resolution
                 priority += 1; // Lower priority for full res
             }
-            // For smaller displays, prefer to wait for thumbnails rather than use full res
+            // For smaller screen space, prefer to wait for thumbnails rather than use full res
         }
         
         // 4. Make the request (only one per call)
         if (textureSource) {
             const dpr = this.canvas.viewport.dpr || 1;
-            // console.log(`🎯 Requesting ${lodSize || 'FULL'}px texture for ${hash.substring(0, 8)} (optimal: ${optimalLOD || 'FULL'}px, screen: ${Math.round(screenWidth/dpr)}px @ ${dpr}x DPR)`);
+            // Debug texture requests for large textures - throttled to reduce spam
+            if (lodSize > 256 && this.canvas.viewport.scale < 0.3) {
+                const nodeSize = Math.max(node.size[0], node.size[1]);
+                const logKey = `large_texture_${hash}_${lodSize}`;
+                const now = Date.now();
+                
+                // Only log once per texture per 10 seconds
+                if (!this._largeTextureLogThrottle) {
+                    this._largeTextureLogThrottle = new Map();
+                }
+                
+                const lastLogged = this._largeTextureLogThrottle.get(logKey);
+                if (!lastLogged || now - lastLogged > 10000) {
+                    console.warn(`📐 Large texture request while zoomed out: ${lodSize}px for node ${nodeSize}px @ ${(this.canvas.viewport.scale * 100).toFixed(0)}% zoom = ${Math.round(screenWidth)}px screen size`);
+                    this._largeTextureLogThrottle.set(logKey, now);
+                }
+            }
             
             // Track what's actually being rendered for debugging
             node._currentRenderInfo = {
@@ -2534,7 +2670,11 @@ class WebGLRenderer {
                 isFullRes: lodSize === null
             };
             
-            this.lodManager.requestTexture(hash, lodSize, priority, textureSource);
+            // Node is visible since we're requesting texture during render
+            const isVisible = true;
+            // Pass screen space size for protection decisions
+            const screenSize = Math.max(screenWidth, screenHeight);
+            this.lodManager.requestTexture(hash, lodSize, priority, textureSource, isVisible, screenSize);
         } else {
             // 5. If nothing available, request server thumbnails for optimal size
             const requestKey = `${hash}_${optimalLOD}`;
@@ -2559,10 +2699,10 @@ class WebGLRenderer {
             if (!this.pendingServerRequests.has(requestKey)) {
                 // console.log(`⏳ No texture available for ${hash.substring(0, 8)}, requesting server thumbnail (optimal: ${optimalLOD || 'FULL'}px)`);
                 
-                if (node.properties?.serverFilename && optimalLOD) {
+                if (this._getServerFilename(node) && optimalLOD) {
                     // Request specific size from server
                     this.pendingServerRequests.add(requestKey);
-                    this._requestServerThumbnail(hash, node.properties.serverFilename, optimalLOD, requestKey);
+                    this._requestServerThumbnail(hash, this._getServerFilename(node), optimalLOD, requestKey);
                 } else if (node.img && window.thumbnailCache) {
                     // Fallback to progressive loading of all server thumbnails
                     window.thumbnailCache.generateThumbnailsProgressive(hash, node.img);
@@ -2577,6 +2717,15 @@ class WebGLRenderer {
         }
     }
     
+    /**
+     * Extract server filename from node properties
+     * @private
+     */
+    _getServerFilename(node) {
+        return node.properties?.serverFilename || 
+               (node.properties?.serverUrl ? node.properties.serverUrl.split('/').pop() : null);
+    }
+
     /**
      * Request specific thumbnail size from server
      * @private
@@ -2821,8 +2970,15 @@ class WebGLRenderer {
             const hasPreview = nodeCache && (nodeCache.has(256) || nodeCache.has(128) || nodeCache.has(64));
             
             if (!hasPreview) {
-                // Request a 256px preview with medium priority
-                this._requestTexture(node, 256, 256, 3);
+                // Request an appropriate preview based on current zoom
+                const scale = vp.scale;
+                const screenSize = Math.max(node.size[0], node.size[1]) * scale;
+                const optimalPreview = screenSize < 50 ? 64 : screenSize < 100 ? 128 : 256;
+                
+                // Pass the actual screen size to get proper LOD selection
+                const screenWidth = node.size[0] * scale;
+                const screenHeight = node.size[1] * scale;
+                this._requestTexture(node, screenWidth, screenHeight, 3);
                 previewRequestCount++;
                 
                 if (previewRequestCount >= maxPreviewRequests) break;

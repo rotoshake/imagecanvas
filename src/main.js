@@ -14,6 +14,7 @@ import '../js/utils/file-hash.js';
 import '../js/utils/undo-optimization.js';
 import '../js/utils/ImageLoadManager.js';
 import '../js/utils/IndexedDBThumbnailStore.js';
+import '../js/utils/lod-cache.js';
 
 // Keyboard shortcuts system
 import '../js/config/keyboard-shortcuts.js';

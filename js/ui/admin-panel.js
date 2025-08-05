@@ -314,16 +314,66 @@ class AdminPanel {
         
         // Setup cleanup button
         const cleanupBtn = section.querySelector('.cleanup-btn');
+        let isAltPressed = false;
+        
+        // Track alt/option key state for changing button behavior
+        const updateButtonState = (altKey) => {
+            isAltPressed = altKey;
+            if (altKey) {
+                cleanupBtn.textContent = 'Full Wipe';
+                cleanupBtn.style.background = '#ff4444';
+            } else {
+                cleanupBtn.textContent = 'Run Cleanup';
+                cleanupBtn.style.background = 'var(--accent-color, #3498db)';
+            }
+        };
+        
+        // Listen for Alt/Option key press/release
+        document.addEventListener('keydown', (e) => {
+            if (e.altKey && !isAltPressed) {
+                updateButtonState(true);
+            }
+        });
+        
+        document.addEventListener('keyup', (e) => {
+            if (!e.altKey && isAltPressed) {
+                updateButtonState(false);
+            }
+        });
+        
+        // Also check on window focus in case key was released outside
+        window.addEventListener('focus', () => {
+            updateButtonState(false);
+        });
+        
         cleanupBtn.addEventListener('click', () => {
-            this.runCleanup();
+            if (isAltPressed) {
+                // Trigger full database wipe
+                if (window.triggerDatabaseWipe) {
+                    window.triggerDatabaseWipe();
+                    this.hide(); // Close admin panel
+                } else {
+                    console.error('Database wipe function not available');
+                }
+            } else {
+                this.runCleanup();
+            }
         });
         
         // Hover effect for button
         cleanupBtn.addEventListener('mouseover', () => {
-            cleanupBtn.style.background = 'var(--accent-hover, #2980b9)';
+            if (!isAltPressed) {
+                cleanupBtn.style.background = 'var(--accent-hover, #2980b9)';
+            } else {
+                cleanupBtn.style.background = '#cc3333';
+            }
         });
         cleanupBtn.addEventListener('mouseout', () => {
-            cleanupBtn.style.background = 'var(--accent-color, #3498db)';
+            if (!isAltPressed) {
+                cleanupBtn.style.background = 'var(--accent-color, #3498db)';
+            } else {
+                cleanupBtn.style.background = '#ff4444';
+            }
         });
     }
     

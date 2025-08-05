@@ -83,6 +83,7 @@ class ImageNode extends BaseNode {
             window.imageCache.set(hash, src);
             console.log(`💾 Cached image data for hash ${hash.substring(0, 8)}...`);
         }
+        
         // Check if we already have thumbnails
         const hasThumbnails = hash && window.thumbnailCache && window.thumbnailCache.hasThumbnails(hash);
         
@@ -142,6 +143,12 @@ class ImageNode extends BaseNode {
             return;
         }
         
+        // DISABLED: Canvas2D image loading - only WebGL handles images now
+        // WebGL will handle all texture loading through its LOD system
+        this.loadingState = 'webgl-only';
+        return;
+        
+        /* DISABLED CODE - keeping for reference
         try {
             // Load image with progress tracking
             this.img = await this.loadImageAsyncOptimized(imageSrc);
@@ -287,6 +294,7 @@ class ImageNode extends BaseNode {
             this.loadingState = 'error';
             this.loadingProgress = 0;
         }
+        */ // END OF DISABLED CODE
     }
     
     loadImageAsync(src) {
@@ -633,38 +641,23 @@ class ImageNode extends BaseNode {
      * Returns: { image, quality, useSmoothing } or null
      */
     getBestAvailableImage() {
+        // CANVAS2D IS NOW DISPLAY-ONLY - Never return full images
+        // WebGL handles all image loading through its LOD system
+        
         const scale = this.graph?.canvas?.viewport?.scale || 1;
         const screenWidth = this.size[0] * scale;
         const screenHeight = this.size[1] * scale;
-        const requiredLOD = this.getOptimalLOD(screenWidth, screenHeight);
-
-        // If high resolution is required, try to use the full image first.
-        if (requiredLOD === null) {
-            if (this.img && this.img.complete) {
-                return { image: this.img, quality: 'full', useSmoothing: true };
-            }
-        }
         
-        // Try to find the best available thumbnail using the cache's own logic
+        // Only use thumbnails if available, never full res
         if (this.properties.hash && window.thumbnailCache?.getBestThumbnail) {
             const bestThumbnail = window.thumbnailCache.getBestThumbnail(this.properties.hash, screenWidth, screenHeight);
             if (bestThumbnail) {
-                // Infer size from the canvas dimensions (e.g., max of width/height)
                 const inferredSize = Math.max(bestThumbnail.width, bestThumbnail.height);
                 return { image: bestThumbnail, quality: `thumbnail-${inferredSize}`, useSmoothing: true };
             }
         }
-
-        // Fallback to full image if no suitable thumbnail was found
-        if (this.img && this.img.complete) {
-            return { image: this.img, quality: 'full-fallback', useSmoothing: true };
-        }
         
-        // Fallback to preview image
-        if (this._previewImg && this._previewImg.complete) {
-            return { image: this._previewImg, quality: 'preview', useSmoothing: true };
-        }
-        
+        // Return null to show loading state - WebGL will handle the actual image
         return null;
     }
     
@@ -696,13 +689,9 @@ class ImageNode extends BaseNode {
      * Check if loading ring should be shown (unified logic to prevent flickering)
      */
     shouldShowLoadingRing() {
-        // Only show loading ring if we have NO visual content at all
-        // If we have thumbnails, we can show them immediately without a loading ring
-        const hasThumbnails = this.properties.hash && window.thumbnailCache && 
-                             window.thumbnailCache.hasThumbnails(this.properties.hash);
-        
-        if (hasThumbnails) {
-            return false; // Never show loading ring if we have thumbnails
+        // Always show loading ring when WebGL is waiting for textures
+        if (this._webglWaiting || this.loadingState === 'webgl-only') {
+            return true;
         }
         
         // Show loading ring during initial load when we have nothing to show
@@ -729,12 +718,8 @@ class ImageNode extends BaseNode {
     }
     
     _triggerLazyLoad() {
-        // Only load if not already loading
-        if (!this._lazyLoadTriggered && !this.img && this.loadingState !== 'loading') {
-            this._lazyLoadTriggered = true;
-            console.log(`🔄 Lazy loading full image for ${this.properties.hash?.substring(0, 8)}...`);
-            this.setImage(this.properties.serverUrl, this.properties.filename, this.properties.hash);
-        }
+        // DISABLED: WebGL handles all image loading
+        // Canvas2D is display-only now
     }
     
     /**
@@ -920,17 +905,7 @@ class ImageNode extends BaseNode {
                 // Draw the cached render
                 ctx.drawImage(cachedRender, 0, 0, this.size[0], this.size[1]);
                 
-                // Still need to check for lazy load
-                this._cachedRenderData = this._cachedRenderData || this.getBestAvailableImage();
-                if (this._cachedRenderData?.quality === 'preview' && !this._lazyLoadScheduled) {
-                    this._lazyLoadScheduled = true;
-                    requestIdleCallback(() => {
-                        if (!this.img && this.properties.hash) {
-                            console.log(`⏰ Background loading full image for ${this.properties.hash.substring(0, 8)}...`);
-                            this.setImage(this.properties.serverUrl, this.properties.filename, this.properties.hash);
-                        }
-                    }, { timeout: 2000 });
-                }
+                // DISABLED: Lazy loading - WebGL handles all image loading
                 return;
             }
         }
@@ -966,17 +941,7 @@ class ImageNode extends BaseNode {
                 this._drawLODStatus(ctx, this._webglLOD);
             }
             
-            // If we're only showing a low-quality image, schedule lazy load of better quality
-            if ((imageData.quality === 'preview' || (imageData.quality === 'thumbnail' && !this.img)) && !this._lazyLoadScheduled && !this.img) {
-                this._lazyLoadScheduled = true;
-                console.log(`📸 Scheduling lazy load for ${this.properties.hash?.substring(0, 8)} (current: ${imageData.quality})`);
-                requestIdleCallback(() => {
-                    if (!this.img && this.properties.hash) {
-                        console.log(`⏰ Background loading full image for ${this.properties.hash.substring(0, 8)}...`);
-                        this.setImage(this.properties.serverUrl, this.properties.filename, this.properties.hash);
-                    }
-                }, { timeout: 2000 });
-            }
+            // DISABLED: Lazy loading - WebGL handles all image loading
             return;
         }
         
@@ -984,13 +949,8 @@ class ImageNode extends BaseNode {
         const hasThumbnails = this.properties.hash && window.thumbnailCache && 
                              window.thumbnailCache.hasThumbnails(this.properties.hash);
         
-        // Auto-start loading if we have a source but haven't started yet
-        if ((this.loadingState === 'idle' || this.loadingState === 'preview') && 
-            (this.properties.serverUrl || this.properties.hash) && !this.img && !hasThumbnails) {
-            // No thumbnails available, need to load full image
-            console.log(`🔄 Auto-starting image load for ${this.properties.hash?.substring(0, 8)} (state: ${this.loadingState})`);
-            this.setImage(this.properties.serverUrl, this.properties.filename, this.properties.hash);
-        }
+        // DISABLED: Auto-loading - WebGL handles all image loading now
+        // Canvas2D only displays loading states and thumbnails
         
         // Check unified loading ring condition
         if (this.shouldShowLoadingRing()) {

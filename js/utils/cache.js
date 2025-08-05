@@ -137,7 +137,7 @@ class ThumbnailCache {
         
         // Memory management - significantly increased to prevent cache thrashing
         this.maxHashEntries = 5000; // Much higher limit to utilize available memory
-        this.maxMemoryBytes = 1 * 1024 * 1024 * 1024; // 1GB for thumbnails (half of total 2GB)
+        this.maxMemoryBytes = 1.5 * 1024 * 1024 * 1024; // 1.5GB for thumbnails (increased from 1GB)
         this.currentMemoryUsage = 0; // Track actual memory usage
         this.accessOrder = new Map(); // Track access order for LRU eviction
         this.lastCleanup = Date.now();
@@ -145,10 +145,21 @@ class ThumbnailCache {
         
         // Throttling for performance
         this.activeGenerations = 0;
-        this.maxConcurrentGenerations = 2; // Limit concurrent thumbnail generation
+        this.baseMaxConcurrentGenerations = 4; // Base value, can be adjusted dynamically
+        this.maxConcurrentGenerations = 4; // Current value, adjusted based on performance
         this.generationQueue = []; // Queue for pending generations
         this.lowPriorityQueue = []; // Separate queue for low priority (preload) requests
         this.frameRateThrottle = 16; // Minimum 16ms between operations to maintain 60fps
+        
+        // Adaptive performance monitoring
+        this._performanceMonitor = {
+            lastFrameTime: performance.now(),
+            frameTimeHistory: [],
+            maxHistorySize: 30,
+            targetFrameTime: 16.67, // 60 FPS target
+            adjustmentCooldown: 1000, // ms between adjustments
+            lastAdjustment: 0
+        };
         
         // Initialize persistent storage
         this._initializePersistentStorage();
@@ -157,6 +168,10 @@ class ThumbnailCache {
         this._visibleNodeCache = null;
         this._lastViewportUpdate = 0;
         this._viewportCacheTimeout = 100; // ms - only update every 100ms max
+        
+        // Enhanced viewport tracking
+        this._activelyViewingCache = null; // Nodes being viewed at high zoom
+        this._viewportPadding = 500; // Increased from 200px for better preloading
         
         console.log(`🧹 ThumbnailCache initialized with ${this.maxHashEntries} entries / ${(this.maxMemoryBytes / (1024 * 1024)).toFixed(0)}MB limit`);
     }
@@ -345,34 +360,62 @@ class ThumbnailCache {
         
         if (!needCountEviction && !needMemoryEviction) return;
         
-        // Skip expensive visible node detection if we're not under extreme pressure
+        // Skip expensive visible node detection if we're not under extreme pressure (respecting ENABLE_AGGRESSIVE_EVICTION=false)
         const underExtremePressure = this.currentMemoryUsage > this.maxMemoryBytes * 1.2;
         
         // Calculate targets
         const entriesToRemove = needCountEviction ? this.cache.size - this.maxHashEntries : 0;
         const memoryToFree = needMemoryEviction ? this.currentMemoryUsage - (this.maxMemoryBytes * 0.9) : 0; // Free to 90% of limit
         
-        // Get currently visible nodes to protect them from eviction - only if under extreme pressure
-        const visibleHashes = underExtremePressure ? this._getVisibleNodeHashes() : new Set();
+        // Get viewport state - only check if under extreme pressure or always protect actively viewing
+        const activelyViewingHashes = this._getActivelyViewingHashes(); // Always protect these
+        const visibleHashes = underExtremePressure && CONFIG.PERFORMANCE.ENABLE_AGGRESSIVE_EVICTION ? 
+            this._getVisibleNodeHashes() : new Set();
         
-        // Sort entries by priority: visible nodes last (lowest priority for eviction)
+        // Sort entries by priority
         const sortedEntries = Array.from(this.accessOrder.entries())
-            .map(([hash, accessTime]) => ({
-                hash,
-                accessTime,
-                isVisible: underExtremePressure ? visibleHashes.has(hash) : false,
-                priority: (underExtremePressure && visibleHashes.has(hash)) ? 1000000 + accessTime : accessTime // Visible nodes get high priority
-            }))
+            .map(([hash, accessTime]) => {
+                const isActivelyViewing = activelyViewingHashes.has(hash);
+                const isVisible = visibleHashes.has(hash);
+                
+                // Priority levels:
+                // 1. Actively viewing (highest priority - never evict unless absolutely necessary)
+                // 2. Visible in viewport (high priority)
+                // 3. Recently accessed (medium priority)
+                // 4. Old entries (low priority - evict first)
+                let priority = accessTime;
+                
+                if (isActivelyViewing) {
+                    priority = 2000000 + accessTime; // Extremely high priority
+                } else if (isVisible) {
+                    priority = 1000000 + accessTime; // High priority
+                }
+                
+                return {
+                    hash,
+                    accessTime,
+                    isActivelyViewing,
+                    isVisible,
+                    priority
+                };
+            })
             .sort((a, b) => a.priority - b.priority); // Lowest priority first (oldest non-visible)
         
         let removed = 0;
         let freedMemory = 0;
+        let skippedActivelyViewing = 0;
         
         for (const entry of sortedEntries) {
             // Check if we've met our targets
             if (removed >= entriesToRemove && freedMemory >= memoryToFree) break;
             
-            const { hash, accessTime, isVisible } = entry;
+            const { hash, accessTime, isActivelyViewing, isVisible } = entry;
+            
+            // Never evict actively viewing images unless we're critically low on memory
+            if (isActivelyViewing && freedMemory < memoryToFree * 0.95) {
+                skippedActivelyViewing++;
+                continue;
+            }
             
             // Skip visible nodes unless we're under extreme memory pressure
             if (isVisible && freedMemory < memoryToFree * 0.8) {
@@ -400,7 +443,9 @@ class ThumbnailCache {
             removed++;
         }
         
-        console.log(`🧹 Evicted ${removed} entries, freed ${(freedMemory / (1024 * 1024)).toFixed(1)}MB. Cache: ${this.cache.size} entries, ${(this.currentMemoryUsage / (1024 * 1024)).toFixed(1)}MB`);
+        console.log(`🧹 Evicted ${removed} entries, freed ${(freedMemory / (1024 * 1024)).toFixed(1)}MB. ` +
+                   `Cache: ${this.cache.size} entries, ${(this.currentMemoryUsage / (1024 * 1024)).toFixed(1)}MB. ` +
+                   `Protected ${skippedActivelyViewing} actively viewing images`);
     }
     
     // Get hashes of currently visible nodes
@@ -419,8 +464,8 @@ class ThumbnailCache {
                 const viewport = window.app.graphCanvas.viewport;
                 const nodes = window.app.graph.nodes;
                 
-                // Get viewport bounds with some padding
-                const padding = 200; // Extra padding to preload nearby images
+                // Get viewport bounds with increased padding
+                const padding = this._viewportPadding; // Use configurable padding
                 const viewBounds = {
                     left: -viewport.offset[0] - padding,
                     top: -viewport.offset[1] - padding,
@@ -451,6 +496,75 @@ class ThumbnailCache {
         this._lastViewportUpdate = now;
         
         return visibleHashes;
+    }
+    
+    // Get hashes of nodes being actively viewed (zoomed in)
+    _getActivelyViewingHashes() {
+        // Use cached result if still valid
+        const now = Date.now();
+        if (this._activelyViewingCache && 
+            (now - this._lastViewportUpdate) < this._viewportCacheTimeout) {
+            return this._activelyViewingCache;
+        }
+        
+        const activelyViewingHashes = new Set();
+        
+        try {
+            if (window.app?.graph?.nodes && window.app?.graphCanvas?.viewport) {
+                const viewport = window.app.graphCanvas.viewport;
+                const nodes = window.app.graph.nodes;
+                const scale = viewport.scale;
+                
+                // Consider "actively viewing" if zoomed in beyond 50% scale
+                // and the image takes up significant viewport space
+                if (scale > 0.5) {
+                    const viewportWidth = viewport.canvas.width;
+                    const viewportHeight = viewport.canvas.height;
+                    const minCoverage = 0.25; // Image must cover at least 25% of viewport
+                    
+                    // Get unpadded viewport bounds for active viewing
+                    const viewBounds = {
+                        left: -viewport.offset[0],
+                        top: -viewport.offset[1],
+                        right: -viewport.offset[0] + viewportWidth / scale,
+                        bottom: -viewport.offset[1] + viewportHeight / scale
+                    };
+                    
+                    for (const node of nodes) {
+                        if (node.type === 'media/image' && node.properties?.hash) {
+                            const [x, y] = node.pos;
+                            const [w, h] = node.size;
+                            
+                            // Calculate intersection with viewport
+                            const intersectLeft = Math.max(x, viewBounds.left);
+                            const intersectTop = Math.max(y, viewBounds.top);
+                            const intersectRight = Math.min(x + w, viewBounds.right);
+                            const intersectBottom = Math.min(y + h, viewBounds.bottom);
+                            
+                            if (intersectRight > intersectLeft && intersectBottom > intersectTop) {
+                                // Calculate visible area
+                                const visibleWidth = (intersectRight - intersectLeft) * scale;
+                                const visibleHeight = (intersectBottom - intersectTop) * scale;
+                                const visibleArea = visibleWidth * visibleHeight;
+                                const viewportArea = viewportWidth * viewportHeight;
+                                
+                                // Check if image covers significant portion of viewport
+                                if (visibleArea / viewportArea >= minCoverage) {
+                                    activelyViewingHashes.add(node.properties.hash);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        } catch (error) {
+            console.error('Error getting actively viewing hashes:', error);
+        }
+        
+        // Cache the result
+        this._activelyViewingCache = activelyViewingHashes;
+        
+        return activelyViewingHashes;
     }
     
     // Periodic cleanup
@@ -603,10 +717,65 @@ class ThumbnailCache {
     }
     
     /**
+     * Monitor frame performance and adjust concurrency
+     * @private
+     */
+    _updatePerformanceMetrics() {
+        const now = performance.now();
+        const frameTime = now - this._performanceMonitor.lastFrameTime;
+        this._performanceMonitor.lastFrameTime = now;
+        
+        // Add to history
+        this._performanceMonitor.frameTimeHistory.push(frameTime);
+        if (this._performanceMonitor.frameTimeHistory.length > this._performanceMonitor.maxHistorySize) {
+            this._performanceMonitor.frameTimeHistory.shift();
+        }
+        
+        // Check if we should adjust concurrency
+        if (now - this._performanceMonitor.lastAdjustment > this._performanceMonitor.adjustmentCooldown) {
+            this._adjustConcurrencyBasedOnPerformance();
+        }
+    }
+    
+    /**
+     * Adjust concurrent generation limit based on performance
+     * @private
+     */
+    _adjustConcurrencyBasedOnPerformance() {
+        if (this._performanceMonitor.frameTimeHistory.length < 10) return; // Need enough data
+        
+        // Calculate average frame time
+        const avgFrameTime = this._performanceMonitor.frameTimeHistory.reduce((a, b) => a + b, 0) / 
+                           this._performanceMonitor.frameTimeHistory.length;
+        
+        const now = performance.now();
+        
+        // If we're consistently hitting good frame rates, increase concurrency
+        if (avgFrameTime < this._performanceMonitor.targetFrameTime * 0.8) { // 80% of target = good performance
+            if (this.maxConcurrentGenerations < this.baseMaxConcurrentGenerations * 2) {
+                this.maxConcurrentGenerations++;
+                console.log(`📈 Increased concurrent generations to ${this.maxConcurrentGenerations} (good performance)`);
+                this._performanceMonitor.lastAdjustment = now;
+            }
+        }
+        // If frame rate is suffering, decrease concurrency
+        else if (avgFrameTime > this._performanceMonitor.targetFrameTime * 1.5) { // 150% of target = poor performance
+            if (this.maxConcurrentGenerations > 1) {
+                this.maxConcurrentGenerations--;
+                console.log(`📉 Decreased concurrent generations to ${this.maxConcurrentGenerations} (poor performance)`);
+                this._performanceMonitor.lastAdjustment = now;
+            }
+        }
+    }
+    
+    /**
      * Process the next item in the generation queue
      */
     _processNextInQueue() {
         if (this.activeGenerations >= this.maxConcurrentGenerations) return;
+        
+        // Update performance metrics
+        this._updatePerformanceMetrics();
         
         // Process normal/high priority queue first
         if (this.generationQueue.length > 0) {
@@ -652,36 +821,61 @@ class ThumbnailCache {
         console.log(`🎨 Generating thumbnails for ${hash.substring(0, 8)} from source ${sourceDimensions.width}x${sourceDimensions.height}`);
         
         // Phase 1: Generate priority thumbnails immediately (e.g., 64px)
-        console.log(`🖼️ Generating priority thumbnails for ${hash.substring(0, 8)}... Sizes:`, this.prioritySizes);
+        const isBulkImport = (this.generationQueue.length + this.lowPriorityQueue.length) > 10;
         
-        for (let i = 0; i < this.prioritySizes.length; i++) {
-            const size = this.prioritySizes[i];
+        if (isBulkImport && priority !== 'high') {
+            console.log(`🚀 Fast-track priority thumbnail for ${hash.substring(0, 8)} (bulk import mode)`);
+            // In bulk import mode, only generate the smallest thumbnail initially
+            const size = this.prioritySizes[0]; // Just 64px
             
-            // Skip if this size already exists (e.g., 64px from preview)
-            if (thumbnails.has(size)) {
-                
-                continue;
+            if (!thumbnails.has(size)) {
+                const canvas = this._generateSingleThumbnail(sourceImage, size);
+                if (canvas) {
+                    thumbnails.set(size, canvas);
+                    this.currentMemoryUsage += this._calculateCanvasMemory(canvas);
+                }
             }
             
-            const canvas = this._generateSingleThumbnail(sourceImage, size);
-            
-            // Only store if we actually generated a thumbnail
-            if (canvas) {
-                thumbnails.set(size, canvas);
-                this.currentMemoryUsage += this._calculateCanvasMemory(canvas);
-            }
-            
-            const progress = 0.2 + (0.6 * (i + 1) / this.prioritySizes.length);
-            if (progressCallback) {
-                progressCallback(progress); // 20-80% for priority sizes
-            }
-            // Report to unified progress system
+            if (progressCallback) progressCallback(0.5);
             if (window.imageProcessingProgress) {
-                window.imageProcessingProgress.updateThumbnailProgress(hash, progress);
+                window.imageProcessingProgress.updateThumbnailProgress(hash, 0.5);
             }
             
-            // Yield control after each priority thumbnail for responsiveness
-            await new Promise(resolve => setTimeout(resolve, this.frameRateThrottle));
+            // Minimal yield for bulk imports
+            await new Promise(resolve => setTimeout(resolve, 4));
+        } else {
+            // Normal mode - generate all priority sizes
+            console.log(`🖼️ Generating priority thumbnails for ${hash.substring(0, 8)}... Sizes:`, this.prioritySizes);
+            
+            for (let i = 0; i < this.prioritySizes.length; i++) {
+                const size = this.prioritySizes[i];
+                
+                // Skip if this size already exists (e.g., 64px from preview)
+                if (thumbnails.has(size)) {
+                    
+                    continue;
+                }
+                
+                const canvas = this._generateSingleThumbnail(sourceImage, size);
+                
+                // Only store if we actually generated a thumbnail
+                if (canvas) {
+                    thumbnails.set(size, canvas);
+                    this.currentMemoryUsage += this._calculateCanvasMemory(canvas);
+                }
+                
+                const progress = 0.2 + (0.6 * (i + 1) / this.prioritySizes.length);
+                if (progressCallback) {
+                    progressCallback(progress); // 20-80% for priority sizes
+                }
+                // Report to unified progress system
+                if (window.imageProcessingProgress) {
+                    window.imageProcessingProgress.updateThumbnailProgress(hash, progress);
+                }
+                
+                // Yield control after each priority thumbnail for responsiveness
+                await new Promise(resolve => setTimeout(resolve, this.frameRateThrottle));
+            }
         }
         
         // Phase 2: Wait for higher quality thumbnails to be generated
@@ -1023,6 +1217,30 @@ class ThumbnailCache {
             : serverFilename;
         
         console.log(`🌐 Loading server thumbnails for ${hash.substring(0, 8)} (${nameWithoutExt}), sizes: [${sizesToLoad.join(', ')}]`);
+        
+        // First, try to generate thumbnails on server if they don't exist
+        try {
+            console.log(`🔧 Requesting thumbnail generation for ${hash.substring(0, 8)}`);
+            const generateResponse = await fetch(`${CONFIG.SERVER.API_BASE}/api/thumbnails/generate`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                    hash: hash,
+                    sizes: sizesToLoad
+                })
+            });
+            
+            if (generateResponse.ok) {
+                const result = await generateResponse.json();
+                console.log(`✅ Thumbnail generation successful for ${hash.substring(0, 8)}:`, result.generated);
+            } else {
+                console.warn(`⚠️ Thumbnail generation failed for ${hash.substring(0, 8)}:`, generateResponse.status);
+            }
+        } catch (error) {
+            console.warn(`⚠️ Error requesting thumbnail generation for ${hash.substring(0, 8)}:`, error);
+        }
         
         // Get or create thumbnail map for this hash
         let thumbnails = this.cache.get(hash);

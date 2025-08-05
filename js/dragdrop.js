@@ -633,7 +633,13 @@ class DragDropManager {
                             if (cachedData && window.thumbnailCache) {
                                 const img = new Image();
                                 img.onload = () => {
-                                    window.thumbnailCache.generateThumbnailsProgressive(hash, img).then(() => {
+                                    // For deferred images in bulk imports, use low priority
+                                    window.thumbnailCache.generateThumbnailsProgressive(
+                                        hash, 
+                                        img,
+                                        null, // No progress callback needed
+                                        'low' // Low priority for deferred images
+                                    ).then(() => {
                                         console.log(`✅ Thumbnails generated for deferred image ${hash.substring(0, 8)}`);
                                         
                                         // Clear cached thumbnail to force refresh
@@ -750,15 +756,19 @@ class DragDropManager {
         const nodes = Array.from(fileNodeMap.values());
         this.enableServerSync(nodes);
         
-        // Complete pipeline after uploads finish
+        // Clear bulk operation flag once initial processing is done
+        // This allows user interactions to proceed normally
+        setTimeout(() => {
+            if (window.app) window.app.bulkOperationInProgress = false;
+            if (window.memoryManager) window.memoryManager.bulkOperationInProgress = false;
+            console.log('✅ Bulk operation flag cleared - user interactions now prioritized');
+        }, 1000); // Clear after 1 second instead of 5
+        
+        // Complete pipeline notification after uploads finish
         setTimeout(() => {
             if (pipeline.progressId) {
                 window.unifiedNotifications.remove(pipeline.progressId);
             }
-            
-            // Clear bulk operation flag
-            if (window.app) window.app.bulkOperationInProgress = false;
-            if (window.memoryManager) window.memoryManager.bulkOperationInProgress = false;
             
             // Show completion message
             const successCount = pipeline.completed / 4; // Rough estimate
@@ -955,15 +965,17 @@ class DragDropManager {
                 // Add node to graph and execute through operation pipeline for undo support
                 this.graph.add(node);
                 
-                // Execute through operation pipeline for server sync (async)
-                window.app.operationPipeline.execute('node_create', {
+                // Queue the node creation for server sync to avoid overwhelming the server
+                // We'll sync these in batches after all nodes are created locally
+                if (!this._pendingNodeCreations) {
+                    this._pendingNodeCreations = [];
+                }
+                this._pendingNodeCreations.push({
                     type: node.type,
                     pos: node.pos,
                     size: node.size,
                     properties: node.properties,
                     id: node.id
-                }).catch(error => {
-                    
                 });
                 
                 // Show loading state immediately (grey box) 
@@ -1031,8 +1043,50 @@ class DragDropManager {
                 // Don't throw - node creation was successful, selection is just a UX enhancement
             }
         }
+        
+        // Start processing the queued node creations in batches
+        if (this._pendingNodeCreations && this._pendingNodeCreations.length > 0) {
+            this.processPendingNodeCreations();
+        }
 
         return nodes;
+    }
+    
+    /**
+     * Process pending node creations in batches to avoid overwhelming the server
+     */
+    async processPendingNodeCreations() {
+        if (!this._pendingNodeCreations || this._pendingNodeCreations.length === 0) return;
+        
+        const BATCH_SIZE = 10; // Send 10 at a time
+        const BATCH_DELAY = 500; // Wait 500ms between batches
+        
+        console.log(`📦 Processing ${this._pendingNodeCreations.length} node creations in batches of ${BATCH_SIZE}`);
+        
+        while (this._pendingNodeCreations.length > 0) {
+            // Take a batch
+            const batch = this._pendingNodeCreations.splice(0, BATCH_SIZE);
+            
+            // Send each node creation in the batch
+            const promises = batch.map(nodeData => 
+                window.app.operationPipeline.execute('node_create', nodeData)
+                    .catch(error => {
+                        console.error(`Failed to sync node ${nodeData.id}:`, error);
+                    })
+            );
+            
+            // Wait for this batch to complete
+            await Promise.all(promises);
+            
+            console.log(`✅ Synced batch of ${batch.length} nodes, ${this._pendingNodeCreations.length} remaining`);
+            
+            // Wait before sending next batch
+            if (this._pendingNodeCreations.length > 0) {
+                await new Promise(resolve => setTimeout(resolve, BATCH_DELAY));
+            }
+        }
+        
+        console.log('✅ All node creations synced to server');
     }
     
     /**
@@ -1085,15 +1139,44 @@ class DragDropManager {
      * Set up viewport-based loading for large image sets
      */
     setupViewportBasedLoading(fileNodeMap) {
+        console.log(`🔭 Setting up viewport-based loading for ${fileNodeMap.size} images`);
+        
+        // Track loading state
+        const loadingState = {
+            activeLoads: 0,
+            maxConcurrentLoads: 5, // Increased from 3 for better performance
+            lastCheck: 0,
+            checkInterval: 100, // ms between checks
+            priorityQueue: [] // Queue for loading based on proximity to viewport
+        };
         
         // Create a viewport observer
         const checkVisibleNodes = () => {
             if (!window.app?.graphCanvas?.viewport) return;
             
+            const now = Date.now();
+            if (now - loadingState.lastCheck < loadingState.checkInterval) return;
+            loadingState.lastCheck = now;
+            
             const viewport = window.app.graphCanvas.viewport;
             const nodes = Array.from(fileNodeMap.values());
-            let loadedCount = 0;
-            let deferredCount = 0;
+            const scale = viewport.scale;
+            
+            // Clear and rebuild priority queue
+            loadingState.priorityQueue = [];
+            
+            // Calculate viewport bounds with extra padding for preloading
+            const padding = 500; // Match ThumbnailCache padding
+            const viewBounds = {
+                left: -viewport.offset[0] - padding,
+                top: -viewport.offset[1] - padding,
+                right: -viewport.offset[0] + viewport.canvas.width / scale + padding,
+                bottom: -viewport.offset[1] + viewport.canvas.height / scale + padding
+            };
+            
+            // Center of viewport for distance calculations
+            const viewportCenterX = -viewport.offset[0] + viewport.canvas.width / scale / 2;
+            const viewportCenterY = -viewport.offset[1] + viewport.canvas.height / scale / 2;
             
             for (const node of nodes) {
                 // Skip if already loading or loaded full image
@@ -1102,33 +1185,59 @@ class DragDropManager {
                     continue;
                 }
                 
-                // Check if node is visible using the viewport manager
-                const isVisible = viewport.isNodeVisible(node, CONFIG.PERFORMANCE.VISIBILITY_MARGIN);
+                const [x, y] = node.pos;
+                const [w, h] = node.size;
                 
-                if (isVisible && node.loadingState === 'deferred') {
-                    // Load the full image
-                    node.loadingState = 'loading';
-                    node.setImage(null, node.properties.filename, node.properties.hash);
-                    loadedCount++;
+                // Check if node intersects with extended viewport
+                const isNearViewport = x + w >= viewBounds.left && x <= viewBounds.right &&
+                                      y + h >= viewBounds.top && y <= viewBounds.bottom;
+                
+                if (isNearViewport && node.loadingState === 'deferred') {
+                    // Calculate distance from viewport center for prioritization
+                    const nodeCenterX = x + w / 2;
+                    const nodeCenterY = y + h / 2;
+                    const distance = Math.sqrt(
+                        Math.pow(nodeCenterX - viewportCenterX, 2) + 
+                        Math.pow(nodeCenterY - viewportCenterY, 2)
+                    );
                     
-                    // Limit how many we load at once to prevent overwhelming the system
-                    if (loadedCount >= 3) break;
-                } else if (!isVisible && node.loadingState === 'loaded' && node.img && 
-                          !window.memoryManager?.bulkOperationInProgress) {
-                    // Consider unloading images that are far outside viewport during memory pressure
-                    const memoryUsage = window.memoryManager?.getMemoryUsagePercent() || 0;
-                    if (memoryUsage > 85) {
-                        // Only unload if really far away (3x margin)
-                        if (!viewport.isNodeVisible(node, CONFIG.PERFORMANCE.VISIBILITY_MARGIN * 3)) {
-                            node.degradeQuality('thumbnail-only');
-                            deferredCount++;
-                        }
-                    }
+                    loadingState.priorityQueue.push({
+                        node,
+                        distance,
+                        priority: scale > 0.5 ? distance / 2 : distance // Higher priority when zoomed in
+                    });
                 }
             }
             
-            if (loadedCount > 0 || deferredCount > 0) {
+            // Sort by priority (closest first)
+            loadingState.priorityQueue.sort((a, b) => a.priority - b.priority);
+            
+            // Process queue
+            while (loadingState.activeLoads < loadingState.maxConcurrentLoads && 
+                   loadingState.priorityQueue.length > 0) {
+                const { node } = loadingState.priorityQueue.shift();
                 
+                // Load the full image
+                node.loadingState = 'loading';
+                loadingState.activeLoads++;
+                
+                console.log(`📸 Loading deferred image: ${node.properties.filename} (${loadingState.activeLoads}/${loadingState.maxConcurrentLoads} active)`);
+                
+                // Track when load completes
+                const originalSetImage = node.setImage.bind(node);
+                node.setImage = async function(...args) {
+                    await originalSetImage(...args);
+                    loadingState.activeLoads--;
+                    // Restore original method
+                    node.setImage = originalSetImage;
+                };
+                
+                node.setImage(null, node.properties.filename, node.properties.hash);
+            }
+            
+            // Log progress if we loaded any images
+            if (loadingState.activeLoads > 0 || loadingState.priorityQueue.length > 0) {
+                console.log(`📊 Viewport loading: ${loadingState.activeLoads} active, ${loadingState.priorityQueue.length} queued`);
             }
         };
         

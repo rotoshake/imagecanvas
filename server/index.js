@@ -540,6 +540,65 @@ class ImageCanvasServer {
             res.sendFile(thumbnailPath);
         });
 
+        // Generate thumbnails endpoint
+        this.app.post('/api/thumbnails/generate', async (req, res) => {
+            try {
+                const { hash, sizes } = req.body;
+                
+                if (!hash || !Array.isArray(sizes)) {
+                    return res.status(400).json({ 
+                        success: false, 
+                        error: 'Missing hash or sizes array' 
+                    });
+                }
+                
+                // Find the file by hash
+                const file = await this.db.get('SELECT * FROM files WHERE hash = ?', [hash]);
+                if (!file) {
+                    return res.status(404).json({ 
+                        success: false, 
+                        error: 'File not found for hash' 
+                    });
+                }
+                
+                const filePath = path.join(__dirname, 'uploads', file.filename);
+                
+                // Check if file exists on disk
+                try {
+                    await fs.access(filePath);
+                } catch (error) {
+                    return res.status(404).json({ 
+                        success: false, 
+                        error: 'Original file not found on disk' 
+                    });
+                }
+                
+                // Generate thumbnails for requested sizes
+                console.log(`🔧 Regenerating thumbnails for ${hash.substring(0, 8)} (${file.filename}), sizes: [${sizes.join(', ')}]`);
+                await this.generateThumbnails(filePath, file.filename, sizes);
+                
+                // Build response URLs
+                const nameWithoutExt = path.parse(file.filename).name;
+                const urls = {};
+                for (const size of sizes) {
+                    urls[size] = `/thumbnails/${size}/${nameWithoutExt}.webp`;
+                }
+                
+                res.json({
+                    success: true,
+                    generated: sizes,
+                    urls: urls
+                });
+                
+            } catch (error) {
+                console.error('❌ Thumbnail generation failed:', error);
+                res.status(500).json({ 
+                    success: false, 
+                    error: 'Thumbnail generation failed' 
+                });
+            }
+        });
+
         // Canvas endpoints
         this.app.get('/canvases', async (req, res) => {
             try {
@@ -2322,8 +2381,8 @@ class ImageCanvasServer {
         }).single('file');
     }
 
-    async generateThumbnails(filePath, filename) {
-        const thumbnailSizes = [64, 128, 256, 512, 1024, 2048];
+    async generateThumbnails(filePath, filename, requestedSizes = null) {
+        const thumbnailSizes = requestedSizes || [64, 128, 256, 512, 1024, 2048];
         const nameWithoutExt = path.parse(filename).name;
         
         try {

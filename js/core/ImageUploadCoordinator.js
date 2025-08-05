@@ -41,7 +41,10 @@ class ImageUploadCoordinator {
             return;
         }
         
-        // Checking upload status for node
+        // Skip if we've already failed this node
+        if (this.failedNodes.has(node.id)) {
+            return;
+        }
         
         // Check if upload is already pending
         if (this.pendingUploads.has(hash)) {
@@ -50,7 +53,7 @@ class ImageUploadCoordinator {
             return;
         }
         
-        // Check if upload is already being handled by imageUploadManager
+        // Check if upload is already being handled by imageUploadManager or marked by dragdrop
         if (window.imageUploadManager?.isUploading(hash)) {
             console.log(`📤 Upload already in progress via imageUploadManager for ${hash.substring(0, 8)}...`);
             this.observeUpload(hash, node);
@@ -62,36 +65,32 @@ class ImageUploadCoordinator {
         if (!cached?.url?.startsWith('data:')) {
             // For deferred nodes, the data might not be cached yet
             // This is OK - the dragdrop.js upload process will handle it
-            if (node.loadingState === 'deferred' || node._imageDataReady) {
-                
+            if (node.loadingState === 'deferred' || node._imageDataReady || 
+                node.loadingState === 'loading' || node.loadingState === 'preview') {
+                // These states indicate the node is being handled elsewhere
                 return;
             }
             
-            // Schedule a retry - the cache might be populated soon
-            if (!node._uploadRetryCount) {
-                node._uploadRetryCount = 0;
-            }
-            
-            if (node._uploadRetryCount < 5) {
-                node._uploadRetryCount++;
-                const retryDelay = 500 * node._uploadRetryCount; // 500ms, 1s, 1.5s, 2s, 2.5s
+            // For nodes that truly need data, do a single retry after a delay
+            if (!node._uploadCheckScheduled) {
+                node._uploadCheckScheduled = true;
                 
-                // console.log(`⏳ Cache not ready for ${hash.substring(0, 8)}... - retry ${node._uploadRetryCount}/5 in ${retryDelay}ms`);
-                
+                // Single delayed check instead of multiple retries
                 setTimeout(() => {
                     // Check if node still exists and needs upload
                     if (this.app.graph.getNodeById(node.id) && !node.properties.serverUrl) {
-                        this.onImageNodeCreated(node);
+                        const cached = this.app.imageResourceCache?.get(hash);
+                        if (cached?.url?.startsWith('data:')) {
+                            // Data is now available, proceed with upload
+                            console.log(`✅ Found cached data for upload: ${hash.substring(0, 8)}... (${cached.originalFilename || 'unknown file'})`);
+                            this.startUpload(node, cached);
+                        } else {
+                            // Still no data - mark as failed to avoid repeated checks
+                            this.failedNodes.add(node.id);
+                        }
                     }
-                }, retryDelay);
-                return;
+                }, 2000); // Single 2-second delay
             }
-            
-            // Max retries reached
-            // console.warn(`⚠️ No cached data URL found for hash ${hash.substring(0, 8)}... after ${node._uploadRetryCount} retries`);
-            // console.log(`   Cache has data: ${!!cached}, URL starts with data: ${cached?.url?.startsWith('data:')}`);
-            // Mark this node as failed to avoid checking it again
-            this.failedNodes.add(node.id);
             return;
         }
         
@@ -236,7 +235,7 @@ class ImageUploadCoordinator {
                     hash: hash,
                     serverUrl: uploadResult.url,
                     serverFilename: uploadResult.serverFilename
-                });
+                }, { priority: 'low' }); // Low priority so user interactions go first
                 // Server notified of upload completion
             } catch (error) {
                 console.error('❌ Failed to notify server:', error);
@@ -250,7 +249,7 @@ class ImageUploadCoordinator {
                                 hash: hash,
                                 serverUrl: uploadResult.url,
                                 serverFilename: uploadResult.serverFilename
-                            });
+                            }, { priority: 'low' });
                             
                         } catch (retryError) {
                             console.error('❌ Upload notification retry failed:', retryError);

@@ -325,15 +325,15 @@ class ImageUploadManager {
      */
     _adjustConcurrentLimit() {
         if (this.isBulkOperation) {
-            // For bulk operations, use higher concurrency
+            // For bulk operations, use LOWER concurrency to avoid overwhelming server
             const networkQuality = this._getNetworkQuality();
             
             if (networkQuality === 'excellent' && this.uploadStats.failureRate < 0.05) {
-                this.currentConcurrentLimit = this.maxConcurrentUploads;
+                this.currentConcurrentLimit = 6; // Reduced from 12
             } else if (networkQuality === 'good' && this.uploadStats.failureRate < 0.1) {
-                this.currentConcurrentLimit = Math.min(8, this.maxConcurrentUploads);
+                this.currentConcurrentLimit = 4; // Reduced from 8
             } else {
-                this.currentConcurrentLimit = Math.min(6, this.maxConcurrentUploads);
+                this.currentConcurrentLimit = 3; // Reduced from 6
             }
         } else {
             // For normal operations, use base limit

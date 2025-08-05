@@ -168,6 +168,11 @@ class OperationPipeline {
             throw new Error(`Validation failed: ${validation.error}`);
         }
         
+        // Determine priority - user interactions get high priority
+        const userInteractionOps = ['node_move', 'node_resize', 'node_rotate', 'node_delete', 'node_property_update'];
+        const isUserInteraction = userInteractionOps.includes(command.type);
+        options.priority = options.priority || (isUserInteraction ? 'high' : 'normal');
+        
         // Extract affected node IDs and register with dependency tracker
         if (this.dependencyTracker) {
             const nodeIds = this.extractNodeIds(command);
@@ -211,7 +216,18 @@ class OperationPipeline {
                     this.pendingMerge = null;
                 }
                 
-                this.executionQueue.push(queueItem);
+                // Insert based on priority
+                if (options.priority === 'high') {
+                    // Find the first non-high priority item and insert before it
+                    let insertIndex = this.executionQueue.findIndex(item => item.options.priority !== 'high');
+                    if (insertIndex === -1) {
+                        this.executionQueue.push(queueItem);
+                    } else {
+                        this.executionQueue.splice(insertIndex, 0, queueItem);
+                    }
+                } else {
+                    this.executionQueue.push(queueItem);
+                }
             }
             
             this.processQueue();
