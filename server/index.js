@@ -61,6 +61,8 @@ class ImageCanvasServer {
             ? process.env.CORS_ORIGINS.split(',').map(origin => origin.trim())
             : defaultOrigins;
         
+        console.log('🔧 CORS Origins configured:', this.corsOrigins);
+        
         this.app = express();
         this.server = http.createServer(this.app);
         this.io = socketIo(this.server, {

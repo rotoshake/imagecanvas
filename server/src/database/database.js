@@ -1,8 +1,8 @@
-const sqlite3 = require('sqlite3').verbose();
+const Database = require('better-sqlite3');
 const path = require('path');
 const fs = require('fs').promises;
 
-class Database {
+class BetterDatabase {
     constructor(dbPath) {
         this.dbPath = dbPath;
         this.db = null;
@@ -14,21 +14,21 @@ class Database {
         await fs.mkdir(dbDir, { recursive: true });
         
         // Open database connection
-        this.db = new sqlite3.Database(this.dbPath);
+        this.db = new Database(this.dbPath);
         
         // Configure SQLite for optimal performance
-        await this.run('PRAGMA journal_mode = WAL');
-        await this.run('PRAGMA synchronous = NORMAL');
-        await this.run('PRAGMA cache_size = 10000');
-        await this.run('PRAGMA foreign_keys = ON');
-        await this.run('PRAGMA temp_store = MEMORY');
+        this.db.pragma('journal_mode = WAL');
+        this.db.pragma('synchronous = NORMAL');
+        this.db.pragma('cache_size = 10000');
+        this.db.pragma('foreign_keys = ON');
+        this.db.pragma('temp_store = MEMORY');
         
         // Initialize schema
-        await this.createTables();
+        this.createTables();
 
     }
     
-    async createTables() {
+    createTables() {
         const schema = `
             -- Users table
             CREATE TABLE IF NOT EXISTS users (
@@ -50,28 +50,24 @@ class Database {
                 created_at DATETIME DEFAULT CURRENT_TIMESTAMP
             );
             
-            -- Canvas versions for history/undo functionality
-            CREATE TABLE IF NOT EXISTS canvas_versions (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                canvas_id INTEGER NOT NULL REFERENCES canvases(id),
-                version_number INTEGER NOT NULL,
-                canvas_data JSON NOT NULL,
-                changes_summary TEXT,
-                created_by INTEGER NOT NULL REFERENCES users(id),
-                created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-            );
-            
             -- Canvas collaborators
             CREATE TABLE IF NOT EXISTS canvas_collaborators (
                 canvas_id INTEGER NOT NULL REFERENCES canvases(id),
                 user_id INTEGER NOT NULL REFERENCES users(id),
-                permission TEXT CHECK(permission IN ('read', 'write', 'admin')) DEFAULT 'write',
-                invited_by INTEGER REFERENCES users(id),
-                joined_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                role TEXT NOT NULL CHECK (role IN ('viewer', 'editor', 'admin')),
+                added_at DATETIME DEFAULT CURRENT_TIMESTAMP,
                 PRIMARY KEY (canvas_id, user_id)
             );
             
-            -- Real-time operations log for conflict resolution
+            -- Sessions table
+            CREATE TABLE IF NOT EXISTS sessions (
+                id TEXT PRIMARY KEY,
+                user_id INTEGER NOT NULL REFERENCES users(id),
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                last_active DATETIME DEFAULT CURRENT_TIMESTAMP
+            );
+            
+            -- Operations log for collaboration
             CREATE TABLE IF NOT EXISTS operations (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 canvas_id INTEGER NOT NULL REFERENCES canvases(id),
@@ -92,246 +88,220 @@ class Database {
                 file_hash TEXT NOT NULL,
                 uploaded_by INTEGER NOT NULL REFERENCES users(id),
                 canvas_id INTEGER REFERENCES canvases(id),
-                created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+                uploaded_at DATETIME DEFAULT CURRENT_TIMESTAMP
             );
             
-            -- Active sessions for real-time presence
-            CREATE TABLE IF NOT EXISTS active_sessions (
-                id TEXT PRIMARY KEY,
-                user_id INTEGER NOT NULL REFERENCES users(id),
-                canvas_id INTEGER REFERENCES canvases(id),
-                socket_id TEXT NOT NULL,
-                cursor_position JSON,
-                selection_data JSON,
-                last_activity DATETIME DEFAULT CURRENT_TIMESTAMP
-            );
-            
-            -- Canvas state for server-authoritative sync
-            CREATE TABLE IF NOT EXISTS canvas_states (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                canvas_id INTEGER NOT NULL REFERENCES canvases(id),
-                data JSON NOT NULL,
-                version INTEGER DEFAULT 1,
-                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-                UNIQUE(canvas_id)
-            );
-            
-            -- Indexes for performance
-            CREATE INDEX IF NOT EXISTS idx_canvases_owner ON canvases(owner_id);
-            CREATE INDEX IF NOT EXISTS idx_canvas_versions_canvas ON canvas_versions(canvas_id);
-            CREATE INDEX IF NOT EXISTS idx_operations_canvas_sequence ON operations(canvas_id, sequence_number);
-            CREATE INDEX IF NOT EXISTS idx_files_hash ON files(file_hash);
-            CREATE INDEX IF NOT EXISTS idx_active_sessions_canvas ON active_sessions(canvas_id);
-            CREATE INDEX IF NOT EXISTS idx_active_sessions_user ON active_sessions(user_id);
-            CREATE INDEX IF NOT EXISTS idx_canvas_states_canvas ON canvas_states(canvas_id);
+            -- Indices for performance
+            CREATE INDEX IF NOT EXISTS idx_operations_canvas_sequence 
+                ON operations(canvas_id, sequence_number);
+            CREATE INDEX IF NOT EXISTS idx_collaborators_user 
+                ON canvas_collaborators(user_id);
+            CREATE INDEX IF NOT EXISTS idx_files_canvas 
+                ON files(canvas_id);
+            CREATE INDEX IF NOT EXISTS idx_files_hash 
+                ON files(file_hash);
+            CREATE INDEX IF NOT EXISTS idx_sessions_user 
+                ON sessions(user_id);
+            CREATE INDEX IF NOT EXISTS idx_canvases_owner 
+                ON canvases(owner_id);
         `;
         
-        await this.exec(schema);
+        this.db.exec(schema);
         
-        // Apply undo system migrations
-        await this.applyUndoMigrations();
-        
-        // Apply video processing migrations
-        await this.applyVideoMigrations();
-        
-        // Create default user if it doesn't exist
-        const defaultUser = await this.get('SELECT * FROM users WHERE id = 1');
-        if (!defaultUser) {
-            await this.run(
-                'INSERT INTO users (id, username, display_name) VALUES (?, ?, ?)',
-                [1, 'default', 'Default User']
-            );
-            
-        }
+        this.initializeDefaultData();
     }
     
-    async applyUndoMigrations() {
-        try {
-            // Check if migrations have already been applied
-            const columns = await this.all(`PRAGMA table_info(operations)`);
-            const hasTransactionId = columns.some(col => col.name === 'transaction_id');
-            
-            if (!hasTransactionId) {
-                
-                // Add undo support columns to operations table
-                await this.run('ALTER TABLE operations ADD COLUMN transaction_id TEXT');
-                await this.run('ALTER TABLE operations ADD COLUMN undo_data JSON');
-                await this.run(`ALTER TABLE operations ADD COLUMN state TEXT DEFAULT 'applied' CHECK(state IN ('applied', 'undone'))`);
-                await this.run('ALTER TABLE operations ADD COLUMN undone_at DATETIME');
-                await this.run('ALTER TABLE operations ADD COLUMN undone_by INTEGER REFERENCES users(id)');
-                await this.run('ALTER TABLE operations ADD COLUMN redone_at DATETIME');
-                await this.run('ALTER TABLE operations ADD COLUMN redone_by INTEGER REFERENCES users(id)');
-                
-                // Create indexes
-                await this.run('CREATE INDEX IF NOT EXISTS idx_operations_transaction ON operations(transaction_id)');
-                await this.run('CREATE INDEX IF NOT EXISTS idx_operations_state ON operations(state)');
-                await this.run('CREATE INDEX IF NOT EXISTS idx_operations_user_state ON operations(user_id, state)');
-                
-                // Create active transactions table
-                await this.run(`
-                    CREATE TABLE IF NOT EXISTS active_transactions (
-                        id TEXT PRIMARY KEY,
-                        canvas_id INTEGER NOT NULL REFERENCES canvases(id),
-                        user_id INTEGER NOT NULL REFERENCES users(id),
-                        source TEXT,
-                        started_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-                        operation_count INTEGER DEFAULT 0,
-                        state TEXT DEFAULT 'active' CHECK(state IN ('active', 'committed', 'aborted'))
-                    )
-                `);
-                
-                await this.run('CREATE INDEX IF NOT EXISTS idx_active_transactions_user ON active_transactions(user_id, state)');
-                await this.run('CREATE INDEX IF NOT EXISTS idx_active_transactions_canvas ON active_transactions(canvas_id)');
+    initializeDefaultData() {
+        // Create default user if not exists
+        const defaultUserExists = this.db.prepare(
+            'SELECT id FROM users WHERE id = 1'
+        ).get();
+        
+        if (!defaultUserExists) {
+            this.db.prepare(
+                'INSERT INTO users (id, username, display_name) VALUES (?, ?, ?)'
+            ).run(1, 'system', 'System User');
+        }
+        
+        // Create default canvas if not exists
+        const defaultCanvasExists = this.db.prepare(
+            'SELECT id FROM canvases WHERE id = 1'
+        ).get();
+        
+        if (!defaultCanvasExists) {
+            this.db.prepare(
+                'INSERT INTO canvases (id, name, description, owner_id, canvas_data, thumbnail_path) VALUES (?, ?, ?, ?, ?, ?)'
+            ).run(1, 'Welcome Canvas', 'Your first collaborative canvas', 1, '{}', null);
+        }
 
-            }
-        } catch (error) {
-            console.error('⚠️ Error applying undo migrations:', error);
-            // Non-fatal - the system can work without these columns
-        }
     }
     
-    async applyVideoMigrations() {
-        try {
-            // Check if video processing columns exist
-            const columns = await this.all(`PRAGMA table_info(files)`);
-            const hasProcessedFormats = columns.some(col => col.name === 'processed_formats');
-            
-            if (!hasProcessedFormats) {
-                console.log('🎬 Applying video processing migrations...');
-                
-                // Add columns for video processing
-                await this.run('ALTER TABLE files ADD COLUMN processed_formats TEXT');
-                await this.run('ALTER TABLE files ADD COLUMN processing_status TEXT DEFAULT "pending" CHECK(processing_status IN ("pending", "processing", "completed", "failed"))');
-                await this.run('ALTER TABLE files ADD COLUMN processing_started_at DATETIME');
-                await this.run('ALTER TABLE files ADD COLUMN processing_completed_at DATETIME');
-                await this.run('ALTER TABLE files ADD COLUMN processing_error TEXT');
-                
-                console.log('✅ Video processing migrations applied');
-            }
-        } catch (error) {
-            console.error('⚠️ Error applying video migrations:', error);
-            // Non-fatal - the system can work without these columns
-        }
-    }
-    
-    // Promisified database methods
-    run(sql, params = []) {
-        return new Promise((resolve, reject) => {
-            this.db.run(sql, params, function(err) {
-                if (err) reject(err);
-                else resolve({ lastID: this.lastID, changes: this.changes });
-            });
-        });
-    }
-    
-    get(sql, params = []) {
-        return new Promise((resolve, reject) => {
-            this.db.get(sql, params, (err, row) => {
-                if (err) reject(err);
-                else resolve(row);
-            });
-        });
-    }
-    
-    all(sql, params = []) {
-        return new Promise((resolve, reject) => {
-            this.db.all(sql, params, (err, rows) => {
-                if (err) reject(err);
-                else resolve(rows);
-            });
-        });
-    }
-    
-    exec(sql) {
-        return new Promise((resolve, reject) => {
-            this.db.exec(sql, (err) => {
-                if (err) reject(err);
-                else resolve();
-            });
-        });
-    }
-    
-    // Transaction support
-    async transaction(callback) {
-        await this.run('BEGIN TRANSACTION');
-        try {
-            const result = await callback(this);
-            await this.run('COMMIT');
-            return result;
-        } catch (error) {
-            await this.run('ROLLBACK');
-            throw error;
-        }
-    }
-    
-    // Utility methods for common operations
+    // User management
     async createUser(username, displayName = null) {
-        const result = await this.run(
-            'INSERT INTO users (username, display_name) VALUES (?, ?)',
-            [username, displayName]
+        const stmt = this.db.prepare(
+            'INSERT INTO users (username, display_name) VALUES (?, ?)'
         );
-        return result.lastID;
+        const result = stmt.run(username, displayName || username);
+        return result.lastInsertRowid;
     }
     
-    async getUser(id) {
-        return await this.get('SELECT * FROM users WHERE id = ?', [id]);
+    async getUser(userId) {
+        return this.db.prepare('SELECT * FROM users WHERE id = ?').get(userId);
     }
     
     async getUserByUsername(username) {
-        return await this.get('SELECT * FROM users WHERE username = ?', [username]);
+        return this.db.prepare('SELECT * FROM users WHERE username = ?').get(username);
     }
     
-    async createCanvas(name, ownerId, description = null, canvasData = null) {
-        const result = await this.run(
-            'INSERT INTO canvases (name, owner_id, description, canvas_data) VALUES (?, ?, ?, ?)',
-            [name, ownerId, description, JSON.stringify(canvasData)]
+    // Canvas management
+    async createCanvas(name, description, ownerId, canvasData = {}) {
+        const stmt = this.db.prepare(
+            'INSERT INTO canvases (name, description, owner_id, canvas_data) VALUES (?, ?, ?, ?)'
         );
-        return result.lastID;
+        const result = stmt.run(name, description, ownerId, JSON.stringify(canvasData));
+        return result.lastInsertRowid;
     }
     
-    async getCanvas(id) {
-        const canvas = await this.get('SELECT * FROM canvases WHERE id = ?', [id]);
+    async getCanvas(canvasId) {
+        const canvas = this.db.prepare('SELECT * FROM canvases WHERE id = ?').get(canvasId);
         if (canvas && canvas.canvas_data) {
             canvas.canvas_data = JSON.parse(canvas.canvas_data);
         }
         return canvas;
     }
     
-    async updateCanvas(id, updates) {
+    async getAllCanvases() {
+        const canvases = this.db.prepare('SELECT * FROM canvases ORDER BY last_modified DESC').all();
+        return canvases.map(canvas => {
+            if (canvas.canvas_data) {
+                canvas.canvas_data = JSON.parse(canvas.canvas_data);
+            }
+            return canvas;
+        });
+    }
+    
+    async updateCanvas(canvasId, updates) {
         const fields = [];
         const values = [];
         
-        for (const [key, value] of Object.entries(updates)) {
-            if (key === 'canvas_data') {
-                fields.push(`${key} = ?`);
-                values.push(JSON.stringify(value));
-            } else {
-                fields.push(`${key} = ?`);
-                values.push(value);
-            }
+        if (updates.name !== undefined) {
+            fields.push('name = ?');
+            values.push(updates.name);
+        }
+        if (updates.description !== undefined) {
+            fields.push('description = ?');
+            values.push(updates.description);
+        }
+        if (updates.canvas_data !== undefined) {
+            fields.push('canvas_data = ?');
+            values.push(JSON.stringify(updates.canvas_data));
+        }
+        if (updates.thumbnail_path !== undefined) {
+            fields.push('thumbnail_path = ?');
+            values.push(updates.thumbnail_path);
         }
         
         fields.push('last_modified = CURRENT_TIMESTAMP');
-        values.push(id);
+        values.push(canvasId);
         
-        await this.run(
-            `UPDATE canvases SET ${fields.join(', ')} WHERE id = ?`,
-            values
+        const stmt = this.db.prepare(
+            `UPDATE canvases SET ${fields.join(', ')} WHERE id = ?`
         );
+        stmt.run(...values);
     }
     
-    async addOperation(canvasId, userId, operationType, operationData, sequenceNumber) {
-        await this.run(
-            'INSERT INTO operations (canvas_id, user_id, operation_type, operation_data, sequence_number) VALUES (?, ?, ?, ?, ?)',
-            [canvasId, userId, operationType, JSON.stringify(operationData), sequenceNumber]
-        );
+    async deleteCanvas(canvasId) {
+        // Delete related data first (due to foreign keys)
+        this.db.prepare('DELETE FROM operations WHERE canvas_id = ?').run(canvasId);
+        this.db.prepare('DELETE FROM canvas_collaborators WHERE canvas_id = ?').run(canvasId);
+        this.db.prepare('UPDATE files SET canvas_id = NULL WHERE canvas_id = ?').run(canvasId);
+        this.db.prepare('DELETE FROM canvases WHERE id = ?').run(canvasId);
     }
     
-    async getOperationsSince(canvasId, sequenceNumber) {
-        const operations = await this.all(
-            'SELECT * FROM operations WHERE canvas_id = ? AND sequence_number > ? ORDER BY sequence_number',
-            [canvasId, sequenceNumber]
+    // Collaboration management
+    async addCollaborator(canvasId, userId, role = 'editor') {
+        const stmt = this.db.prepare(
+            'INSERT OR REPLACE INTO canvas_collaborators (canvas_id, user_id, role) VALUES (?, ?, ?)'
         );
+        stmt.run(canvasId, userId, role);
+    }
+    
+    async removeCollaborator(canvasId, userId) {
+        this.db.prepare(
+            'DELETE FROM canvas_collaborators WHERE canvas_id = ? AND user_id = ?'
+        ).run(canvasId, userId);
+    }
+    
+    async getCollaborators(canvasId) {
+        return this.db.prepare(`
+            SELECT u.*, cc.role, cc.added_at 
+            FROM canvas_collaborators cc 
+            JOIN users u ON cc.user_id = u.id 
+            WHERE cc.canvas_id = ?
+        `).all(canvasId);
+    }
+    
+    async canUserAccessCanvas(userId, canvasId) {
+        const canvas = await this.getCanvas(canvasId);
+        if (!canvas) return false;
+        if (canvas.owner_id === userId) return true;
+        
+        const collaborator = this.db.prepare(
+            'SELECT role FROM canvas_collaborators WHERE canvas_id = ? AND user_id = ?'
+        ).get(canvasId, userId);
+        
+        return !!collaborator;
+    }
+    
+    // File management
+    async saveFileMetadata(fileData) {
+        const stmt = this.db.prepare(
+            'INSERT INTO files (filename, original_name, mime_type, file_size, file_hash, uploaded_by, canvas_id) VALUES (?, ?, ?, ?, ?, ?, ?)'
+        );
+        const result = stmt.run(
+            fileData.filename,
+            fileData.originalName,
+            fileData.mimeType,
+            fileData.fileSize,
+            fileData.fileHash,
+            fileData.uploadedBy,
+            fileData.canvasId || null
+        );
+        return result.lastInsertRowid;
+    }
+    
+    async getFileMetadata(fileId) {
+        return this.db.prepare('SELECT * FROM files WHERE id = ?').get(fileId);
+    }
+    
+    async getFileByHash(fileHash) {
+        return this.db.prepare('SELECT * FROM files WHERE file_hash = ?').get(fileHash);
+    }
+    
+    // Operations log
+    async logOperation(canvasId, userId, operationType, operationData) {
+        // Get next sequence number for this canvas
+        const lastSeq = this.db.prepare(
+            'SELECT MAX(sequence_number) as max_seq FROM operations WHERE canvas_id = ?'
+        ).get(canvasId);
+        
+        const nextSeq = (lastSeq.max_seq || 0) + 1;
+        
+        const stmt = this.db.prepare(
+            'INSERT INTO operations (canvas_id, user_id, operation_type, operation_data, sequence_number) VALUES (?, ?, ?, ?, ?)'
+        );
+        const result = stmt.run(canvasId, userId, operationType, JSON.stringify(operationData), nextSeq);
+        
+        return {
+            id: result.lastInsertRowid,
+            sequence_number: nextSeq
+        };
+    }
+    
+    async getOperations(canvasId, afterSequence = 0) {
+        const operations = this.db.prepare(
+            'SELECT * FROM operations WHERE canvas_id = ? AND sequence_number > ? ORDER BY sequence_number'
+        ).all(canvasId, afterSequence);
         
         return operations.map(op => ({
             ...op,
@@ -339,33 +309,19 @@ class Database {
         }));
     }
     
-    async cleanup() {
-        // Clean up old operations (keep last 1000 per canvas)
-        await this.run(`
-            DELETE FROM operations 
-            WHERE id NOT IN (
-                SELECT id FROM operations 
-                WHERE canvas_id = operations.canvas_id 
-                ORDER BY sequence_number DESC 
-                LIMIT 1000
-            )
-        `);
-        
-        // Clean up inactive sessions (older than 1 hour)
-        await this.run(
-            "DELETE FROM active_sessions WHERE last_activity < datetime('now', '-1 hour')"
-        );
-
+    // Database info
+    async getDatabaseSize() {
+        const stats = await fs.stat(this.dbPath);
+        return stats.size;
     }
     
-    async close() {
+    // Close database connection
+    close() {
         if (this.db) {
-            await this.cleanup();
             this.db.close();
-            this.db = null;
-            
+            console.log('📊 Database connection closed');
         }
     }
 }
 
-module.exports = Database; 
+module.exports = BetterDatabase;
