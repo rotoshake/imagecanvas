@@ -10,8 +10,10 @@ class NetworkLayer {
         this.currentCanvas = null;
         this.currentUser = null;
         
-        // Connection settings
-        this.serverUrl = 'http://localhost:3000';
+        // Connection settings - use same host as page, but on port 3000
+        this.serverUrl = window.location.hostname === 'localhost' 
+            ? 'http://localhost:3000' 
+            : `http://${window.location.hostname}:3000`;
         this.reconnectDelay = 1000;
         this.maxReconnectDelay = 30000;
         this.reconnectAttempts = 0;
