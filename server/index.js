@@ -21,11 +21,16 @@ let Database, CollaborationManager;
 
 try {
     Database = require('./src/database/database');
+    console.log('✅ Database module loaded successfully');
 } catch (error) {
-    
+    console.error('❌ Failed to load database module:', error.message);
     Database = class {
         async init() { console.log('📊 Placeholder database initialized'); }
         async close() { console.log('📊 Placeholder database closed'); }
+        async all(sql, params = []) { return []; }
+        async get(sql, params = []) { return null; }
+        async run(sql, params = []) { return { lastID: 1 }; }
+        async getAllCanvases() { return []; }
     };
 }
 
@@ -610,7 +615,7 @@ class ImageCanvasServer {
                 res.setHeader('Pragma', 'no-cache');
                 res.setHeader('Expires', '0');
                 
-                const canvases = await this.db.all('SELECT * FROM canvases ORDER BY last_modified DESC');
+                const canvases = await this.db.getAllCanvases();
                 console.log(`Fetched ${canvases.length} canvases from database`);
                 res.json(canvases);
             } catch (error) {

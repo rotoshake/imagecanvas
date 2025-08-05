@@ -315,6 +315,20 @@ class BetterDatabase {
         return stats.size;
     }
     
+    // Raw SQL methods for compatibility
+    async all(sql, params = []) {
+        return this.db.prepare(sql).all(...params);
+    }
+    
+    async get(sql, params = []) {
+        return this.db.prepare(sql).get(...params);
+    }
+    
+    async run(sql, params = []) {
+        const result = this.db.prepare(sql).run(...params);
+        return { lastID: result.lastInsertRowid };
+    }
+    
     // Close database connection
     close() {
         if (this.db) {
