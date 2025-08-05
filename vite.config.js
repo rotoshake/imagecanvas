@@ -5,6 +5,7 @@ export default defineConfig({
   server: {
     port: 5173,
     open: true,
+    host: true, // This allows access from external devices
   },
   build: {
     outDir: 'dist',
