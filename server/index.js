@@ -853,6 +853,8 @@ class ImageCanvasServer {
                 
                 // Delete all related data in the correct order to avoid foreign key violations
                 await this.db.run('DELETE FROM active_sessions WHERE canvas_id = ?', [canvasId]);
+                await this.db.run('DELETE FROM canvas_states WHERE canvas_id = ?', [canvasId]);
+                await this.db.run('DELETE FROM active_transactions WHERE canvas_id = ?', [canvasId]);
                 await this.db.run('DELETE FROM files WHERE canvas_id = ?', [canvasId]);
                 await this.db.run('DELETE FROM operations WHERE canvas_id = ?', [canvasId]);
                 await this.db.run('DELETE FROM canvas_versions WHERE canvas_id = ?', [canvasId]);

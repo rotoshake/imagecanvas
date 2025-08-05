@@ -206,7 +206,7 @@ class OperationHistory {
             // Only consider operations from this user that are applied
             // Use strict equality to prevent type coercion bugs
             if (op && op.userId === userId && op.state === 'applied') {
-                console.log(`  ✅ Found undoable operation: ${opId}, userId: ${op.userId} (type: ${typeof op.userId})`);
+                // console.log(`  ✅ Found undoable operation: ${opId}, userId: ${op.userId} (type: ${typeof op.userId})`);
                 
                 // Check if part of transaction
                 if (op.transactionId) {
