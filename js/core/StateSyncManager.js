@@ -1163,15 +1163,29 @@ class StateSyncManager {
         if ((node.type === 'media/image' || node.type === 'media/video')) {
             if (nodeData.adjustments) {
                 node.adjustments = { ...nodeData.adjustments };
+                // Mark node for WebGL update when adjustments change
+                node.needsGLUpdate = true;
             }
             if (nodeData.toneCurve !== undefined) {
                 node.toneCurve = nodeData.toneCurve;
+                node.needsGLUpdate = true;
             }
             if (nodeData.toneCurveBypassed !== undefined) {
                 node.toneCurveBypassed = nodeData.toneCurveBypassed;
+                node.needsGLUpdate = true;
             }
             if (nodeData.colorAdjustmentsBypassed !== undefined) {
                 node.colorAdjustmentsBypassed = nodeData.colorAdjustmentsBypassed;
+                node.needsGLUpdate = true;
+            }
+            // Add missing color balance properties
+            if (nodeData.colorBalance !== undefined) {
+                node.colorBalance = nodeData.colorBalance;
+                node.needsGLUpdate = true;
+            }
+            if (nodeData.colorBalanceBypassed !== undefined) {
+                node.colorBalanceBypassed = nodeData.colorBalanceBypassed;
+                node.needsGLUpdate = true;
             }
         }
         

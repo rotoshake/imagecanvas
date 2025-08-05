@@ -1877,10 +1877,7 @@ rgb(255, 50, 50) 100%);
     }
     
     updateColorBalance(isFinal = false) {
-        console.log('🎨 updateColorBalance called:', { isFinal, hasNode: !!this.currentNode, hasColorBalance: !!this.currentNode?.colorBalance });
-        
         if (!this.currentNode || !this.currentNode.colorBalance) {
-            console.warn('⚠️ updateColorBalance: No current node or color balance data');
             return;
         }
         
@@ -1892,26 +1889,22 @@ rgb(255, 50, 50) 100%);
         
         // Notify WebGLRenderer of active adjustments and invalidate cache
         if (window.app?.graphCanvas?.renderer?.startAdjustment) {
-            console.log('🎨 Starting WebGL adjustment for:', this.currentNode.id);
             window.app.graphCanvas.renderer.startAdjustment(this.currentNode.id);
         }
         
         // Invalidate WebGL cache and trigger redraw
         this.currentNode.needsGLUpdate = true;
         if (window.app?.graphCanvas) {
-            console.log('🎨 Triggering canvas redraw with cache invalidation');
             window.app.graphCanvas.dirty_canvas = true;
         }
         
         // End undo interaction and save to server on final update
         if (isFinal && this.colorBalanceUndoStarted) {
-            console.log('🎨 Final update - ending undo interaction:', this.currentNode.colorBalance);
             this.endColorBalanceUndo();
             this.colorBalanceUndoStarted = false;
             
             // Notify WebGLRenderer that adjustments are complete
             if (window.app?.graphCanvas?.renderer?.endAdjustment) {
-                console.log('🎨 Ending WebGL adjustment for:', this.currentNode.id);
                 window.app.graphCanvas.renderer.endAdjustment(this.currentNode.id);
             }
         }

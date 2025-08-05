@@ -409,27 +409,18 @@ class CanvasStateManager {
     applyNodePropertyUpdate(params, state, changes) {
         const node = state.nodes.find(n => n.id === params.nodeId);
         if (node) {
-            // Log color correction updates
-            if (['toneCurve', 'toneCurveBypassed', 'colorAdjustmentsBypassed', 'adjustments', 'colorBalance', 'colorBalanceBypassed'].includes(params.property)) {
-                console.log(`[CanvasStateManager] Updating color correction property: ${params.property}`, params.value);
-            }
-            
             // Handle special properties that belong on the node object itself
             const nodeDirectProperties = ['title', 'rotation', 'aspectRatio', 'toneCurve', 'toneCurveBypassed', 'colorAdjustmentsBypassed', 'adjustments', 'colorBalance', 'colorBalanceBypassed'];
             
             if (nodeDirectProperties.includes(params.property)) {
                 // Update property directly on the node object
                 node[params.property] = params.value;
-                console.log(`[CanvasStateManager] Updated node.${params.property} directly`);
             } else {
                 // Update property in the properties object
                 node.properties[params.property] = params.value;
-                console.log(`[CanvasStateManager] Updated node.properties.${params.property}`);
             }
             
             changes.updated.push(node);
-        } else {
-            console.warn(`[CanvasStateManager] Node ${params.nodeId} not found for property update`);
         }
         // Missing nodes are silently ignored
         
