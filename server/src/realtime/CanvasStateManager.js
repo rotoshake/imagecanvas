@@ -628,7 +628,11 @@ class CanvasStateManager {
             
             const clipboardCenter = [(minX + maxX) / 2, (minY + maxY) / 2];
             
-            for (const data of nodeData) {
+            // Track created nodes by index for parent-child mapping
+            const nodesByIndex = new Map();
+            
+            // First pass: create all nodes
+            nodeData.forEach((data, index) => {
                 // Position relative to target position
                 const offsetFromCenter = [
                     data.pos[0] - clipboardCenter[0],
@@ -650,9 +654,36 @@ class CanvasStateManager {
                     aspectRatio: data.aspectRatio
                 };
                 
+                // Initialize childNodes for group nodes
+                if (node.type === 'container/group') {
+                    if (!node.properties) {
+                        node.properties = {};
+                    }
+                    node.properties.childNodes = [];
+                }
+                
                 state.nodes.push(node);
                 changes.added.push(node);
-            }
+                nodesByIndex.set(index, node);
+            });
+            
+            // Second pass: recreate parent-child relationships
+            nodeData.forEach((data, index) => {
+                if (data.type === 'container/group' && data.properties && data.properties._pasteChildIndices) {
+                    const parentNode = nodesByIndex.get(index);
+                    if (parentNode) {
+                        // Add children based on indices
+                        for (const childIndex of data.properties._pasteChildIndices) {
+                            const childNode = nodesByIndex.get(childIndex);
+                            if (childNode) {
+                                // Add to parent's childNodes
+                                parentNode.properties.childNodes.push(childNode.id);
+                                console.log(`[Paste] Added child ${childNode.id} to group ${parentNode.id}`);
+                            }
+                        }
+                    }
+                }
+            });
         }
         
         // Always return changes, even if empty - operation still succeeded

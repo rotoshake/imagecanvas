@@ -107,6 +107,11 @@ class KeyboardShortcutManager {
         
         // Check each category
         for (const [categoryName, category] of Object.entries(KEYBOARD_SHORTCUTS)) {
+            // Skip gallery shortcuts if not in gallery mode
+            if (categoryName === 'GALLERY' && !this.canvas.galleryViewManager?.active) {
+                continue;
+            }
+            
             for (const [actionName, defaultShortcut] of Object.entries(category)) {
                 const shortcut = this.getShortcut(categoryName, actionName);
                 if (matchesShortcut(event, shortcut)) {
@@ -424,8 +429,36 @@ class KeyboardShortcutManager {
         };
         
         const direction = directionMap[action];
-        if (direction && canvas.navigateToNearestNode) {
-            canvas.navigateToNearestNode(direction);
+        if (direction) {
+            const selectedNodes = canvas.selection.getSelectedNodes();
+            let fromNode = null;
+            
+            if (selectedNodes.length > 0) {
+                // Use the first selected node as reference
+                fromNode = selectedNodes[0];
+            } else {
+                // No nodes selected - start with the node closest to viewport center
+                fromNode = canvas.findNodeClosestToViewportCenter();
+                if (fromNode) {
+                    // Select this node first
+                    canvas.selection.selectNode(fromNode, true);
+                    canvas.navigateToNode(fromNode);
+                    return true;
+                }
+            }
+            
+            if (fromNode) {
+                const targetNode = canvas.findNodeInDirection(fromNode, direction);
+                
+                if (targetNode) {
+                    // Clear current selection
+                    canvas.selection.clear();
+                    // Select the target node
+                    canvas.selection.selectNode(targetNode, true);
+                    // Navigate to it with animation
+                    canvas.navigateToNode(targetNode);
+                }
+            }
             return true;
         }
         

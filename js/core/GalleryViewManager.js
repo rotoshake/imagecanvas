@@ -420,9 +420,42 @@ class GalleryViewManager {
     sortMediaNodes() {
         const mediaTypes = ['media/image', 'media/video'];
         
-        this.mediaNodes = this.app.graph.nodes
-            .filter(n => mediaTypes.includes(n.type))
-            .sort((a, b) => {
+        // Get all media nodes
+        const allMediaNodes = this.app.graph.nodes
+            .filter(n => mediaTypes.includes(n.type));
+        
+        // Group nodes by their parent group
+        const nodesByGroup = new Map();
+        const ungroupedNodes = [];
+        
+        for (const node of allMediaNodes) {
+            // Find parent group if any
+            let parentGroup = null;
+            for (const potentialParent of this.app.graph.nodes) {
+                if (potentialParent.type === 'container/group' && 
+                    potentialParent.childNodes && 
+                    potentialParent.childNodes.has(node.id)) {
+                    parentGroup = potentialParent;
+                    break;
+                }
+            }
+            
+            if (parentGroup) {
+                if (!nodesByGroup.has(parentGroup.id)) {
+                    nodesByGroup.set(parentGroup.id, {
+                        group: parentGroup,
+                        nodes: []
+                    });
+                }
+                nodesByGroup.get(parentGroup.id).nodes.push(node);
+            } else {
+                ungroupedNodes.push(node);
+            }
+        }
+        
+        // Sort nodes within each group
+        const sortNodes = (nodes) => {
+            return nodes.sort((a, b) => {
                 const [ax, ay] = a.getCenter();
                 const [bx, by] = b.getCenter();
                 const rowThreshold = 50; // Consider nodes within 50px as same row
@@ -433,7 +466,34 @@ class GalleryViewManager {
                 }
                 return ay - by; // Sort by Y position
             });
-
+        };
+        
+        // Sort ungrouped nodes
+        sortNodes(ungroupedNodes);
+        
+        // Sort groups by their position
+        const sortedGroups = Array.from(nodesByGroup.values()).sort((a, b) => {
+            const [ax, ay] = a.group.getCenter();
+            const [bx, by] = b.group.getCenter();
+            const rowThreshold = 50;
+            
+            if (Math.abs(ay - by) < rowThreshold) {
+                return ax - bx;
+            }
+            return ay - by;
+        });
+        
+        // Build final sorted array: grouped nodes first (in group order), then ungrouped
+        this.mediaNodes = [];
+        
+        // Add all grouped nodes
+        for (const groupData of sortedGroups) {
+            sortNodes(groupData.nodes);
+            this.mediaNodes.push(...groupData.nodes);
+        }
+        
+        // Add ungrouped nodes at the end
+        this.mediaNodes.push(...ungroupedNodes);
     }
     
     /**
@@ -760,6 +820,10 @@ class GalleryViewManager {
                 z-index: 10000;
                 transition: opacity 0.3s ease-out;
                 animation: fadeIn 0.3s ease-out;
+                white-space: nowrap;
+                max-width: 90%;
+                overflow: hidden;
+                text-overflow: ellipsis;
             }
             
             .gallery-counter.fade-out {
@@ -805,12 +869,35 @@ class GalleryViewManager {
     }
     
     /**
+     * Find the parent group of a node
+     */
+    findParentGroup(node) {
+        for (const potentialParent of this.app.graph.nodes) {
+            if (potentialParent.type === 'container/group' && 
+                potentialParent.childNodes && 
+                potentialParent.childNodes.has(node.id)) {
+                return potentialParent;
+            }
+        }
+        return null;
+    }
+    
+    /**
      * Update the node counter display
      */
     updateNodeCounter() {
         const counter = document.getElementById('gallery-node-counter');
-        if (counter) {
-            counter.textContent = `${this.currentIndex + 1} / ${this.mediaNodes.length}`;
+        if (counter && this.mediaNodes.length > 0) {
+            const currentNode = this.mediaNodes[this.currentIndex];
+            const parentGroup = this.findParentGroup(currentNode);
+            
+            let displayText = `${this.currentIndex + 1} / ${this.mediaNodes.length}`;
+            
+            if (parentGroup && parentGroup.title) {
+                displayText += ` • ${parentGroup.title}`;
+            }
+            
+            counter.textContent = displayText;
         }
     }
     

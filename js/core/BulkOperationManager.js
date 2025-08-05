@@ -142,7 +142,7 @@ class BulkOperationManager {
                 
             } else {
                 // Fallback to individual chunk processing for single chunks or if BulkCommand not available
-                console.log(`📦 Processing ${chunks.length} chunk(s) individually`);
+                // console.log(`📦 Processing ${chunks.length} chunk(s) individually`);
                 
                 const chunkResults = [];
                 let processedCount = 0;
@@ -206,10 +206,8 @@ class BulkOperationManager {
                 }
                 
                 // Convert chunk results to bulk result format
-                bulkResult = {
-                    success: chunkResults.every(r => r.success),
-                    result: this.combineChunkResults(chunkResults, operationType)
-                };
+                bulkResult = this.combineChunkResults(chunkResults, operationType);
+                // console.log(`📦 Combined bulk result:`, bulkResult);
             }
             
             // Clear progress notification
@@ -218,11 +216,11 @@ class BulkOperationManager {
             }
             
             // Use bulk result or combine chunk results
-            const combinedResult = bulkResult ? bulkResult.result : this.combineChunkResults([], operationType);
+            const combinedResult = bulkResult || { success: true, result: { nodes: [], errors: [] } };
             
             // Show completion notification
-            const successfulNodes = combinedResult.result.nodes.length;
-            const failedNodes = combinedResult.result.errors.length;
+            const successfulNodes = combinedResult.result.nodes ? combinedResult.result.nodes.length : 0;
+            const failedNodes = combinedResult.result.errors ? combinedResult.result.errors.length : 0;
             
             if (operation.errors.length > 0 || failedNodes > 0) {
                 const message = failedNodes > 0 
@@ -265,6 +263,8 @@ class BulkOperationManager {
                 nodeData: operationType === 'node_paste' ? chunk.items : undefined,
                 nodeIds: operationType === 'node_duplicate' ? chunk.items : undefined
             });
+            
+            // console.log(`📦 Chunk execution result:`, result);
             
             return {
                 success: true,
@@ -406,6 +406,7 @@ class BulkOperationManager {
      * Combine results from multiple chunks
      */
     combineChunkResults(chunkResults, operationType) {
+        // console.log(`📦 combineChunkResults called with ${chunkResults.length} chunks`);
         const combined = {
             success: true,
             result: {
@@ -415,16 +416,27 @@ class BulkOperationManager {
         };
         
         for (const chunkResult of chunkResults) {
+            // console.log(`📦 Processing chunk result:`, chunkResult);
             if (chunkResult && chunkResult.result) {
-                if (chunkResult.result.nodes) {
-                    combined.result.nodes.push(...chunkResult.result.nodes);
+                // The chunkResult.result is the command result which has { success: true, result: { nodes: [...] } }
+                const commandResult = chunkResult.result;
+                if (commandResult.result && commandResult.result.nodes) {
+                    // console.log(`📦 Found nodes in command result:`, commandResult.result.nodes.length);
+                    combined.result.nodes.push(...commandResult.result.nodes);
+                } else if (commandResult.nodes) {
+                    // Fallback for commands that return nodes directly
+                    // console.log(`📦 Found nodes directly:`, commandResult.nodes.length);
+                    combined.result.nodes.push(...commandResult.nodes);
                 }
-                if (chunkResult.result.errors) {
-                    combined.result.errors.push(...chunkResult.result.errors);
+                if (commandResult.result && commandResult.result.errors) {
+                    combined.result.errors.push(...commandResult.result.errors);
+                } else if (commandResult.errors) {
+                    combined.result.errors.push(...commandResult.errors);
                 }
             }
         }
         
+        // console.log(`📦 Combined result has ${combined.result.nodes.length} nodes`);
         return combined;
     }
 

@@ -2700,25 +2700,33 @@ Mode: ${this.fpsTestMode}`;
             const serialized = this.serializeNode(node);
             
             // For group nodes, track which selected children belong to this group
-            if (node.type === 'container/group' && node.childNodes && node.childNodes.size > 0) {
-                const childIndices = [];
-                
-                // Check each child to see if it's also being copied
-                for (const childId of node.childNodes) {
-                    if (selectedIds.has(childId)) {
-                        // Find the index of this child in the selected array
-                        const childIndex = selected.findIndex(n => n.id === childId);
-                        if (childIndex !== -1) {
-                            childIndices.push(childIndex);
+            if (node.type === 'container/group') {
+                // console.log(`📋 Checking group ${node.id}, childNodes:`, node.childNodes);
+                if (node.childNodes && node.childNodes.size > 0) {
+                    const childIndices = [];
+                    // console.log(`📋 Group has ${node.childNodes.size} children, selected IDs:`, selectedIds);
+                    
+                    // Check each child to see if it's also being copied
+                    for (const childId of node.childNodes) {
+                        // console.log(`📋 Checking if child ${childId} is in selected set:`, selectedIds.has(childId));
+                        if (selectedIds.has(childId)) {
+                            // Find the index of this child in the selected array
+                            const childIndex = selected.findIndex(n => n.id === childId);
+                            if (childIndex !== -1) {
+                                childIndices.push(childIndex);
+                            }
                         }
                     }
-                }
-                
-                if (childIndices.length > 0) {
-                    parentChildMap.set(index, childIndices);
-                    // Store the child relationships in the serialized data
-                    serialized._copiedChildIndices = childIndices;
-                    console.log(`📋 Group ${node.id} has ${childIndices.length} children being copied:`, childIndices);
+                    
+                    // console.log(`📋 Found ${childIndices.length} selected children for group ${node.id}`);
+                    if (childIndices.length > 0) {
+                        parentChildMap.set(index, childIndices);
+                        // Store the child relationships in the serialized data
+                        serialized._copiedChildIndices = childIndices;
+                        // console.log(`📋 Group ${node.id} has ${childIndices.length} children being copied:`, childIndices);
+                    }
+                } else {
+                    // console.log(`📋 Group ${node.id} has no childNodes or childNodes is empty`);
                 }
             }
             
@@ -2765,7 +2773,7 @@ Mode: ${this.fpsTestMode}`;
             return;
         }
         
-        console.log(`📋 Starting paste operation with ${this.clipboard.length} nodes`);
+        // console.log(`📋 Starting paste operation with ${this.clipboard.length} nodes`);
         
         // Use OperationPipeline for collaborative paste
         if (window.app?.operationPipeline) {
@@ -2806,9 +2814,11 @@ Mode: ${this.fpsTestMode}`;
                 }
                 
                 
+                // console.log(`📋 Paste operation result:`, result);
+                // console.log(`📋 Result structure - has result:`, !!result.result, 'has nodes:', !!(result.result && result.result.nodes));
+                // console.log(`📋 Result.result:`, result.result);
                 if (result && result.result && result.result.nodes) {
-                    console.log(`📋 Paste operation result:`, result);
-                    console.log(`📋 Paste operation completed: ${result.result.nodes.length} nodes created`);
+                    // console.log(`📋 Paste operation completed: ${result.result.nodes.length} nodes created`);
                     
                     // Clear selection first
                     this.selection.clear();
@@ -3336,6 +3346,9 @@ Mode: ${this.fpsTestMode}`;
         for (const node of nodes) {
             if (node === fromNode) continue;
             
+            // Skip group nodes
+            if (node.type === 'container/group') continue;
+            
             const [toX, toY] = node.getCenter();
             const angle = Utils.angleFromTo(fromX, fromY, toX, toY);
             
@@ -3754,12 +3767,19 @@ Mode: ${this.fpsTestMode}`;
             rotation: node.rotation
         };
         
-        // For group nodes, we'll handle childNodes separately during paste
-        // to ensure proper parent-child relationships with new IDs
-        if (node.type === 'container/group' && serialized.properties) {
-            serialized.properties = { ...serialized.properties };
-            // Keep childNodes empty - relationships will be recreated during paste
-            serialized.properties.childNodes = [];
+        // For group nodes, preserve childNodes for copy/paste tracking
+        if (node.type === 'container/group') {
+            // Ensure properties exist
+            if (!serialized.properties) {
+                serialized.properties = {};
+            }
+            // Convert Set to Array for serialization
+            if (node.childNodes instanceof Set) {
+                serialized.properties.childNodes = Array.from(node.childNodes);
+                // console.log(`📋 Serializing group ${node.id} with ${node.childNodes.size} children:`, serialized.properties.childNodes);
+            } else {
+                serialized.properties.childNodes = [];
+            }
         }
         
         // For media nodes, ensure we never include data URLs
@@ -5425,6 +5445,9 @@ Mode: ${this.fpsTestMode}`;
         for (const node of this.graph.nodes) {
             if (!node.pos || !node.size) continue;
             
+            // Skip group nodes
+            if (node.type === 'container/group') continue;
+            
             const nodeCenterX = node.pos[0] + node.size[0] / 2;
             const nodeCenterY = node.pos[1] + node.size[1] / 2;
             const distance = Math.sqrt(
@@ -5452,6 +5475,9 @@ Mode: ${this.fpsTestMode}`;
         
         for (const targetNode of this.graph.nodes) {
             if (targetNode.id === fromNode.id) continue;
+            
+            // Skip group nodes
+            if (targetNode.type === 'container/group') continue;
             
             const targetCenter = [
                 targetNode.pos[0] + targetNode.size[0] / 2,

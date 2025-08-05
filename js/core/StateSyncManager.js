@@ -223,10 +223,13 @@ class StateSyncManager {
             }
             
             // 3. Send to server for authoritative execution
+            // Check if command has getServerData method
+            const serverData = command.getServerData ? command.getServerData() : { type: command.type, params: command.params };
+            
             const serverRequest = {
                 operationId,
-                type: command.type,
-                params: command.params,
+                type: serverData.type,
+                params: serverData.params,
                 stateVersion: this.serverStateVersion,
                 undoData: finalUndoData,
                 transactionId: this.app.transactionManager?.getCurrentTransaction()?.id || null

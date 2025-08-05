@@ -394,7 +394,7 @@ class GroupNode extends BaseNode {
         
         
         const childNodes = this.getChildNodes();
-        console.log(`📐 Group ${this.id} has ${childNodes.length} child nodes:`, childNodes.map(n => ({ id: n.id, pos: n.pos, size: n.size })));
+        // console.log(`📐 Group ${this.id} has ${childNodes.length} child nodes:`, childNodes.map(n => ({ id: n.id, pos: n.pos, size: n.size })));
         
         if (childNodes.length === 0) {
             // Don't shrink to default size if expandOnly is true
@@ -531,7 +531,7 @@ class GroupNode extends BaseNode {
                     console.log('📐 Skipping animation - alignment system is active');
                 } else {
                     // Start animation to new bounds
-                    console.log('📐 Starting animateToBounds...');
+                    // console.log('📐 Starting animateToBounds...');
                     this.animateToBounds(newX, newY, newWidth, newHeight);
                 }
             } else {
@@ -551,14 +551,14 @@ class GroupNode extends BaseNode {
      * Animate to new bounds
      */
     animateToBounds(x, y, width, height) {
-        console.log(`🎬 animateToBounds called: target pos[${x}, ${y}] size[${width}, ${height}]`);
-        console.log(`🎬 Current state: pos[${this.pos[0]}, ${this.pos[1]}] size[${this.size[0]}, ${this.size[1]}]`);
+        // console.log(`🎬 animateToBounds called: target pos[${x}, ${y}] size[${width}, ${height}]`);
+        // console.log(`🎬 Current state: pos[${this.pos[0]}, ${this.pos[1]}] size[${this.size[0]}, ${this.size[1]}]`);
         
         // If no animation is running, store current pos/size as animation start
         if (!this.animationStartTime) {
             this.animatedPos = [...this.pos];
             this.animatedSize = [...this.size];
-            console.log(`🎬 Starting new animation from: pos[${this.animatedPos[0]}, ${this.animatedPos[1]}] size[${this.animatedSize[0]}, ${this.animatedSize[1]}]`);
+            // console.log(`🎬 Starting new animation from: pos[${this.animatedPos[0]}, ${this.animatedPos[1]}] size[${this.animatedSize[0]}, ${this.animatedSize[1]}]`);
         } else {
             // If animation is already running, use current interpolated values as new start
             const now = Date.now();
@@ -1173,10 +1173,23 @@ class GroupNode extends BaseNode {
             // console.warn('Cannot sync bounds - graph or NodeCommands not available');
             return;
         }
+        
+        // Don't sync if this is a temporary node (will be replaced by server)
+        if (this._isTemporary) {
+            // console.log(`🚫 Skipping sync for temporary group ${this.id}`);
+            return;
+        }
+        
+        // Check if this node still exists in the graph
+        const stillExists = graph.getNodeById(this.id);
+        if (!stillExists) {
+            // console.log(`🚫 Skipping sync for removed group ${this.id}`);
+            return;
+        }
 
         // Don't sync if we're still animating
         if (this.isAnimating || this._animPos || this._gridAnimPos) {
-            console.log(`Group ${this.id}: Skipping sync - still animating`);
+            // console.log(`Group ${this.id}: Skipping sync - still animating`);
             return;
         }
 
@@ -1184,7 +1197,7 @@ class GroupNode extends BaseNode {
         if (this._alignmentJustCompleted) {
             const timeSinceCompletion = Date.now() - this._alignmentJustCompleted;
             if (timeSinceCompletion < 1000) {
-                console.log(`Group ${this.id}: Skipping sync - alignment just completed`);
+                // console.log(`Group ${this.id}: Skipping sync - alignment just completed`);
                 return;
             }
         }

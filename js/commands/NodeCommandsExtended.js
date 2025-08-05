@@ -886,7 +886,8 @@ class DuplicateNodesCommand extends Command {
         }
         
         this.executed = true;
-        return { success: true, nodes: createdNodes };
+        // console.log(`📋 Command ${this.constructor.name} returning ${createdNodes.length} nodes`);
+        return { success: true, result: { nodes: createdNodes } };
     }
     
     async undo(context) {
@@ -1064,6 +1065,47 @@ class PasteNodesCommand extends Command {
         super('node_paste', params, origin);
     }
     
+    supportsOptimisticUpdate() {
+        return true;
+    }
+    
+    getServerData() {
+        // console.log('📋 PasteNodesCommand.getServerData called');
+        // Process nodeData to include parent-child relationships for the server
+        const serverNodeData = this.params.nodeData.map((data, index) => {
+            const processed = { ...data };
+            
+            // For group nodes with _copiedChildIndices, convert to childNodes array
+            if (data.type === 'container/group' && data._copiedChildIndices && data._copiedChildIndices.length > 0) {
+                // Ensure properties exist
+                if (!processed.properties) {
+                    processed.properties = {};
+                }
+                
+                // The server expects childNodes to be an array of node IDs
+                // But we only have indices at this point, so we'll need to map them
+                // We'll store the indices and let the server handle the mapping
+                processed.properties._pasteChildIndices = data._copiedChildIndices;
+                // console.log(`📋 Sending group with child indices to server:`, processed.properties._pasteChildIndices);
+            }
+            
+            // Remove client-only metadata
+            delete processed._copiedChildIndices;
+            
+            return processed;
+        });
+        
+        // console.log('📋 Server node data prepared:', serverNodeData);
+        
+        return {
+            type: this.type,
+            params: {
+                ...this.params,
+                nodeData: serverNodeData
+            }
+        };
+    }
+    
     validate() {
         const { nodeData, targetPosition } = this.params;
         
@@ -1089,13 +1131,13 @@ class PasteNodesCommand extends Command {
     async execute(context) {
         const { graph } = context;
         
-        console.log('📋 PasteNodesCommand.execute called with origin:', this.origin);
+        // console.log('📋 PasteNodesCommand.execute called with origin:', this.origin);
         
         // Check if optimistic updates are disabled - if so, skip local graph modification
         const optimisticEnabled = window.app?.operationPipeline?.stateSyncManager?.optimisticEnabled === true;
         const isRemoteOrigin = this.origin === 'remote' || this.origin === 'server';
         
-        console.log('📋 Optimistic enabled:', optimisticEnabled, 'Is remote:', isRemoteOrigin);
+        // console.log('📋 Optimistic enabled:', optimisticEnabled, 'Is remote:', isRemoteOrigin);
         
         // Initialize undoData if not already done by prepareUndoData
         if (!this.undoData) {
@@ -1119,9 +1161,9 @@ class PasteNodesCommand extends Command {
         const nodesByIndex = new Map();
         
         // First pass: create all nodes
-        console.log(`📋 Creating ${nodeData.length} nodes...`);
+        // console.log(`📋 Creating ${nodeData.length} nodes...`);
         nodeData.forEach((data, index) => {
-            console.log(`📋 Creating node ${index} of type ${data.type}`);
+            // console.log(`📋 Creating node ${index} of type ${data.type}`);
             const node = this.createNodeFromData(data, context);
             if (node) {
                 // Position relative to target position
@@ -1151,18 +1193,18 @@ class PasteNodesCommand extends Command {
         });
         
         // Second pass: recreate parent-child relationships
-        console.log('📋 Recreating parent-child relationships...');
+        // console.log('📋 Recreating parent-child relationships...');
         nodeData.forEach((data, index) => {
-            console.log(`📋 Checking node ${index}:`, data._copiedChildIndices);
+            // console.log(`📋 Checking node ${index}:`, data._copiedChildIndices);
             if (data._copiedChildIndices && data._copiedChildIndices.length > 0) {
                 const parentNode = nodesByIndex.get(index);
-                console.log(`📋 Found parent group ${parentNode?.id} with child indices:`, data._copiedChildIndices);
+                // console.log(`📋 Found parent group ${parentNode?.id} with child indices:`, data._copiedChildIndices);
                 if (parentNode && parentNode.type === 'container/group') {
                     // Add children to this group
                     for (const childIndex of data._copiedChildIndices) {
                         const childNode = nodesByIndex.get(childIndex);
                         if (childNode) {
-                            console.log(`📋 Adding child ${childNode.id} to group ${parentNode.id}`);
+                            // console.log(`📋 Adding child ${childNode.id} to group ${parentNode.id}`);
                             parentNode.addChildNode(childNode.id);
                         }
                     }
@@ -1187,7 +1229,8 @@ class PasteNodesCommand extends Command {
         }
         
         this.executed = true;
-        return { success: true, nodes: createdNodes };
+        // console.log(`📋 Command ${this.constructor.name} returning ${createdNodes.length} nodes`);
+        return { success: true, result: { nodes: createdNodes } };
     }
     
     async undo(context) {

@@ -177,7 +177,7 @@ class ImageCanvasServer {
                 const userId = req.body.userId || 1; // Default to user 1 if not provided
                 
                 await this.db.run(
-                    `INSERT INTO files (filename, original_name, mime_type, file_size, file_hash, uploaded_by, canvas_id) 
+                    `INSERT INTO files (filename, original_name, mime_type, size, hash, user_id, canvas_id) 
                      VALUES (?, ?, ?, ?, ?, ?, ?)`,
                     [req.file.filename, req.file.originalname, req.file.mimetype, 
                      req.file.size, hash, userId, canvasId]
