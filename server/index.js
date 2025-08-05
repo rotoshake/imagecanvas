@@ -10,6 +10,7 @@ const sharp = require('sharp');
 const fs = require('fs').promises;
 const crypto = require('crypto');
 const VideoProcessor = require('./src/video/VideoProcessor');
+const { RateLimiterMemory } = require('rate-limiter-flexible');
 
 // Configure Sharp for better concurrent processing
 // Limit concurrency to prevent memory issues
@@ -102,6 +103,22 @@ class ImageCanvasServer {
     }
     
     setupMiddleware() {
+        // Rate limiting
+        const rateLimiter = new RateLimiterMemory({
+            points: 100, // Number of requests
+            duration: 60, // Per 60 seconds
+            blockDuration: 60, // Block for 1 minute
+        });
+        
+        this.app.use(async (req, res, next) => {
+            try {
+                await rateLimiter.consume(req.ip);
+                next();
+            } catch (rejRes) {
+                res.status(429).send('Too Many Requests');
+            }
+        });
+        
         // Security
         this.app.use(helmet({
             contentSecurityPolicy: false // Allow inline scripts for development
