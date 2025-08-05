@@ -42,20 +42,30 @@ try {
 
 class ImageCanvasServer {
     constructor() {
+        // Load environment variables
+        require('dotenv').config();
+        
+        // Parse CORS origins from environment or use defaults
+        const defaultOrigins = [
+            "http://localhost:8000",
+            "http://127.0.0.1:8000",
+            "http://localhost:8080",
+            "http://127.0.0.1:8080",
+            "http://localhost:5173",
+            "http://127.0.0.1:5173",
+            "http://localhost:5174",
+            "http://127.0.0.1:5174"
+        ];
+        
+        this.corsOrigins = process.env.CORS_ORIGINS 
+            ? process.env.CORS_ORIGINS.split(',').map(origin => origin.trim())
+            : defaultOrigins;
+        
         this.app = express();
         this.server = http.createServer(this.app);
         this.io = socketIo(this.server, {
             cors: {
-                origin: [
-                    "http://localhost:8000",
-                    "http://127.0.0.1:8000",
-                    "http://localhost:8080",
-                    "http://127.0.0.1:8080",
-                    "http://localhost:5173",
-                    "http://127.0.0.1:5173",
-                    "http://localhost:5174",
-                    "http://127.0.0.1:5174"
-                ],
+                origin: this.corsOrigins,
                 methods: ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
                 credentials: true
             },
@@ -93,16 +103,7 @@ class ImageCanvasServer {
         // Compression and CORS
         this.app.use(compression());
         this.app.use(cors({
-            origin: [
-                "http://localhost:8000",
-                "http://127.0.0.1:8000",
-                "http://localhost:8080",
-                "http://127.0.0.1:8080",
-                "http://localhost:5173",
-                "http://127.0.0.1:5173",
-                "http://localhost:5174",
-                "http://127.0.0.1:5174"
-            ],
+            origin: this.corsOrigins,
             credentials: true,
             methods: ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
             allowedHeaders: ["Content-Type", "Authorization"]
