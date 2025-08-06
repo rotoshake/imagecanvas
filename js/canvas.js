@@ -1792,8 +1792,11 @@ Mode: ${this.fpsTestMode}`;
             const localDy = -dx * sin + dy * cos;
             
             // Calculate new size (ensuring positive values)
-            newWidth = Math.max(50, Math.abs(localDx));
-            newHeight = Math.max(50, Math.abs(localDy));
+            // For text nodes, allow very small sizes during resize for smooth interaction
+            const minW = (node.type === 'media/text') ? 20 : ((node.minSize && node.minSize[0]) || 50);
+            const minH = (node.type === 'media/text') ? 20 : ((node.minSize && node.minSize[1]) || 50);
+            newWidth = Math.max(minW, Math.abs(localDx));
+            newHeight = Math.max(minH, Math.abs(localDy));
             
             // Calculate new position to keep anchor point fixed
             const newCenterX = anchorX + (newWidth / 2) * cos - (newHeight / 2) * sin;
@@ -1803,8 +1806,12 @@ Mode: ${this.fpsTestMode}`;
             newPosY = newCenterY - newHeight / 2;
         } else {
             // No rotation, use simple calculation with top-left anchor
-            newWidth = Math.max(50, mouseX - initial.pos[0]);
-            newHeight = Math.max(50, mouseY - initial.pos[1]);
+            // For text nodes, allow very small sizes during resize for smooth interaction
+            // They will auto-fit after resize completes
+            const minW = (node.type === 'media/text') ? 20 : ((node.minSize && node.minSize[0]) || 50);
+            const minH = (node.type === 'media/text') ? 20 : ((node.minSize && node.minSize[1]) || 50);
+            newWidth = Math.max(minW, mouseX - initial.pos[0]);
+            newHeight = Math.max(minH, mouseY - initial.pos[1]);
             newPosX = initial.pos[0]; // Keep top-left fixed
             newPosY = initial.pos[1];
         }
@@ -1828,7 +1835,7 @@ Mode: ${this.fpsTestMode}`;
         if (isTextNode) {
             // Text nodes have special resize behavior
             if (shift) {
-                // Shift-drag: resize box only (text wraps differently)
+                // Shift-drag: non-uniform resize of box only (text size stays the same)
                 node.size[0] = newWidth;
                 node.size[1] = newHeight;
                 node.aspectRatio = node.size[0] / node.size[1];
@@ -1842,19 +1849,18 @@ Mode: ${this.fpsTestMode}`;
                     node.onResize('boxOnly');
                 }
             } else {
-                // Normal drag: resize changes font size proportionally
+                // Normal drag: scale text size with box size change (but allow free box resizing)
                 // Calculate the scale factor based on diagonal change
                 const oldDiagonal = Math.sqrt(initial.size[0] * initial.size[0] + initial.size[1] * initial.size[1]);
                 const newDiagonal = Math.sqrt(newWidth * newWidth + newHeight * newHeight);
                 const scaleFactor = newDiagonal / oldDiagonal;
                 
-                // Maintain aspect ratio for text nodes when scaling font
-                const aspectHeight = newWidth / initial.aspect;
+                // Allow free resizing of the box (don't force aspect ratio)
                 node.size[0] = newWidth;
-                node.size[1] = aspectHeight;
-                node.aspectRatio = initial.aspect;
+                node.size[1] = newHeight;
+                node.aspectRatio = node.size[0] / node.size[1];
                 
-                // Scale the font size
+                // Scale the font size proportionally
                 if (node.properties && typeof node.properties.fontSize === 'number') {
                     const initialFontSize = this.interactionState.resizing.initialFontSize || node.properties.fontSize;
                     if (!this.interactionState.resizing.initialFontSize) {
@@ -1862,39 +1868,18 @@ Mode: ${this.fpsTestMode}`;
                     }
                     const newFontSize = Math.max(6, Math.min(200, Math.round(initialFontSize * scaleFactor)));
                     
-                    // Only update and broadcast if font size actually changed
+                    // Only update if font size actually changed
                     if (node.properties.fontSize !== newFontSize) {
                         node.properties.fontSize = newFontSize;
                         
-                        // Broadcast font size change for collaboration
-                        if (this.broadcastNodePropertyUpdate) {
-                            this.broadcastNodePropertyUpdate(node.id, 'fontSize', newFontSize);
-                        }
+                        // Don't broadcast during resize - wait until mouse up
+                        // This prevents conflicts from server updates during dragging
+                        // The final state will be synced in onMouseUp
                     }
                 }
                 
-                // Recalculate position for aspect-constrained resize if rotated
-                if (node.rotation && node.rotation !== 0) {
-                    const angle = node.rotation * Math.PI / 180;
-                    const cos = Math.cos(angle);
-                    const sin = Math.sin(angle);
-                    
-                    // Calculate anchor point again
-                    const anchorLocalX = -initial.size[0] / 2;
-                    const anchorLocalY = -initial.size[1] / 2;
-                    const centerX = initial.pos[0] + initial.size[0] / 2;
-                    const centerY = initial.pos[1] + initial.size[1] / 2;
-                    
-                    const anchorX = centerX + anchorLocalX * cos - anchorLocalY * sin;
-                    const anchorY = centerY + anchorLocalX * sin + anchorLocalY * cos;
-                    
-                    // Recalculate position with new aspect-constrained height
-                    const newCenterX = anchorX + (newWidth / 2) * cos - (aspectHeight / 2) * sin;
-                    const newCenterY = anchorY + (newWidth / 2) * sin + (aspectHeight / 2) * cos;
-                    
-                    newPosX = newCenterX - newWidth / 2;
-                    newPosY = newCenterY - aspectHeight / 2;
-                }
+                // For text nodes with free resize, position is already calculated correctly
+                // in the main resize logic above, no need for special handling
                 
                 // Update position (for both rotated and non-rotated nodes)
                 node.pos[0] = newPosX;
@@ -2225,6 +2210,12 @@ Mode: ${this.fpsTestMode}`;
     
     updateCursor() {
         if (this.mouseState.down) return; // Don't change cursor during interactions
+        
+        // Spacebar pan mode takes priority
+        if (this.spacePressed) {
+            this.canvas.style.cursor = 'grab';
+            return;
+        }
         
         const cursor = this.handleDetector.getCursor(...this.mouseState.canvas);
         this.canvas.style.cursor = cursor;
@@ -2835,6 +2826,47 @@ Mode: ${this.fpsTestMode}`;
         this.interactionState.dragging.potentialGroup = null;
         this.interactionState.dragging.nodesOverGroup.clear();
         this.interactionState.dragging.draggedFromGroup = null;
+        
+        // If we were resizing, call onResizeEnd for affected nodes and sync final state
+        if (this.interactionState.resizing.active) {
+            // Sync final resize state to server
+            if (window.app && window.app.operationPipeline) {
+                for (const node of this.interactionState.resizing.nodes) {
+                    // Call onResizeEnd first
+                    if (node.onResizeEnd) {
+                        node.onResizeEnd();
+                    }
+                    
+                    // Sync the final state
+                    window.app.operationPipeline.execute('node_resize', {
+                        nodeId: node.id,
+                        size: [...node.size],
+                        position: [...node.pos]
+                    }).catch(error => {
+                        console.error('Failed to sync resize:', error);
+                    });
+                    
+                    // Sync font size separately for text nodes
+                    if (node.type === 'media/text' && node.properties?.fontSize) {
+                        window.app.operationPipeline.execute('node_property_update', {
+                            nodeId: node.id,
+                            property: 'fontSize',
+                            value: node.properties.fontSize
+                        }).catch(error => {
+                            console.error('Failed to sync font size:', error);
+                        });
+                    }
+                }
+            } else {
+                // Fallback if no pipeline
+                for (const node of this.interactionState.resizing.nodes) {
+                    if (node.onResizeEnd) {
+                        node.onResizeEnd();
+                    }
+                }
+            }
+        }
+        
         this.interactionState.resizing.active = false;
         this.interactionState.resizing.nodes.clear();
         this.interactionState.resizing.initial.clear();
@@ -3865,9 +3897,19 @@ Mode: ${this.fpsTestMode}`;
             this.graph.add(node);
             this.selection.selectNode(node);
             
-            // Broadcast text node creation for collaboration
-            if (this.collaborativeManager) {
-                // Node creation is already synced when added to graph
+            // Sync text node creation to server via operation pipeline
+            if (window.app && window.app.operationPipeline) {
+                window.app.operationPipeline.execute('node_create', {
+                    type: node.type,
+                    pos: [...node.pos],
+                    size: [...node.size],
+                    properties: {...node.properties},
+                    id: node.id,
+                    title: node.title || '',
+                    flags: {...node.flags}
+                }).catch(error => {
+                    console.error('Failed to sync text node creation:', error);
+                });
             }
             
             this.pushUndoState();
@@ -4283,18 +4325,28 @@ Mode: ${this.fpsTestMode}`;
         textarea.style.position = 'fixed';
         textarea.style.zIndex = '10000';
         textarea.style.resize = 'none';
-        textarea.style.border = `2px solid ${ColorUtils.get('borders', 'focus')}`;
+        // Match the selection box line width which scales with zoom
+        const borderWidth = 2 / this.viewport.scale;
+        textarea.style.border = `${borderWidth}px solid ${ColorUtils.get('canvas', 'selection_stroke')}`;
         textarea.style.outline = 'none';
         textarea.style.background = 'transparent';
         textarea.style.color = node.properties.textColor;
         textarea.style.fontFamily = node.properties.fontFamily;
         textarea.style.fontSize = `${node.properties.fontSize * this.viewport.scale}px`;
         textarea.style.textAlign = node.properties.textAlign;
-        textarea.style.lineHeight = node.properties.leadingFactor;
-        textarea.style.padding = `${node.properties.padding * this.viewport.scale}px`;
+        textarea.style.lineHeight = `${node.properties.leadingFactor}`;
+        // Match canvas padding exactly - subtract a bit to account for browser differences
+        const adjustedPadding = Math.max(0, (node.properties.padding - 2) * this.viewport.scale);
+        textarea.style.padding = `${adjustedPadding}px`;
         textarea.style.overflow = 'hidden';
         textarea.style.whiteSpace = 'pre-wrap';
         textarea.style.wordWrap = 'break-word';
+        textarea.style.wordBreak = 'break-word';
+        // IMPORTANT: Use border-box so border and padding are included in width/height
+        textarea.style.boxSizing = 'border-box';
+        // Force consistent text rendering
+        textarea.style.fontKerning = 'normal';
+        textarea.style.textRendering = 'geometricPrecision';
 
         // Position and size the textarea to match the node
         this.positionTextEditingOverlay(textarea, node);
@@ -4317,8 +4369,14 @@ Mode: ${this.fpsTestMode}`;
             this.updateTextEditingOverlaySize(textarea, node);
             
             // Broadcast text changes in real-time for collaboration
-            if (this.collaborativeManager) {
-                this.broadcastNodePropertyUpdate(node.id, 'text', textarea.value);
+            if (window.app && window.app.operationPipeline) {
+                window.app.operationPipeline.execute('node_property_update', {
+                    nodeId: node.id,
+                    property: 'text',
+                    value: textarea.value
+                }).catch(error => {
+                    console.error('Failed to sync text change:', error);
+                });
             }
         });
 
@@ -4344,18 +4402,28 @@ Mode: ${this.fpsTestMode}`;
         const [screenX, screenY] = this.viewport.convertGraphToOffset(nodePos[0], nodePos[1]);
         const rect = this.canvas.getBoundingClientRect();
         
-        textarea.style.left = `${rect.left + screenX}px`;
-        textarea.style.top = `${rect.top + screenY}px`;
-        textarea.style.width = `${node.size[0] * this.viewport.scale}px`;
-        textarea.style.height = `${node.size[1] * this.viewport.scale}px`;
+        // The selection box is drawn at the exact node position
+        // The textarea border (with box-sizing: border-box) is drawn inside the box
+        // We need to offset by half the border width to align the centers of the borders
+        const borderWidth = 2 / this.viewport.scale;
+        const halfBorder = borderWidth / 2;
+        
+        textarea.style.left = `${rect.left + screenX - halfBorder}px`;
+        textarea.style.top = `${rect.top + screenY - halfBorder}px`;
+        // Add the full border width to width/height to account for the border being inside
+        textarea.style.width = `${node.size[0] * this.viewport.scale + borderWidth}px`;
+        textarea.style.height = `${node.size[1] * this.viewport.scale + borderWidth}px`;
     }
 
     updateTextEditingOverlaySize(textarea, node) {
-        // Update overlay size to match node
-        textarea.style.width = `${node.size[0] * this.viewport.scale}px`;
-        textarea.style.height = `${node.size[1] * this.viewport.scale}px`;
+        // Update overlay size to match node (consistent with positionTextEditingOverlay)
+        const borderWidth = 2 / this.viewport.scale;
+        textarea.style.width = `${node.size[0] * this.viewport.scale + borderWidth}px`;
+        textarea.style.height = `${node.size[1] * this.viewport.scale + borderWidth}px`;
         textarea.style.fontSize = `${node.properties.fontSize * this.viewport.scale}px`;
-        textarea.style.padding = `${node.properties.padding * this.viewport.scale}px`;
+        // Match canvas padding exactly - subtract a bit to account for browser differences
+        const adjustedPadding = Math.max(0, (node.properties.padding - 2) * this.viewport.scale);
+        textarea.style.padding = `${adjustedPadding}px`;
     }
 
     finishTextEditing() {
@@ -4375,12 +4443,25 @@ Mode: ${this.fpsTestMode}`;
         }
         
         // Broadcast final text state and any size changes for collaboration
-        if (this.collaborativeManager) {
-            this.broadcastNodePropertyUpdate(node.id, 'text', textarea.value);
+        if (window.app && window.app.operationPipeline) {
+            // Sync final text content
+            window.app.operationPipeline.execute('node_property_update', {
+                nodeId: node.id,
+                property: 'text',
+                value: textarea.value
+            }).catch(error => {
+                console.error('Failed to sync final text change:', error);
+            });
             
-            // If size changed during auto-resize, broadcast that too
+            // If size changed during auto-resize, sync that too
             if (oldSize[0] !== node.size[0] || oldSize[1] !== node.size[1]) {
-                this.broadcastNodeResize();
+                window.app.operationPipeline.execute('node_resize', {
+                    nodeId: node.id,
+                    size: [...node.size],
+                    position: [...node.pos]
+                }).catch(error => {
+                    console.error('Failed to sync text node resize:', error);
+                });
             }
         }
 
@@ -5156,9 +5237,10 @@ Mode: ${this.fpsTestMode}`;
         ctx.strokeStyle = ColorUtils.get('canvas', 'selection_stroke');
         ctx.strokeRect(0, 0, node.size[0], node.size[1]);
         
-        // Draw handles if node is large enough and not during alignment animations
+        // Draw handles if node is large enough, not during alignment animations, and not editing
         const shouldDrawHandles = this.handleDetector.shouldShowHandles(node) && 
-                                 (!this.alignmentManager || !this.alignmentManager.isAnimating());
+                                 (!this.alignmentManager || !this.alignmentManager.isAnimating()) &&
+                                 !node.isEditing;
         
         if (shouldDrawHandles) {
             this.drawNodeHandles(ctx, node);
@@ -5305,6 +5387,31 @@ Mode: ${this.fpsTestMode}`;
         // Always draw mouse cursors (the manager will filter based on gallery view state)
         if (window.app?.otherUsersMouseManager) {
             window.app.otherUsersMouseManager.draw(ctx);
+        }
+        
+        // Draw text nodes on overlay layer (so they appear on top of images)
+        if (this.graph && this.graph.nodes) {
+            for (const node of this.graph.nodes) {
+                if (node.type === 'media/text' && node.onDrawOverlay) {
+                    ctx.save();
+                    
+                    // Set up coordinate system like other overlay elements
+                    ctx.setTransform(this.viewport.dpr, 0, 0, this.viewport.dpr, 0, 0);
+                    
+                    // Convert node position from graph coordinates to screen coordinates
+                    const [screenX, screenY] = this.viewport.convertGraphToOffset(node.pos[0], node.pos[1]);
+                    const [screenX2, screenY2] = this.viewport.convertGraphToOffset(node.pos[0] + node.size[0], node.pos[1] + node.size[1]);
+                    const screenWidth = screenX2 - screenX;
+                    const screenHeight = screenY2 - screenY;
+                    
+                    // Position and scale the context for the text node
+                    ctx.translate(screenX, screenY);
+                    ctx.scale(screenWidth / node.size[0], screenHeight / node.size[1]);
+                    
+                    node.onDrawOverlay(ctx);
+                    ctx.restore();
+                }
+            }
         }
         
         // Skip other overlays in gallery view

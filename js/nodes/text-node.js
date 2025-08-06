@@ -6,6 +6,23 @@ class TextNode extends BaseNode {
     constructor() {
         super('media/text');
         this.title = 'Text';
+        
+        // Ensure we get the app font, checking multiple possible sources
+        let fontFamily = 'Univers, sans-serif'; // Direct default to Univers
+        try {
+            if (typeof FONT_CONFIG !== 'undefined' && FONT_CONFIG && FONT_CONFIG.APP_FONT_CANVAS) {
+                fontFamily = FONT_CONFIG.APP_FONT_CANVAS;
+                console.log('TextNode using FONT_CONFIG:', fontFamily);
+            } else if (typeof window !== 'undefined' && window.FONT_CONFIG && window.FONT_CONFIG.APP_FONT_CANVAS) {
+                fontFamily = window.FONT_CONFIG.APP_FONT_CANVAS;
+                console.log('TextNode using window.FONT_CONFIG:', fontFamily);
+            } else {
+                console.log('TextNode using default Univers font (FONT_CONFIG not available)');
+            }
+        } catch (e) {
+            console.log('TextNode font config error, using Univers default:', e);
+        }
+        
         this.properties = {
             text: '',
             bgColor: '#fff',
@@ -13,7 +30,7 @@ class TextNode extends BaseNode {
             fontSize: 16,
             leadingFactor: 1.0,
             textColor: '#fff',
-            fontFamily: FONT_CONFIG ? FONT_CONFIG.APP_FONT_CANVAS : 'Roboto',
+            fontFamily: fontFamily,
             textAlign: 'left',
             padding: 10
         };
@@ -21,10 +38,17 @@ class TextNode extends BaseNode {
         this.size = [200, 100];
         this.minSize = [50, 30];
         this.isEditing = false;
+        
+        // Cache for line breaks to prevent flicker
+        this._lineBreakCache = null;
+        this._cacheKey = null;
+        this._lastWrapWidth = null; // For hysteresis in text wrapping
+        this._lastCachedWidth = null; // Track the width we last cached at
     }
     
     setText(text) {
         this.properties.text = text;
+        this.invalidateLineBreakCache();
         this.fitTextToBox();
         this.markDirty();
         
@@ -34,8 +58,15 @@ class TextNode extends BaseNode {
         }
     }
     
+    invalidateLineBreakCache() {
+        this._lineBreakCache = null;
+        this._cacheKey = null;
+        this._lastWrapWidth = null; // Reset hysteresis tracking
+    }
+    
     setFontSize(fontSize) {
         this.properties.fontSize = Utils.clamp(fontSize, 6, 200);
+        this.invalidateLineBreakCache();
         this.markDirty();
         
         // Broadcast font size change for collaboration
@@ -73,13 +104,38 @@ class TextNode extends BaseNode {
     onResize(resizeMode = 'default') {
         super.onResize();
         
+        // Don't invalidate cache during resize drag - wait until resize completes
+        // The canvas will call onResizeEnd when done
+        
         // resizeMode will be passed from canvas when resizing
-        // 'fontSize' = normal drag (adjust font size)
-        // 'boxOnly' = shift-drag (resize box only, text wraps)
-        if (resizeMode === 'fontSize' || resizeMode === 'default') {
-            this.fitTextToBox();
+        // 'fontSize' = normal drag (scale both font size and box proportionally)
+        // 'boxOnly' = shift-drag (non-uniform resize box only, keep font size)
+        // 'default' = called from other contexts
+        // 'noFit' = resize without auto-fitting text
+        
+        // During drag operations, the canvas passes specific modes
+        // We should NOT auto-fit text during drag operations to avoid jumpy behavior
+        if (resizeMode === 'fontSize') {
+            // Font size is already scaled by canvas resize logic
+            // Don't call fitTextToBox as we want to keep the scaled font size
+        } else if (resizeMode === 'boxOnly') {
+            // Box resized but font size stays the same
+            // Text will wrap differently in the new box dimensions
+        } else if (resizeMode === 'noFit') {
+            // Explicit no-fit mode
+        } else if (resizeMode === 'default') {
+            // Only auto-fit text when explicitly requested (not during drag)
+            // This should only happen for programmatic resizes, not user interaction
+            // Commenting out to prevent jumpy resize behavior
+            // this.fitTextToBox();
         }
-        // For 'boxOnly' mode, don't adjust font size, just let text wrap
+    }
+    
+    onResizeEnd() {
+        // Called when resize operation completes
+        // Don't invalidate cache here - keep the existing wrapping
+        // The cache will naturally update when the text changes or when needed
+        this.markDirty();
     }
     
     fitTextToBox() {
@@ -144,11 +200,15 @@ class TextNode extends BaseNode {
         let currentLine = '';
         let lineCount = 0;
         
+        // Use same tolerance as drawWrappedLine to ensure consistency
+        const tolerance = 0.5;
+        const effectiveMaxWidth = maxWidth - tolerance;
+        
         for (const word of words) {
             const testLine = currentLine ? `${currentLine} ${word}` : word;
             const metrics = ctx.measureText(testLine);
             
-            if (metrics.width > maxWidth && currentLine) {
+            if (metrics.width > effectiveMaxWidth && currentLine) {
                 lineCount++;
                 currentLine = word;
             } else {
@@ -161,16 +221,37 @@ class TextNode extends BaseNode {
     }
     
     validate() {
-        // Add bounds check
-        if (this.size[0] < this.minSize[0]) this.size[0] = this.minSize[0];
-        if (this.size[1] < this.minSize[1]) this.size[1] = this.minSize[1];
+        // NEVER modify size during any canvas interaction
+        // This was causing the jumpy resize behavior
+        const canvas = this.graph?.canvas;
+        const isResizing = canvas?.interactionState?.resizing?.active;
+        const isDragging = canvas?.interactionState?.dragging?.active;
+        const isSelecting = canvas?.interactionState?.selecting?.active;
+        const isRotating = canvas?.interactionState?.rotating?.active;
+        const isAnyInteraction = isResizing || isDragging || isSelecting || isRotating || this.isEditing;
+        
+        if (!isAnyInteraction) {
+            // Only enforce bounds when absolutely no interaction is happening
+            if (this.size[0] < this.minSize[0]) this.size[0] = this.minSize[0];
+            if (this.size[1] < this.minSize[1]) this.size[1] = this.minSize[1];
+        }
         
         // Ensure all properties have valid values
         if (!this.properties.textAlign) {
             this.properties.textAlign = 'left';
         }
-        if (!this.properties.fontFamily) {
-            this.properties.fontFamily = FONT_CONFIG ? FONT_CONFIG.APP_FONT_CANVAS : 'Roboto';
+        
+        // Ensure app font is used - but only update if needed to avoid unnecessary changes
+        let targetFont = 'Univers, sans-serif';
+        if (typeof FONT_CONFIG !== 'undefined' && FONT_CONFIG && FONT_CONFIG.APP_FONT_CANVAS) {
+            targetFont = FONT_CONFIG.APP_FONT_CANVAS;
+        } else if (typeof window !== 'undefined' && window.FONT_CONFIG && window.FONT_CONFIG.APP_FONT_CANVAS) {
+            targetFont = window.FONT_CONFIG.APP_FONT_CANVAS;
+        }
+        
+        // Only update if the font is different or missing
+        if (!this.properties.fontFamily || this.properties.fontFamily === 'Roboto' || this.properties.fontFamily === 'Roboto, sans-serif') {
+            this.properties.fontFamily = targetFont;
         }
         if (typeof this.properties.fontSize !== 'number') {
             this.properties.fontSize = 16;
@@ -196,13 +277,33 @@ class TextNode extends BaseNode {
     }
     
     onDrawForeground(ctx) {
-        this.validate();
+        // Text nodes don't draw on the main canvas - they render on the overlay layer
+        // This ensures text always appears on top of images and other content
+        
+        // The selection box is drawn by the canvas in drawNodeSelection
+        // We don't need to draw anything here
+    }
+    
+    // New method for overlay rendering - text nodes render here to appear on top
+    onDrawOverlay(ctx) {
+        // Skip validation entirely during interactions - it was causing jumpy behavior
+        const canvas = this.graph?.canvas;
+        const hasInteraction = canvas?.interactionState && (
+            canvas.interactionState.resizing?.active ||
+            canvas.interactionState.dragging?.active ||
+            canvas.interactionState.selecting?.active ||
+            canvas.interactionState.rotating?.active
+        );
+        
+        if (!hasInteraction && !this.isEditing) {
+            this.validate();
+        }
         
         const { bgColor, bgAlpha, text, fontSize, leadingFactor, textColor, fontFamily, textAlign, padding } = this.properties;
         
         ctx.save();
         
-        // Clip to node bounds
+        // Position is handled by the canvas overlay system, so we just clip to bounds
         ctx.beginPath();
         ctx.rect(0, 0, this.size[0], this.size[1]);
         ctx.clip();
@@ -232,10 +333,7 @@ class TextNode extends BaseNode {
             this.drawText(ctx, text, padding, fontSize, leadingFactor, textAlign);
         }
         
-        // Draw border if focused/selected
-        if (this.graph?.canvas?.selection?.isSelected(this)) {
-            this.drawTextBorder(ctx);
-        }
+        // Border is already drawn in onDrawForeground, no need to duplicate here
         
         ctx.restore();
     }
@@ -243,45 +341,98 @@ class TextNode extends BaseNode {
     drawText(ctx, text, padding, fontSize, leadingFactor, textAlign) {
         const lineHeight = fontSize * leadingFactor;
         const maxWidth = this.size[0] - padding * 2;
-        const lines = text.split('\n');
-        let yOffset = padding;
         
-        for (const line of lines) {
+        // Get wrapped lines - this will use cache during resize automatically
+        const wrappedLines = this.getWrappedLines(ctx, text, maxWidth, fontSize);
+        
+        let yOffset = padding;
+        for (const line of wrappedLines) {
             if (line.trim() === '') {
                 yOffset += lineHeight;
                 continue;
             }
             
-            this.drawWrappedLine(ctx, line, padding, yOffset, maxWidth, lineHeight, textAlign);
-            const lineCount = this.getLineCount(ctx, line, maxWidth);
-            yOffset += lineCount * lineHeight;
+            this.drawAlignedText(ctx, line, padding, yOffset, maxWidth, textAlign);
+            yOffset += lineHeight;
         }
     }
     
-    drawWrappedLine(ctx, line, padding, startY, maxWidth, lineHeight, textAlign) {
+    getWrappedLines(ctx, text, maxWidth, fontSize) {
+        // Create cache key from relevant parameters
+        // Use stepped width in cache key for better cache reuse during resize
+        const STEP_SIZE = 30;  // Larger steps = more stable
+        const steppedWidth = Math.floor(maxWidth / STEP_SIZE) * STEP_SIZE;
+        const cacheKey = `${text}|${steppedWidth}|${fontSize}|${this.properties.fontFamily}`;
+        
+        // Return cached result if available
+        // During editing, always use cache to maintain consistent wrapping
+        if ((this._cacheKey === cacheKey || this.isEditing) && this._lineBreakCache) {
+            return this._lineBreakCache;
+        }
+        
+        // Calculate new line breaks
+        const allLines = [];
+        const inputLines = text.split('\n');
+        
+        // Save and restore context state to ensure consistent measurements
+        ctx.save();
+        ctx.setTransform(1, 0, 0, 1, 0, 0); // Reset to identity transform
+        ctx.font = `${fontSize}px ${this.properties.fontFamily}`;
+        
+        for (const line of inputLines) {
+            if (line.trim() === '') {
+                allLines.push('');
+                continue;
+            }
+            
+            // Wrap this line
+            const wrappedLines = this.wrapLine(ctx, line, maxWidth);
+            allLines.push(...wrappedLines);
+        }
+        
+        ctx.restore();
+        
+        // Cache the result
+        this._cacheKey = cacheKey;
+        this._lineBreakCache = allLines;
+        this._lastCachedWidth = maxWidth; // Remember what width we cached at
+        
+        return allLines;
+    }
+    
+    wrapLine(ctx, line, maxWidth) {
         const words = line.split(' ');
+        const lines = [];
         let currentLine = '';
-        let yOffset = startY;
+        
+        // Round width to nearest 30 pixels to create larger "steps" that prevent constant re-wrapping
+        // This creates wider zones where text layout remains stable
+        const STEP_SIZE = 30;
+        const steppedWidth = Math.floor(maxWidth / STEP_SIZE) * STEP_SIZE;
+        
+        // Use the stepped width for calculations, with a small buffer
+        const effectiveMaxWidth = steppedWidth - 2;
         
         for (const word of words) {
             const testLine = currentLine ? `${currentLine} ${word}` : word;
             const metrics = ctx.measureText(testLine);
+            const width = Math.ceil(metrics.width); // Round up to avoid edge cases
             
-            if (metrics.width > maxWidth && currentLine) {
-                // Draw current line
-                this.drawAlignedText(ctx, currentLine, padding, yOffset, maxWidth, textAlign);
-                yOffset += lineHeight;
+            if (width > effectiveMaxWidth && currentLine) {
+                lines.push(currentLine);
                 currentLine = word;
             } else {
                 currentLine = testLine;
             }
         }
         
-        // Draw remaining text
         if (currentLine) {
-            this.drawAlignedText(ctx, currentLine, padding, yOffset, maxWidth, textAlign);
+            lines.push(currentLine);
         }
+        
+        return lines;
     }
+    
     
     drawAlignedText(ctx, text, padding, y, maxWidth, textAlign) {
         let x = padding;
@@ -332,7 +483,8 @@ class TextNode extends BaseNode {
     
     stopEditing() {
         this.isEditing = false;
-        this.fitTextToBox();
+        // Don't call fitTextToBox here - it changes the font size unexpectedly
+        // Just mark dirty to redraw with the current settings
         this.markDirty();
     }
     
@@ -394,28 +546,28 @@ class TextNode extends BaseNode {
             title: {
                 fontSize: 24,
                 textColor: '#fff',
-                fontFamily: FONT_CONFIG ? FONT_CONFIG.APP_FONT_CANVAS : 'Roboto',
+                fontFamily: (typeof FONT_CONFIG !== 'undefined' && FONT_CONFIG && FONT_CONFIG.APP_FONT_CANVAS) ? FONT_CONFIG.APP_FONT_CANVAS : 'Univers, sans-serif',
                 textAlign: 'center',
                 leadingFactor: 1.2
             },
             subtitle: {
                 fontSize: 18,
                 textColor: '#ccc',
-                fontFamily: FONT_CONFIG ? FONT_CONFIG.APP_FONT_CANVAS : 'Roboto',
+                fontFamily: (typeof FONT_CONFIG !== 'undefined' && FONT_CONFIG && FONT_CONFIG.APP_FONT_CANVAS) ? FONT_CONFIG.APP_FONT_CANVAS : 'Univers, sans-serif',
                 textAlign: 'center',
                 leadingFactor: 1.1
             },
             body: {
                 fontSize: 14,
                 textColor: '#fff',
-                fontFamily: FONT_CONFIG ? FONT_CONFIG.APP_FONT_CANVAS : 'Roboto',
+                fontFamily: (typeof FONT_CONFIG !== 'undefined' && FONT_CONFIG && FONT_CONFIG.APP_FONT_CANVAS) ? FONT_CONFIG.APP_FONT_CANVAS : 'Univers, sans-serif',
                 textAlign: 'left',
                 leadingFactor: 1.4
             },
             caption: {
                 fontSize: 12,
                 textColor: '#999',
-                fontFamily: FONT_CONFIG ? FONT_CONFIG.APP_FONT_CANVAS : 'Roboto',
+                fontFamily: (typeof FONT_CONFIG !== 'undefined' && FONT_CONFIG && FONT_CONFIG.APP_FONT_CANVAS) ? FONT_CONFIG.APP_FONT_CANVAS : 'Univers, sans-serif',
                 textAlign: 'left',
                 leadingFactor: 1.3
             }

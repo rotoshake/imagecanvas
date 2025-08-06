@@ -668,7 +668,7 @@ class ImageCanvasServer {
                     user = await this.db.getUser(userId);
                 }
                 
-                const canvasId = await this.db.createCanvas(name, user.id, description);
+                const canvasId = await this.db.createCanvas(name, description, user.id);
                 
                 const canvas = await this.db.getCanvas(canvasId);
                 

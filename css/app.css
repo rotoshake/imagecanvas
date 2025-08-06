@@ -1,3 +1,20 @@
+/* Font Face Declarations */
+@font-face {
+    font-family: 'Univers';
+    font-style: normal;
+    font-weight: 400;
+    font-display: swap;
+    src: url('../fonts/univers/Univers.woff') format('woff');
+}
+
+@font-face {
+    font-family: 'PeaberryMono';
+    font-style: normal;
+    font-weight: 400;
+    font-display: swap;
+    src: url('../fonts/peaberry/PeaberryMono.woff') format('woff');
+}
+
 /* Global font configuration - CHANGE FONT HERE */
 :root {
     --app-font-family: 'Univers', sans-serif;
