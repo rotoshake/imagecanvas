@@ -306,8 +306,8 @@ class NetworkLayer {
         
         this.socket.on('user_joined', (user) => {
             this.emitLocal('user_joined', user);
-            // Show notification
-            if (window.unifiedNotifications) {
+            // Show notification only if we're in a canvas (server already scopes to current canvas)
+            if (window.unifiedNotifications && this.currentCanvas) {
                 window.unifiedNotifications.show({
                     type: 'info',
                     message: `${user.displayName || user.username} joined`,
@@ -318,8 +318,8 @@ class NetworkLayer {
         
         this.socket.on('user_left', (user) => {
             this.emitLocal('user_left', user);
-            // Show notification
-            if (window.unifiedNotifications) {
+            // Show notification only if we're in a canvas (server already scopes to current canvas)
+            if (window.unifiedNotifications && this.currentCanvas) {
                 window.unifiedNotifications.show({
                     type: 'info',
                     message: `${user.displayName || user.username} left`,
