@@ -340,10 +340,34 @@ class ChatPanel {
                 e.stopPropagation();
             }
             
-            // Stop all other hotkeys from propagating while typing
-            // except for Escape which we handle separately
-            if (e.key !== 'Escape') {
+            // Stop all keyboard shortcuts from triggering while typing in chat
+            // Allow standard text editing shortcuts (copy, paste, etc.)
+            const allowedKeys = ['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 
+                                'Home', 'End', 'PageUp', 'PageDown'];
+            const isTextEditingShortcut = (e.ctrlKey || e.metaKey) && 
+                                         ['a', 'c', 'x', 'v', 'z', 'y'].includes(e.key.toLowerCase());
+            
+            if (!allowedKeys.includes(e.key) && !isTextEditingShortcut && e.key !== 'Escape') {
                 e.stopPropagation();
+            }
+        });
+        
+        // Also prevent keyup events from propagating
+        this.input.addEventListener('keyup', (e) => {
+            e.stopPropagation();
+        });
+        
+        // Disable keyboard shortcuts when input is focused
+        this.input.addEventListener('focus', () => {
+            if (this.app.graphCanvas?.shortcutManager) {
+                this.app.graphCanvas.shortcutManager.enabled = false;
+            }
+        });
+        
+        // Re-enable keyboard shortcuts when input loses focus
+        this.input.addEventListener('blur', () => {
+            if (this.app.graphCanvas?.shortcutManager) {
+                this.app.graphCanvas.shortcutManager.enabled = true;
             }
         });
         
