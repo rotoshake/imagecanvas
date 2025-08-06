@@ -69,14 +69,26 @@ Groups related operations:
 - **ImageUploadManager** (`js/managers/ImageUploadManager.js`): HTTP-based uploads
 - **ImageUploadCoordinator** (`js/core/ImageUploadCoordinator.js`): Background upload coordination
 - **ImageProcessingProgressManager** (`js/core/ImageProcessingProgressManager.js`): Unified progress tracking
+- **ThumbnailRequestCoordinator** (`js/core/ThumbnailRequestCoordinator.js`): Batched thumbnail requests
+- **WebGLRenderer** (`js/renderers/WebGLRenderer.js`): Hardware-accelerated rendering
+- **TextureLODManager** (`js/renderers/TextureLODManager.js`): GPU texture management
+
+#### 8. UI Components
+- **FloatingColorCorrection** (`js/ui/floating-color-correction.js`): Color adjustment interface
+- **SplineCurveEditor** (`js/ui/components/spline-curve-editor.js`): Tone curve editing
+- **ColorBalanceWheel** (`js/ui/components/color-balance-wheel.js`): Color grading controls
+- **AdminPanel** (`js/ui/admin-panel.js`): System administration interface
+- **KeyboardShortcutManager** (`js/config/keyboard-shortcuts-integration.js`): Shortcut handling
 
 ### Backend Architecture
 
 #### 1. Express Server (`server/index.js`)
 REST API endpoints:
 - `/api/upload` - HTTP file uploads (images/videos)
+- `/api/thumbnails/batch` - Batch thumbnail URL generation
 - `/projects/*` - Project management
 - `/database/cleanup` - Database maintenance
+- `/database/size` - Database size information
 - `/uploads/*` - Static file serving
 - `/thumbnails/*` - Thumbnail serving
 
@@ -102,13 +114,19 @@ Server-side undo/redo:
 - Transaction-aware undo/redo
 - Conflict detection for undo operations
 
-#### 5. Database Layer (`server/src/database/database.js`)
-SQLite with WAL mode:
+#### 5. Database Layer
+- **database.js**: Original sqlite3 implementation
+- **database-better-sqlite3.js**: Better-sqlite3 alternative for Windows
+- **init-database.js**: Database initialization and migration
+
+Features:
+- SQLite with WAL mode
 - User management
-- Project/canvas persistence
+- Project/canvas persistence  
 - Operation history (without embedded data)
-- File metadata
+- File metadata with access tracking
 - Thumbnail references
+- Node layer ordering
 
 ## Data Flow
 
@@ -164,14 +182,23 @@ Abstract base class providing:
   - LOD (Level of Detail) rendering
   - Server-based thumbnails
   - Aspect ratio preservation
+  - Color correction support (tone curves, adjustments, color balance)
+  - WebGL-accelerated rendering
 - **VideoNode** (`js/nodes/video-node.js`): 
   - Video playback with controls
   - Thumbnail generation
   - Play/pause synchronization
+  - Color correction support
 - **TextNode** (`js/nodes/text-node.js`): 
   - WYSIWYG text editing
   - Font support
   - Real-time collaboration
+- **GroupNode** (`js/nodes/group-node.js`):
+  - Container for organizing nodes
+  - Automatic bounds calculation
+  - Drag-and-drop support
+  - Animated transitions
+  - Screen-space aware rendering
 
 ## Performance Optimizations
 
@@ -181,14 +208,19 @@ Abstract base class providing:
   - Progressive thumbnail loading
   - Server-side thumbnail generation
   - Centralized caching system
+  - Batched thumbnail requests
 - **Rendering**:
-  - RequestAnimationFrame scheduling
+  - WebGL hardware acceleration
+  - Texture memory management
+  - Pre-rendered LOD caching
+  - Idle render optimization (no 60fps when static)
   - Dirty rectangle optimization
   - LOD based on zoom level
 - **Operations**:
   - Optimistic updates
   - Operation queuing
   - Batch processing
+  - Interaction-based undo grouping
 
 ### Server-Side
 - **WebSocket Optimization**:
@@ -210,10 +242,12 @@ Abstract base class providing:
 
 ### Current Implementation
 - CORS configuration for specific origins
+- Environment-based CORS for LAN access
 - Helmet.js security headers
 - File upload validation (images/videos only)
 - Operation size limits
 - Socket.IO authentication
+- Rate limiting ready (documentation provided)
 
 ### Production Requirements
 - HTTPS enforcement
@@ -243,18 +277,24 @@ CollaborativeArchitecture
 
 ## Configuration
 
-### Client Configuration (`js/config.js`)
+### Client Configuration
+- **config.js**: Main configuration with dynamic host detection
+- **keyboard-shortcuts.js**: Centralized keyboard shortcut definitions
+- **state.js**: Global state management and feature flags
+
 ```javascript
 const CONFIG = {
     SERVER: {
-        HTTP_BASE: 'http://localhost:3000',
-        WS_URL: 'ws://localhost:3000',
-        API_BASE: 'http://localhost:3000'
+        HTTP_BASE: window.location.hostname === 'localhost' ? 
+            'http://localhost:3000' : 
+            `http://${window.location.hostname}:3000`,
+        // Dynamic WebSocket URL for LAN support
     },
     FEATURES: {
         OPERATION_QUEUE: true,
         UNIFIED_NOTIFICATIONS: true,
-        PROGRESSIVE_THUMBNAILS: true
+        PROGRESSIVE_THUMBNAILS: true,
+        WEBGL_RENDERER: true
     }
 }
 ```

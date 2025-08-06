@@ -40,7 +40,14 @@ class UserProfileSystem {
      * Check for existing user session
      */
     async checkExistingSession() {
-        const storedUser = localStorage.getItem('imagecanvas_user');
+        // First check sessionStorage (tab-specific)
+        let storedUser = sessionStorage.getItem('imagecanvas_user');
+        
+        // Fall back to localStorage if no session-specific user
+        if (!storedUser) {
+            storedUser = localStorage.getItem('imagecanvas_user');
+        }
+        
         if (storedUser) {
             try {
                 const userData = JSON.parse(storedUser);
@@ -49,6 +56,7 @@ class UserProfileSystem {
             } catch (error) {
                 
                 localStorage.removeItem('imagecanvas_user');
+                sessionStorage.removeItem('imagecanvas_user');
             }
         }
     }
@@ -69,6 +77,8 @@ class UserProfileSystem {
         this.isAuthenticated = !!userData.id;
         
         // Store in localStorage
+        // Save to both storages - sessionStorage for tab-specific, localStorage for persistence
+        sessionStorage.setItem('imagecanvas_user', JSON.stringify(this.currentUser));
         localStorage.setItem('imagecanvas_user', JSON.stringify(this.currentUser));
         
         // Notify listeners
@@ -137,8 +147,9 @@ class UserProfileSystem {
         this.currentUser = null;
         this.isAuthenticated = false;
         
-        // Clear stored data
+        // Clear stored data from both storages
         localStorage.removeItem('imagecanvas_user');
+        sessionStorage.removeItem('imagecanvas_user');
         
         // Notify listeners
         this.notifyListeners('userChanged', null);
@@ -157,6 +168,8 @@ class UserProfileSystem {
         this.currentUser.lastSeen = new Date().toISOString();
         
         // Store updated profile
+        // Save to both storages - sessionStorage for tab-specific, localStorage for persistence
+        sessionStorage.setItem('imagecanvas_user', JSON.stringify(this.currentUser));
         localStorage.setItem('imagecanvas_user', JSON.stringify(this.currentUser));
         
         // Notify listeners
@@ -262,6 +275,13 @@ class UserProfileSystem {
     }
     
     /**
+     * Register event listener (alias for addListener)
+     */
+    on(event, callback) {
+        this.addListener(event, callback);
+    }
+    
+    /**
      * Remove event listener
      */
     removeListener(event, callback) {
@@ -271,6 +291,13 @@ class UserProfileSystem {
                 break;
             }
         }
+    }
+    
+    /**
+     * Remove event listener (alias for removeListener)
+     */
+    off(event, callback) {
+        this.removeListener(event, callback);
     }
     
     /**

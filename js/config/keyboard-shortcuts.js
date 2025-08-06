@@ -212,6 +212,11 @@ const KEYBOARD_SHORTCUTS = {
             keys: ['t'],
             modifiers: ['shiftKey'],
             description: 'Toggle title visibility'
+        },
+        CHAT: {
+            keys: ['`'],
+            modifiers: [],
+            description: 'Toggle chat panel'
         }
     },
 

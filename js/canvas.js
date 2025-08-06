@@ -1229,9 +1229,18 @@ Mode: ${this.fpsTestMode}`;
     }
     
     onKeyDown(e) {
-        // Debug log
-        if (e.shiftKey && (e.key === 'M' || e.key === 'm')) {
-            console.log('Key event:', e.key, 'Shift:', e.shiftKey, 'Ctrl:', e.ctrlKey, 'Meta:', e.metaKey);
+        // Check if the user is typing in any input field (including login forms)
+        const activeElement = document.activeElement;
+        const isTypingInInput = activeElement && (
+            activeElement.tagName === 'INPUT' || 
+            activeElement.tagName === 'TEXTAREA' ||
+            activeElement.tagName === 'SELECT' ||
+            activeElement.contentEditable === 'true'
+        );
+        
+        // If typing in an input field, don't process shortcuts
+        if (isTypingInInput) {
+            return;
         }
         
         // Track spacebar press for panning
@@ -1244,43 +1253,6 @@ Mode: ${this.fpsTestMode}`;
         }
         
         if (this.isEditingText()) return;
-        
-        // Debug memory usage when zoomed out (Shift+M)
-        if ((e.key === 'M' || e.key === 'm') && e.shiftKey && !e.ctrlKey && !e.metaKey) {
-            console.log('Shift+M pressed, checking for lodManager...');
-            if (this.renderer?.lodManager) {
-                const stats = this.renderer.lodManager.getStats();
-                console.log('📊 Texture Memory Breakdown:', stats.memoryByLOD);
-                console.log(`Total textures: ${stats.textureCount}`);
-                console.log(`Total memory: ${(stats.totalMemory / 1024 / 1024).toFixed(1)}MB`);
-                
-                // Log details for each LOD
-                Object.entries(stats.memoryByLOD).forEach(([lod, data]) => {
-                    if (lod !== 'total') {
-                        console.log(`  ${lod}: ${data.count} textures, ${(data.memory / 1024 / 1024).toFixed(1)}MB`);
-                    }
-                });
-                
-                // Log current viewport info
-                console.log(`Current zoom: ${(this.viewport.scale * 100).toFixed(0)}%`);
-                
-                // Check WebGL limits
-                if (this.renderer?.gl) {
-                    const gl = this.renderer.gl;
-                    const maxTextureSize = gl.getParameter(gl.MAX_TEXTURE_SIZE);
-                    const maxTextureUnits = gl.getParameter(gl.MAX_TEXTURE_IMAGE_UNITS);
-                    console.log(`WebGL Limits: Max texture size: ${maxTextureSize}px, Max texture units: ${maxTextureUnits}`);
-                    
-                    // Check if we're hitting texture unit limits
-                    const activeTextures = this.renderer.lodManager?.accessOrder?.length || 0;
-                    if (activeTextures > maxTextureUnits) {
-                        console.warn(`⚠️ Active textures (${activeTextures}) exceeds max texture units (${maxTextureUnits})`);
-                    }
-                }
-            }
-            e.preventDefault();
-            return;
-        }
         
         // Use shortcut manager for all keyboard shortcuts
         if (this.shortcutManager && this.shortcutManager.handleKeyEvent(e)) {
@@ -1849,48 +1821,125 @@ Mode: ${this.fpsTestMode}`;
         
         // Individual node resize (single selection or not in multi-context)
         // Single node: update size and position with anchor point
-        if (shift) {
-            // Non-uniform scaling
-            node.size[0] = newWidth;
-            node.size[1] = newHeight;
-            node.aspectRatio = node.size[0] / node.size[1];
-        } else {
-            // Maintain aspect ratio
-            const aspectHeight = newWidth / initial.aspect;
-            node.size[0] = newWidth;
-            node.size[1] = aspectHeight;
-            node.aspectRatio = initial.aspect;
-            
-            // Recalculate position for aspect-constrained resize if rotated
-            if (node.rotation && node.rotation !== 0) {
-                const angle = node.rotation * Math.PI / 180;
-                const cos = Math.cos(angle);
-                const sin = Math.sin(angle);
+        
+        // Special handling for text nodes
+        const isTextNode = node.type === 'media/text';
+        
+        if (isTextNode) {
+            // Text nodes have special resize behavior
+            if (shift) {
+                // Shift-drag: resize box only (text wraps differently)
+                node.size[0] = newWidth;
+                node.size[1] = newHeight;
+                node.aspectRatio = node.size[0] / node.size[1];
                 
-                // Calculate anchor point again
-                const anchorLocalX = -initial.size[0] / 2;
-                const anchorLocalY = -initial.size[1] / 2;
-                const centerX = initial.pos[0] + initial.size[0] / 2;
-                const centerY = initial.pos[1] + initial.size[1] / 2;
+                // Update position (for both rotated and non-rotated nodes)
+                node.pos[0] = newPosX;
+                node.pos[1] = newPosY;
                 
-                const anchorX = centerX + anchorLocalX * cos - anchorLocalY * sin;
-                const anchorY = centerY + anchorLocalX * sin + anchorLocalY * cos;
+                // Call onResize with 'boxOnly' mode - don't adjust font size
+                if (node.onResize) {
+                    node.onResize('boxOnly');
+                }
+            } else {
+                // Normal drag: resize changes font size proportionally
+                // Calculate the scale factor based on diagonal change
+                const oldDiagonal = Math.sqrt(initial.size[0] * initial.size[0] + initial.size[1] * initial.size[1]);
+                const newDiagonal = Math.sqrt(newWidth * newWidth + newHeight * newHeight);
+                const scaleFactor = newDiagonal / oldDiagonal;
                 
-                // Recalculate position with new aspect-constrained height
-                const newCenterX = anchorX + (newWidth / 2) * cos - (aspectHeight / 2) * sin;
-                const newCenterY = anchorY + (newWidth / 2) * sin + (aspectHeight / 2) * cos;
+                // Maintain aspect ratio for text nodes when scaling font
+                const aspectHeight = newWidth / initial.aspect;
+                node.size[0] = newWidth;
+                node.size[1] = aspectHeight;
+                node.aspectRatio = initial.aspect;
                 
-                newPosX = newCenterX - newWidth / 2;
-                newPosY = newCenterY - aspectHeight / 2;
+                // Scale the font size
+                if (node.properties && typeof node.properties.fontSize === 'number') {
+                    const initialFontSize = this.interactionState.resizing.initialFontSize || node.properties.fontSize;
+                    if (!this.interactionState.resizing.initialFontSize) {
+                        this.interactionState.resizing.initialFontSize = node.properties.fontSize;
+                    }
+                    node.properties.fontSize = Math.max(6, Math.min(200, Math.round(initialFontSize * scaleFactor)));
+                }
+                
+                // Recalculate position for aspect-constrained resize if rotated
+                if (node.rotation && node.rotation !== 0) {
+                    const angle = node.rotation * Math.PI / 180;
+                    const cos = Math.cos(angle);
+                    const sin = Math.sin(angle);
+                    
+                    // Calculate anchor point again
+                    const anchorLocalX = -initial.size[0] / 2;
+                    const anchorLocalY = -initial.size[1] / 2;
+                    const centerX = initial.pos[0] + initial.size[0] / 2;
+                    const centerY = initial.pos[1] + initial.size[1] / 2;
+                    
+                    const anchorX = centerX + anchorLocalX * cos - anchorLocalY * sin;
+                    const anchorY = centerY + anchorLocalX * sin + anchorLocalY * cos;
+                    
+                    // Recalculate position with new aspect-constrained height
+                    const newCenterX = anchorX + (newWidth / 2) * cos - (aspectHeight / 2) * sin;
+                    const newCenterY = anchorY + (newWidth / 2) * sin + (aspectHeight / 2) * cos;
+                    
+                    newPosX = newCenterX - newWidth / 2;
+                    newPosY = newCenterY - aspectHeight / 2;
+                }
+                
+                // Update position (for both rotated and non-rotated nodes)
+                node.pos[0] = newPosX;
+                node.pos[1] = newPosY;
+                
+                // Call onResize with 'fontSize' mode
+                if (node.onResize) {
+                    node.onResize('fontSize');
+                }
             }
-        }
-        
-        // Update position (for both rotated and non-rotated nodes)
-        node.pos[0] = newPosX;
-        node.pos[1] = newPosY;
-        
-        if (node.onResize) {
-            node.onResize();
+        } else {
+            // Regular nodes: existing behavior
+            if (shift) {
+                // Non-uniform scaling
+                node.size[0] = newWidth;
+                node.size[1] = newHeight;
+                node.aspectRatio = node.size[0] / node.size[1];
+            } else {
+                // Maintain aspect ratio
+                const aspectHeight = newWidth / initial.aspect;
+                node.size[0] = newWidth;
+                node.size[1] = aspectHeight;
+                node.aspectRatio = initial.aspect;
+                
+                // Recalculate position for aspect-constrained resize if rotated
+                if (node.rotation && node.rotation !== 0) {
+                    const angle = node.rotation * Math.PI / 180;
+                    const cos = Math.cos(angle);
+                    const sin = Math.sin(angle);
+                    
+                    // Calculate anchor point again
+                    const anchorLocalX = -initial.size[0] / 2;
+                    const anchorLocalY = -initial.size[1] / 2;
+                    const centerX = initial.pos[0] + initial.size[0] / 2;
+                    const centerY = initial.pos[1] + initial.size[1] / 2;
+                    
+                    const anchorX = centerX + anchorLocalX * cos - anchorLocalY * sin;
+                    const anchorY = centerY + anchorLocalX * sin + anchorLocalY * cos;
+                    
+                    // Recalculate position with new aspect-constrained height
+                    const newCenterX = anchorX + (newWidth / 2) * cos - (aspectHeight / 2) * sin;
+                    const newCenterY = anchorY + (newWidth / 2) * sin + (aspectHeight / 2) * cos;
+                    
+                    newPosX = newCenterX - newWidth / 2;
+                    newPosY = newCenterY - aspectHeight / 2;
+                }
+            }
+            
+            // Update position (for both rotated and non-rotated nodes)
+            node.pos[0] = newPosX;
+            node.pos[1] = newPosY;
+            
+            if (node.onResize) {
+                node.onResize();
+            }
         }
         
         // Invalidate bounding box cache after single node resize
@@ -2779,6 +2828,7 @@ Mode: ${this.fpsTestMode}`;
         this.interactionState.resizing.active = false;
         this.interactionState.resizing.nodes.clear();
         this.interactionState.resizing.initial.clear();
+        this.interactionState.resizing.initialFontSize = null;
         this.interactionState.rotating.active = false;
         this.interactionState.rotating.nodes.clear();
         this.interactionState.rotating.initial.clear();
@@ -5240,9 +5290,22 @@ Mode: ${this.fpsTestMode}`;
     }
     
     drawOverlays(ctx) {
-        // Skip all overlays in gallery mode
-        if (this.galleryViewManager && !this.galleryViewManager.shouldRenderSelectionUI()) {
+        const inGalleryView = this.galleryViewManager && !this.galleryViewManager.shouldRenderSelectionUI();
+        
+        // Always draw mouse cursors (the manager will filter based on gallery view state)
+        if (window.app?.otherUsersMouseManager) {
+            window.app.otherUsersMouseManager.draw(ctx);
+        }
+        
+        // Skip other overlays in gallery view
+        if (inGalleryView) {
             return;
+        }
+        
+        // Normal mode - show everything else
+        // Draw other users' selections (before our own)
+        if (window.app?.otherUsersSelectionManager) {
+            window.app.otherUsersSelectionManager.draw(ctx);
         }
         
         // Draw selection rectangle

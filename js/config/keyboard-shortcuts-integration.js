@@ -130,7 +130,7 @@ class KeyboardShortcutManager {
     executeShortcut(category, action, event) {
         const canvas = this.canvas;
         
-        console.log(`🎯 Executing shortcut - Category: ${category}, Action: ${action}`);
+        // console.log(`🎯 Executing shortcut - Category: ${category}, Action: ${action}`);
         
         switch (category) {
             case 'NAVIGATION':

@@ -2793,6 +2793,12 @@ class ImageCanvasServer {
         console.log('🤖 Starting automated cleanup...');
         
         try {
+            // Clean up old viewport states
+            if (this.db.cleanupOldViewportStates) {
+                const viewportCleanup = this.db.cleanupOldViewportStates();
+                console.log(`  - Viewport states cleaned: ${viewportCleanup.guestStatesRemoved} guest, ${viewportCleanup.oldStatesRemoved} old`);
+            }
+            
             // Create a mock request/response for the cleanup endpoint
             const mockReq = {
                 query: {

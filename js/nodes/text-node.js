@@ -70,9 +70,16 @@ class TextNode extends BaseNode {
         }
     }
     
-    onResize() {
+    onResize(resizeMode = 'default') {
         super.onResize();
-        this.fitTextToBox();
+        
+        // resizeMode will be passed from canvas when resizing
+        // 'fontSize' = normal drag (adjust font size)
+        // 'boxOnly' = shift-drag (resize box only, text wraps)
+        if (resizeMode === 'fontSize' || resizeMode === 'default') {
+            this.fitTextToBox();
+        }
+        // For 'boxOnly' mode, don't adjust font size, just let text wrap
     }
     
     fitTextToBox() {

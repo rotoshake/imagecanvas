@@ -44,8 +44,24 @@
 - **Transaction Support**: Group related operations for atomic undo
 - **Cross-Tab Sync**: Undo state synchronized across user's tabs
 - **Visual Feedback**: Shows what will be undone/redone
+- **Interaction-Based Undo**: Groups related real-time changes (e.g., dragging) into single undo entries
 
 ### User Interface
+
+#### Floating Color Correction Panel
+- **Tone Curve Editor**: Spline-based tone curve adjustment
+- **Color Adjustments**: Brightness, contrast, saturation, hue, temperature, tint
+- **Color Balance Wheels**: Shadows, midtones, highlights with YRGB controls
+- **Per-Section Bypass**: Toggle individual correction sections
+- **Real-Time Updates**: Live preview of adjustments
+- **Persistent State**: Remembers panel position and visibility
+
+#### Admin Panel
+- **Database Management**: Cleanup orphaned files and optimize storage
+- **Thumbnail Management**: Scan and regenerate missing thumbnails
+- **System Information**: View connection status and session details
+- **Browser Cache Control**: Clear IndexedDB and local caches
+- **Grace Period Settings**: Configure file retention policies
 
 #### Unified Notifications
 - **Consolidated System**: All notifications in one consistent UI
@@ -67,7 +83,32 @@
 - **Draggable UI**: Position anywhere on screen
 - **Auto-Hide**: Hides when no selection
 
+### Group Nodes
+- **Container System**: Group multiple nodes together for organization
+- **Drag to Add**: Drag nodes into groups to add them
+- **Nested Groups**: Support for groups within groups
+- **Visual Boundaries**: Automatic bounds calculation with padding
+- **Title Bar**: Draggable title bar with customizable name
+- **Animation**: Smooth transitions when resizing or adding nodes
+- **Screen-Space Aware**: Title bar adjusts based on zoom level
+- **Parent-Child Relationships**: Maintains hierarchy during copy/paste
+
+### Z-Order Layer System
+- **Layer Control**: Move nodes up/down in rendering order
+- **Keyboard Shortcuts**: [ and ] for layer navigation
+- **Bring to Front/Back**: Shift+] and Shift+[ for extremes
+- **Group-Aware**: Respects group hierarchies
+- **Server Synchronized**: Layer order persists across sessions
+
 ### Performance Features
+
+#### Rendering Optimizations
+- **WebGL Renderer**: Hardware-accelerated image rendering
+- **Texture Caching**: Efficient GPU texture management
+- **LOD System**: Multiple detail levels based on zoom
+- **Cached Rendering**: Pre-rendered LOD textures for performance
+- **Memory Management**: Automatic texture cleanup and limits
+- **Idle Optimization**: Eliminates unnecessary 60fps rendering when idle
 
 #### Image Loading Optimization
 - **Level of Detail (LOD)**: Load appropriate resolution based on zoom
@@ -100,6 +141,26 @@
 - **Bulk Import**: Import multiple files at once
 - **State Export**: Export canvas state for backup
 
+### Keyboard Shortcuts System
+- **Centralized Configuration**: All shortcuts in one place
+- **Customizable**: Override defaults programmatically
+- **Platform-Aware**: Automatic Cmd/Ctrl mapping
+- **Categories**: Organized by function (navigation, selection, etc.)
+- **LocalStorage Persistence**: Custom shortcuts saved across sessions
+- **Test Interface**: Built-in testing page for shortcuts
+
+### Better-SQLite3 Support
+- **Windows Compatibility**: Alternative to node-sqlite3
+- **Synchronous API**: Simpler error handling
+- **Better Performance**: Up to 3x faster for some operations
+- **Drop-in Replacement**: Same API interface
+
+### LAN Access Support
+- **Dynamic Host Detection**: Automatically uses correct IP
+- **CORS Configuration**: Environment-based for security
+- **WebSocket Compatibility**: Works across local network
+- **Vite Dev Server**: LAN access enabled by default
+
 ### Developer Features
 
 #### Architecture
@@ -120,6 +181,26 @@
 - **Size Limits**: Prevent DoS through large uploads
 - **Operation Validation**: Server validates all operations
 - **Helmet.js**: Security headers for production
+
+## Recent Major Features
+
+### Texture Memory Optimization (2025)
+- Automatic memory limits based on device
+- Texture disposal and cleanup
+- Memory usage tracking
+- Automatic quality reduction when near limits
+
+### Gallery View Animations (2025)
+- Smooth transitions between images
+- Ken Burns effect support
+- Keyboard navigation
+- Touch gesture support
+
+### Security Enhancements (2025)
+- Rate limiting documentation
+- Secure default configurations
+- Input validation improvements
+- CORS security headers
 
 ## Planned Features
 

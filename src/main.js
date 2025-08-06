@@ -91,6 +91,9 @@ import '../js/core/NetworkLayer.js';
 import '../js/core/ClientUndoManager.js';
 import '../js/core/CollaborativeArchitecture.js';
 import '../js/core/VideoProcessingListener.js';
+import '../js/core/OtherUsersSelectionManager.js';
+import '../js/core/OtherUsersMouseManager.js';
+import '../js/core/UserFollowManager.js';
 import '../js/core/AutoInit.js';
 
 // 12) UI Components
@@ -103,6 +106,7 @@ import '../js/ui/floating-color-correction.js';
 import '../js/ui/unified-notifications.js';
 import '../js/ui/node-creation-menu.js';
 import '../js/ui/user-profile-panel.js';
+import '../js/ui/chat-panel.js';
 
 // 13) Finally boot the application after all globals are defined
 import '../js/app.js';

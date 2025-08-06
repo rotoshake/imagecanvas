@@ -24,6 +24,16 @@ class CollaborativeArchitecture {
         this.networkLayer = new NetworkLayer(this.app);
         this.app.networkLayer = this.networkLayer;
         
+        // Set current user if available - use the full user object, not getUserInfo()
+        if (this.app.userProfileSystem && this.app.userProfileSystem.currentUser) {
+            this.networkLayer.currentUser = this.app.userProfileSystem.currentUser;
+            console.log('🔗 Set NetworkLayer current user:', this.networkLayer.currentUser);
+        } else if (this.app.currentUser) {
+            // Fallback to app's current user
+            this.networkLayer.currentUser = this.app.currentUser;
+            console.log('🔗 Set NetworkLayer current user from app:', this.networkLayer.currentUser);
+        }
+        
         // 2. Operation Pipeline
         this.operationPipeline = new OperationPipeline(this.app);
         this.app.operationPipeline = this.operationPipeline;

@@ -918,7 +918,7 @@ class ThumbnailCache {
             }
             
             await window.indexedDBThumbnailStore.set(hash, thumbnailsObject);
-            console.log(`💾 Persisted ${thumbnails.size} thumbnails for ${hash.substring(0, 8)} to IndexedDB`);
+        //   console.log(`💾 Persisted ${thumbnails.size} thumbnails for ${hash.substring(0, 8)} to IndexedDB`);
         } catch (error) {
             console.warn(`Failed to persist thumbnails for ${hash.substring(0, 8)}:`, error);
         }
@@ -1216,11 +1216,11 @@ class ThumbnailCache {
             ? serverFilename.substring(0, serverFilename.lastIndexOf('.'))
             : serverFilename;
         
-        console.log(`🌐 Loading server thumbnails for ${hash.substring(0, 8)} (${nameWithoutExt}), sizes: [${sizesToLoad.join(', ')}]`);
+        // console.log(`🌐 Loading server thumbnails for ${hash.substring(0, 8)} (${nameWithoutExt}), sizes: [${sizesToLoad.join(', ')}]`);
         
         // First, try to generate thumbnails on server if they don't exist
         try {
-            console.log(`🔧 Requesting thumbnail generation for ${hash.substring(0, 8)}`);
+            // console.log(`🔧 Requesting thumbnail generation for ${hash.substring(0, 8)}`);
             const generateResponse = await fetch(`${CONFIG.SERVER.API_BASE}/api/thumbnails/generate`, {
                 method: 'POST',
                 headers: {
@@ -1234,7 +1234,7 @@ class ThumbnailCache {
             
             if (generateResponse.ok) {
                 const result = await generateResponse.json();
-                console.log(`✅ Thumbnail generation successful for ${hash.substring(0, 8)}:`, result.generated);
+                // console.log(`✅ Thumbnail generation successful for ${hash.substring(0, 8)}:`, result.generated);
             } else {
                 console.warn(`⚠️ Thumbnail generation failed for ${hash.substring(0, 8)}:`, generateResponse.status);
             }
@@ -1272,7 +1272,7 @@ class ThumbnailCache {
                         thumbnails.set(size, canvas);
                         this.currentMemoryUsage += this._calculateCanvasMemory(canvas);
                         loadedCount++;
-                        console.log(`✅ Loaded ${size}px server thumbnail (${canvas.width}x${canvas.height}) for ${hash.substring(0, 8)}`);
+                        // console.log(`✅ Loaded ${size}px server thumbnail (${canvas.width}x${canvas.height}) for ${hash.substring(0, 8)}`);
                     }
                 })
                 .catch(error => {
@@ -1289,7 +1289,7 @@ class ThumbnailCache {
             this._trackAccess(hash);
             // Persist loaded thumbnails
             this._persistThumbnails(hash, thumbnails);
-            console.log(`🎉 Loaded ${loadedCount} server thumbnails for ${hash.substring(0, 8)}`);
+            // console.log(`🎉 Loaded ${loadedCount} server thumbnails for ${hash.substring(0, 8)}`);
             return true;
         }
         
@@ -1384,10 +1384,10 @@ class ThumbnailCache {
         const thumbnailUrl = `${CONFIG.SERVER.API_BASE}/thumbnails/${size}/${nameWithoutExt}.webp`;
         
         try {
-            console.log(`📥 Loading ${size}px thumbnail from: ${thumbnailUrl}`);
+            // console.log(`📥 Loading ${size}px thumbnail from: ${thumbnailUrl}`);
             const result = await this._loadImageWithTimeout(thumbnailUrl, 10000); // 10 second timeout
             if (result) {
-                console.log(`✅ Loaded ${size}px thumbnail (${result.width}x${result.height})`);
+                // console.log(`✅ Loaded ${size}px thumbnail (${result.width}x${result.height})`);
                 
                 return result;
             } else {

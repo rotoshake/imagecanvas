@@ -2,15 +2,55 @@
 
 ## Performance Goals
 
-- **60 FPS** canvas rendering
+- **60 FPS** canvas rendering (with idle optimization)
 - **< 100ms** operation latency
 - **10+ concurrent users** without degradation
 - **1000+ objects** on canvas
 - **< 3s** initial load time
+- **< 512MB** GPU memory usage (desktop)
+- **< 128MB** GPU memory usage (mobile)
 
 ## Client-Side Optimizations
 
 ### 1. Rendering Performance
+
+#### WebGL Acceleration
+ImageCanvas now uses WebGL for hardware-accelerated rendering:
+```javascript
+// WebGL renderer with texture caching
+const renderer = new WebGLRenderer(canvas, {
+    maxTextureMemory: isMobile ? 128 * 1024 * 1024 : 512 * 1024 * 1024,
+    enableLODCaching: true,
+    colorCorrectionSupport: true
+});
+
+// Automatic texture management
+renderer.lodManager = new TextureLODManager(renderer, {
+    lodLevels: [64, 128, 256, 512, 1024, 2048],
+    cacheColorCorrected: true,
+    memoryPressureThreshold: 0.8
+});
+```
+
+#### Idle Render Optimization
+Eliminates unnecessary 60fps rendering when canvas is static:
+```javascript
+// Only render when needed
+function shouldRender() {
+    return (
+        this.dirty_canvas ||
+        this.isAnimating() ||
+        this.hasLoadingNodes() ||
+        this.userInteracting
+    );
+}
+
+// Smart dirty flag management
+markDirty() {
+    this.dirty_canvas = true;
+    this.scheduleRender();
+}
+```
 
 #### Canvas Optimization
 ```javascript
@@ -50,7 +90,75 @@ function renderVisibleNodes(ctx, nodes, viewport) {
 }
 ```
 
-#### Image Caching
+#### LOD-Based Texture Caching
+```javascript
+// Multi-resolution texture cache with memory limits
+class TextureLODCache {
+  constructor(maxMemory) {
+    this.textures = new Map();
+    this.memoryUsed = 0;
+    this.maxMemory = maxMemory;
+    this.accessOrder = new Map(); // LRU tracking
+  }
+
+  getCachedTexture(nodeId, lodLevel, colorCorrected) {
+    const key = `${nodeId}_${lodLevel}_${colorCorrected ? 'cc' : 'raw'}`;
+    const texture = this.textures.get(key);
+    
+    if (texture) {
+      // Update access time for LRU
+      this.accessOrder.set(key, Date.now());
+      return texture;
+    }
+    return null;
+  }
+
+  evictLRU() {
+    // Find least recently used
+    let oldestKey = null;
+    let oldestTime = Infinity;
+    
+    for (const [key, time] of this.accessOrder) {
+      if (time < oldestTime) {
+        oldestTime = time;
+        oldestKey = key;
+      }
+    }
+    
+    if (oldestKey) {
+      this.removeTexture(oldestKey);
+    }
+  }
+}
+```
+
+#### Cached Color Correction Rendering
+```javascript
+// Pre-render color corrected versions at each LOD
+function renderCachedColorCorrection(node, lodLevel) {
+    const cacheKey = `${node.id}_${lodLevel}_cc`;
+    
+    // Check cache first
+    const cached = this.ccCache.get(cacheKey);
+    if (cached) return cached;
+    
+    // Render to framebuffer
+    const fb = this.createFramebuffer(lodSize, lodSize);
+    this.gl.bindFramebuffer(this.gl.FRAMEBUFFER, fb);
+    
+    // Apply corrections in single pass
+    this.applyColorCorrections(node);
+    this.renderToFramebuffer(node.texture[lodLevel]);
+    
+    // Cache result
+    const texture = this.createTextureFromFramebuffer(fb);
+    this.ccCache.set(cacheKey, texture);
+    
+    return texture;
+}
+```
+
+#### Original Image Caching
 ```javascript
 // Cache rendered images at different scales
 class ImageCache {
@@ -496,7 +604,62 @@ class LazyImageLoader {
 }
 ```
 
+## Recent Performance Improvements (2025)
+
+### Memory Management
+- **Texture Memory Limits**: Automatic GPU memory management
+- **Device Detection**: Different limits for mobile vs desktop
+- **Quality Degradation**: Automatic when approaching limits
+- **Texture Disposal**: Proper WebGL resource cleanup
+
+### Rendering Optimizations
+- **Idle Detection**: No rendering when canvas is static
+- **LOD Caching**: Pre-rendered textures at each zoom level
+- **Batch Thumbnail Requests**: Reduced server round-trips
+- **WebGL State Management**: Minimized state changes
+
+### Color Correction Performance
+- **GPU Processing**: All corrections in shaders
+- **Cached Results**: Per-LOD cached textures
+- **Single Pass**: Combined corrections in one shader
+- **Deferred Updates**: Batch during interaction
+
 ## Monitoring and Profiling
+
+### WebGL Performance Metrics
+```javascript
+class WebGLPerformanceMonitor {
+  constructor(renderer) {
+    this.renderer = renderer;
+    this.stats = {
+      drawCalls: 0,
+      textureMemory: 0,
+      shaderSwitches: 0,
+      cacheHits: 0,
+      cacheMisses: 0
+    };
+  }
+
+  beginFrame() {
+    this.frameStats = {
+      drawCalls: 0,
+      stateChanges: 0,
+      texturesUploaded: 0
+    };
+  }
+
+  endFrame() {
+    // Update rolling average
+    this.stats.drawCalls = this.stats.drawCalls * 0.9 + 
+                          this.frameStats.drawCalls * 0.1;
+  }
+
+  getMemoryPressure() {
+    return this.renderer.getTextureMemoryUsed() / 
+           this.renderer.maxTextureMemory;
+  }
+}
+```
 
 ### Performance Metrics
 ```javascript

@@ -200,6 +200,12 @@ class NetworkLayer {
                 this.currentCanvas = { id: data.canvas.id };
                 // Current canvas set
                 
+                // Store numeric user ID from server session
+                if (data.session && data.session.userId) {
+                    this.numericUserId = data.session.userId;
+                    console.log('📌 Numeric user ID from server:', this.numericUserId);
+                }
+                
                 // Request full state sync after joining project
                 if (this.app.stateSyncManager) {
                     // Requesting initial state sync
@@ -207,6 +213,17 @@ class NetworkLayer {
                 }
             } else {
                 
+            }
+            
+            // Set up canvas navigator network listeners if not already done
+            if (this.app.canvasNavigator && this.app.canvasNavigator.setupNetworkListeners) {
+                console.log('🔧 Setting up canvas navigator network listeners');
+                this.app.canvasNavigator.setupNetworkListeners();
+            } else {
+                console.warn('❌ Cannot set up canvas navigator network listeners:', {
+                    hasNavigator: !!this.app.canvasNavigator,
+                    hasMethod: !!this.app.canvasNavigator?.setupNetworkListeners
+                });
             }
             
             // Forward to local event handlers (e.g., ClientUndoManager)
@@ -277,6 +294,69 @@ class NetworkLayer {
         this.socket.on('error_message', (data) => {
             console.error('Server error:', data.message);
             this.app.showError(data.message);
+        });
+        
+        // User presence events
+        this.socket.on('active_users', (users) => {
+            this.emitLocal('active_users', users);
+            if (this.app.canvasNavigator) {
+                this.app.canvasNavigator.updateActiveUsersForCurrentCanvas(users);
+            }
+        });
+        
+        this.socket.on('user_joined', (user) => {
+            this.emitLocal('user_joined', user);
+            // Show notification
+            if (window.unifiedNotifications) {
+                window.unifiedNotifications.show({
+                    type: 'info',
+                    message: `${user.displayName || user.username} joined`,
+                    duration: 3000
+                });
+            }
+        });
+        
+        this.socket.on('user_left', (user) => {
+            this.emitLocal('user_left', user);
+            // Show notification
+            if (window.unifiedNotifications) {
+                window.unifiedNotifications.show({
+                    type: 'info',
+                    message: `${user.displayName || user.username} left`,
+                    duration: 3000
+                });
+            }
+        });
+        
+        // Mouse and viewport events
+        this.socket.on('user_mouse_update', (data) => {
+            this.emitLocal('user_mouse_update', data);
+        });
+        
+        this.socket.on('user_viewport_update', (data) => {
+            this.emitLocal('user_viewport_update', data);
+        });
+        
+        this.socket.on('viewport_broadcast_request', (data) => {
+            this.emitLocal('viewport_broadcast_request', data);
+        });
+        
+        // Follow events
+        this.socket.on('user_started_following_you', (data) => {
+            this.emitLocal('user_started_following_you', data);
+        });
+        
+        this.socket.on('user_stopped_following_you', (data) => {
+            this.emitLocal('user_stopped_following_you', data);
+        });
+        
+        // Chat events
+        this.socket.on('chat_message', (data) => {
+            this.emitLocal('chat_message', data);
+        });
+        
+        this.socket.on('user_selection_update', (data) => {
+            this.emitLocal('user_selection_update', data);
         });
         
         // Heartbeat events
@@ -419,35 +499,62 @@ class NetworkLayer {
     joinCanvas(canvasId) {
         // NetworkLayer.joinCanvas called
         
-        if (!this.isConnected) {
-            
-            return;
-        }
-        
-        // Get the user ID from the canvas navigator if available
-        const userId = this.app.canvasNavigator?.userId || this.currentUser?.id;
-        const username = userId || `user-${this.tabId.substr(-8)}`;
-        
-        const data = {
-            canvasId: canvasId,
-            tabId: this.tabId,
-            userId: userId,
-            // Server expects username and displayName
-            username: username,
-            displayName: this.currentUser?.displayName || username
-        };
-        
-        // Emitting join_canvas
-        this.socket.emit('join_canvas', data);
-        
-        // Add a timeout check
-        setTimeout(() => {
-            if (!this.currentCanvas || this.currentCanvas.id != canvasId) {
-                
-            } else {
-                
+        return new Promise((resolve, reject) => {
+            if (!this.isConnected) {
+                reject(new Error('Not connected to server'));
+                return;
             }
-        }, 2000);
+            
+            // Get the user ID from the canvas navigator if available
+            const userId = this.app.canvasNavigator?.userId || this.currentUser?.id;
+            const username = this.currentUser?.username || userId || `user-${this.tabId.substr(-8)}`;
+            
+            console.log('🔍 Joining canvas with identity:', {
+                userId: userId,
+                username: username,
+                displayName: this.currentUser?.displayName,
+                currentUser: this.currentUser,
+                canvasNavigatorUserId: this.app.canvasNavigator?.userId
+            });
+            
+            const data = {
+                canvasId: canvasId,
+                tabId: this.tabId,
+                userId: userId,
+                // Server expects username and displayName
+                username: username,
+                displayName: this.currentUser?.displayName || username
+            };
+            
+            // Set up one-time listeners for success/failure
+            const onJoined = (data) => {
+                if (data.canvas && data.canvas.id == canvasId) {
+                    resolve(data);
+                }
+            };
+            
+            const onError = (error) => {
+                reject(new Error(error.message || 'Failed to join canvas'));
+            };
+            
+            // Listen for canvas_joined event
+            this.socket.once('canvas_joined', onJoined);
+            this.socket.once('error_message', onError);
+            
+            // Emitting join_canvas
+            this.socket.emit('join_canvas', data);
+            
+            // Add a timeout
+            setTimeout(() => {
+                this.socket.off('canvas_joined', onJoined);
+                this.socket.off('error_message', onError);
+                if (!this.currentCanvas || this.currentCanvas.id != canvasId) {
+                    reject(new Error('Timeout joining canvas'));
+                } else {
+                    resolve(this.currentCanvas);
+                }
+            }, 5000);
+        });
     }
     
     /**

@@ -137,7 +137,10 @@ class NavigationStateManager {
             return result;
         };
 
-        // Listen for full state sync completion to load navigation state
+        // DISABLED: Navigation state restoration on full sync
+        // We now use per-user viewport states that are restored when joining a canvas
+        // This prevents viewport jumping when forcing sync
+        /*
         if (this.app.networkLayer) {
             this.app.networkLayer.on('full_state_sync', (data) => {
                 
@@ -160,6 +163,7 @@ class NavigationStateManager {
                 }
             });
         }
+        */
 
         // Also listen for canvas_joined in case there's no state to sync
         if (this.app.networkLayer) {

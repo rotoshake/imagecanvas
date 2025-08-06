@@ -696,6 +696,11 @@ class GalleryViewManager {
                 break;
                 
             case 'escape':
+                // Check if chat panel is open and has focus
+                if (window.app?.chatPanel?.isOpen) {
+                    // Let the chat panel handle it
+                    return;
+                }
                 e.preventDefault();
                 e.stopPropagation();
                 this.exit();

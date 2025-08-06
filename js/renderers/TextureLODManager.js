@@ -37,6 +37,12 @@ class TextureLODManager {
         this.uploadQueue = [];
         this.activeUploads = new Set();
         
+        // Decode throttling to prevent lag on page reload
+        this.maxConcurrentDecodes = 2; // Limit concurrent createImageBitmap calls
+        this.activeDecodes = 0;
+        this.decodeQueue = [];
+        this.decodedCache = new WeakMap(); // Track already decoded images
+        
         // LRU tracking
         this.accessOrder = []; // Array of { hash, lodSize } for LRU eviction
         
@@ -411,12 +417,11 @@ class TextureLODManager {
                     return;
                 }
                 
-                // ALWAYS use createImageBitmap for guaranteed decoded image
-                // Never fall back to raw image to avoid synchronous decode
+                // Use throttled decode to prevent lag on page reload
                 try {
-                    decodedSource = await createImageBitmap(source, { imageOrientation: 'from-image' });
+                    decodedSource = await this._throttledDecode(source, hash, lodSize);
                 } catch (error) {
-                    console.error('Failed to create ImageBitmap, skipping texture upload:', error);
+                    console.error('Failed to decode image, skipping texture upload:', error);
                     this.activeUploads.delete(queueKey);
                     return; // Skip this texture rather than cause sync decode
                 }
@@ -1555,6 +1560,60 @@ class TextureLODManager {
     
     _isHighZoomNode(hash) {
         return this._highZoomNodes.has(hash);
+    }
+    
+    /**
+     * Throttled image decoding to prevent performance issues on page reload
+     */
+    async _throttledDecode(source, hash, lodSize) {
+        // Check if already decoded
+        if (this.decodedCache.has(source)) {
+            return this.decodedCache.get(source);
+        }
+        
+        // If source is already an ImageBitmap, return as-is
+        if (source instanceof ImageBitmap) {
+            return source;
+        }
+        
+        // For small thumbnails (64px), decode immediately without throttling
+        if (lodSize <= 64) {
+            try {
+                const decoded = await createImageBitmap(source, { imageOrientation: 'from-image' });
+                this.decodedCache.set(source, decoded);
+                return decoded;
+            } catch (error) {
+                throw error;
+            }
+        }
+        
+        // Wait for decode slot - this prevents too many concurrent decodes
+        while (this.activeDecodes >= this.maxConcurrentDecodes) {
+            await new Promise(resolve => setTimeout(resolve, 10));
+        }
+        
+        this.activeDecodes++;
+        
+        try {
+            // Use requestIdleCallback for non-critical decodes during bulk loading
+            // This helps prevent blocking the main thread
+            if (this.uploadQueue.length > 5) {
+                await new Promise(resolve => {
+                    if (window.requestIdleCallback) {
+                        window.requestIdleCallback(() => resolve(), { timeout: 50 });
+                    } else {
+                        setTimeout(resolve, 0);
+                    }
+                });
+            }
+            
+            const decoded = await createImageBitmap(source, { imageOrientation: 'from-image' });
+            this.decodedCache.set(source, decoded);
+            return decoded;
+            
+        } finally {
+            this.activeDecodes--;
+        }
     }
 }
 

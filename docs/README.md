@@ -63,6 +63,12 @@ ImageCanvas is a high-performance, collaborative media canvas application built 
 
 - **[API_REFERENCE.md](./API_REFERENCE.md)** - API endpoints and WebSocket events
 - **[PERFORMANCE.md](./PERFORMANCE.md)** - Performance optimization guide
+- **[KEYBOARD_SHORTCUTS.md](./KEYBOARD_SHORTCUTS.md)** - Keyboard shortcuts reference
+- **[GROUP_NODE_SYSTEM.md](./GROUP_NODE_SYSTEM.md)** - Group node documentation
+- **[COLOR_CORRECTION_SYSTEM.md](./COLOR_CORRECTION_SYSTEM.md)** - Color correction features
+- **[WEBGL_RENDERING_SYSTEM.md](./WEBGL_RENDERING_SYSTEM.md)** - WebGL renderer details
+- **[Z_ORDER_LAYER_SYSTEM.md](./Z_ORDER_LAYER_SYSTEM.md)** - Layer management system
+- **[CHANGELOG_2025.md](./CHANGELOG_2025.md)** - Recent changes and updates
 
 ## Key Technologies
 
@@ -72,31 +78,71 @@ ImageCanvas is a high-performance, collaborative media canvas application built 
 - **Real-time**: WebSocket with Socket.IO
 - **File Storage**: Local filesystem with hash-based deduplication
 
-## Recent Major Updates
+## Recent Major Updates (2025)
 
-### Collaborative Undo/Redo System
+### Group Node System
+- Container nodes for organizing content
+- Drag-and-drop node management
+- Automatic bounds calculation with animations
+- Screen-space aware title bars
+- Parent-child relationship preservation
+
+### Advanced Color Correction
+- Floating color correction panel with tone curves
+- Color adjustments (brightness, contrast, saturation, etc.)
+- Color balance wheels for shadows/midtones/highlights
+- Per-section bypass controls
+- WebGL-accelerated processing
+
+### Performance Optimizations
+- WebGL renderer with texture caching
+- LOD system with pre-rendered textures
+- Memory management and limits
+- Eliminated idle 60fps rendering
+- Batched thumbnail requests
+
+### Z-Order Layer System  
+- Full layer control with keyboard shortcuts
+- Group-aware layer management
+- Server-synchronized layer order
+
+### Keyboard Shortcuts System
+- Centralized, configurable shortcuts
+- Platform-aware (Cmd/Ctrl mapping)
+- Custom shortcut persistence
+- Built-in test interface
+
+### Admin Panel
+- Database cleanup and maintenance
+- Thumbnail management
+- System information display
+- Browser cache control
+
+### Enhanced Compatibility
+- Better-SQLite3 support for Windows
+- LAN access with dynamic host detection
+- Environment-based CORS configuration
+
+### Previous Major Updates
+
+#### Collaborative Undo/Redo System
 - Server-authoritative undo/redo with full history
 - Multi-user conflict detection
 - Transaction support for atomic operations
 - Cross-tab synchronization
+- Interaction-based grouping for real-time changes
 
-### HTTP Image Upload System
+#### HTTP Image Upload System
 - Images uploaded via HTTP before node creation
 - Prevents WebSocket timeouts with large files
 - Batch upload support with progress tracking
 - Server-side thumbnail generation
 
-### Unified Progress & Notifications
+#### Unified Progress & Notifications
 - Consolidated notification system
 - Progress tracking for long operations
 - Network status integration
 - Improved user feedback
-
-### Performance Improvements
-- Optimistic updates with server reconciliation
-- Progressive thumbnail loading
-- Operation size limits (100KB)
-- Database cleanup tools
 
 ## Getting Started
 

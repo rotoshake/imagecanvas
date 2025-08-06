@@ -123,6 +123,49 @@ class CollaborationManager {
                 this.handleResumeVideoProcessing(socket, data);
             });
             
+            // Selection updates
+            socket.on('selection_update', (data) => {
+                this.handleSelectionUpdate(socket, data);
+            });
+            
+            // Mouse position updates
+            socket.on('mouse_position_update', (data) => {
+                this.handleMousePositionUpdate(socket, data);
+            });
+            
+            socket.on('mouse_leave', () => {
+                this.handleMouseLeave(socket);
+            });
+            
+            // Chat messages
+            socket.on('chat_message', (data) => {
+                this.handleChatMessage(socket, data);
+            });
+            
+            // Viewport updates for following (real-time, no persistence)
+            socket.on('viewport_follow_update', (data) => {
+                this.handleViewportFollowUpdate(socket, data);
+            });
+            
+            // Viewport updates for persistence
+            socket.on('viewport_update', (data) => {
+                this.handleViewportUpdate(socket, data);
+            });
+            
+            // Request another user's current viewport state
+            socket.on('request_user_viewport', (data) => {
+                this.handleRequestUserViewport(socket, data);
+            });
+            
+            // Follow notifications for circular following prevention
+            socket.on('start_following_user', (data) => {
+                this.handleStartFollowing(socket, data);
+            });
+            
+            socket.on('stop_following_user', (data) => {
+                this.handleStopFollowing(socket, data);
+            });
+            
             // Disconnect
             socket.on('disconnect', () => {
                 this.handleDisconnect(socket);
@@ -133,6 +176,7 @@ class CollaborationManager {
     async handleJoinCanvas(socket, { canvasId, username, displayName, tabId }) {
         try {
             console.log(`📥 Join request from ${username} (tab: ${tabId}) for canvas ${canvasId}`);
+            console.log(`📥 Full join data:`, { canvasId, username, displayName, tabId });
             
             // Find or create user (but allow multiple connections)
             let user = await this.db.getUserByUsername(username);
@@ -196,6 +240,15 @@ class CollaborationManager {
             const room = this.canvasRooms.get(canvas.id);
             room.sockets.add(socket.id);
             
+            // Get saved viewport state
+            let viewportState = null;
+            try {
+                viewportState = this.db.getUserViewportState(user.id, canvas.id);
+                console.log(`📍 Loading viewport state for user ${user.id} (${user.username}) on canvas ${canvas.id}:`, viewportState);
+            } catch (error) {
+                console.error('Error loading viewport state:', error);
+            }
+            
             // Send success response
             socket.emit('canvas_joined', {
                 canvas: canvas,
@@ -203,13 +256,16 @@ class CollaborationManager {
                     userId: user.id,
                     username: user.username,
                     displayName: session.displayName,
-                    tabId: session.tabId
+                    tabId: session.tabId,
+                    color: user.color
                 },
-                sequenceNumber: room.sequenceNumber
+                sequenceNumber: room.sequenceNumber,
+                viewportState: viewportState
             });
             
             // Get active users (count unique users, not sockets)
             const activeUsers = await this.getActiveUsersInCanvas(canvas.id);
+            console.log(`👥 Active users in canvas ${canvas.id}:`, activeUsers);
             
             // Send to joining socket
             socket.emit('active_users', activeUsers);
@@ -219,11 +275,12 @@ class CollaborationManager {
                 userId: user.id,
                 username: user.username,
                 displayName: session.displayName,
-                tabId: session.tabId
+                tabId: session.tabId,
+                color: user.color
             });
             
-            // Send updated user list to all
-            socket.to(`canvas_${canvas.id}`).emit('active_users', activeUsers);
+            // Send updated user list to all (including the joining user)
+            this.io.to(`canvas_${canvas.id}`).emit('active_users', activeUsers);
             
             // Request state from another tab (prefer same user's tab if available)
             if (room.sockets.size > 1) {
@@ -391,10 +448,13 @@ class CollaborationManager {
         for (const [socketId, session] of this.socketSessions.entries()) {
             if (session.canvasId === parseInt(canvasId)) {
                 if (!users.has(session.userId)) {
+                    // Fetch user color from database
+                    const userInfo = await this.db.getUser(session.userId);
                     users.set(session.userId, {
                         userId: session.userId,
                         username: session.username,
                         displayName: session.displayName,
+                        color: userInfo?.color || '#999999',
                         tabs: []
                     });
                 }
@@ -409,7 +469,7 @@ class CollaborationManager {
         return Array.from(users.values());
     }
     
-    handleDisconnect(socket) {
+    async handleDisconnect(socket) {
         const session = this.socketSessions.get(socket.id);
         if (!session) return;
         
@@ -440,9 +500,12 @@ class CollaborationManager {
             
             if (!userStillConnected) {
                 // User completely left
+                const userInfo = await this.db.getUser(session.userId);
                 socket.to(`canvas_${session.canvasId}`).emit('user_left', {
                     userId: session.userId,
-                    username: session.username
+                    username: session.username,
+                    displayName: session.displayName,
+                    color: userInfo?.color || '#999999'
                 });
             } else {
                 // Just one tab closed
@@ -484,6 +547,206 @@ class CollaborationManager {
         // Similar to disconnect but initiated by user
         this.handleDisconnect(socket);
         socket.emit('canvas_left', { canvasId });
+    }
+    
+    /**
+     * Handle selection updates from users
+     */
+    async handleSelectionUpdate(socket, { selectedNodes }) {
+        console.log('📥 Server received selection_update:', { socketId: socket.id, selectedNodes });
+        
+        const session = this.socketSessions.get(socket.id);
+        if (!session) {
+            console.log('❌ No session found for socket:', socket.id);
+            return;
+        }
+        
+        // Get user info including color
+        const userInfo = await this.db.getUser(session.userId);
+        
+        const updateData = {
+            userId: session.userId,
+            username: session.username,
+            displayName: session.displayName,
+            color: userInfo?.color || '#999999',
+            selectedNodes: selectedNodes
+        };
+        
+        console.log(`📤 Broadcasting user_selection_update to canvas_${session.canvasId}:`, updateData);
+        
+        // Broadcast selection update to all other users in the same canvas
+        socket.to(`canvas_${session.canvasId}`).emit('user_selection_update', updateData);
+    }
+    
+    /**
+     * Handle mouse position updates from users
+     */
+    async handleMousePositionUpdate(socket, { x, y }) {
+        const session = this.socketSessions.get(socket.id);
+        if (!session) return;
+        
+        // Get user info including color
+        const userInfo = await this.db.getUser(session.userId);
+        
+        // Broadcast mouse position to all other users in the same canvas
+        socket.to(`canvas_${session.canvasId}`).emit('user_mouse_update', {
+            userId: session.userId,
+            username: session.username,
+            color: userInfo?.color || '#999999',
+            x,
+            y
+        });
+    }
+    
+    /**
+     * Handle mouse leave events
+     */
+    async handleMouseLeave(socket) {
+        const session = this.socketSessions.get(socket.id);
+        if (!session) return;
+        
+        // Broadcast mouse leave to all other users in the same canvas
+        socket.to(`canvas_${session.canvasId}`).emit('user_mouse_update', {
+            userId: session.userId,
+            x: null,
+            y: null
+        });
+    }
+    
+    /**
+     * Handle chat messages from users
+     */
+    async handleChatMessage(socket, { message, mouseX, mouseY }) {
+        const session = this.socketSessions.get(socket.id);
+        if (!session) return;
+        
+        // Get user info including color
+        const userInfo = await this.db.getUser(session.userId);
+        
+        // Broadcast chat message to all other users in the same canvas
+        socket.to(`canvas_${session.canvasId}`).emit('chat_message', {
+            userId: session.userId,
+            username: session.displayName || session.username,
+            color: userInfo?.color || '#999999',
+            message: message,
+            mouseX: mouseX,
+            mouseY: mouseY,
+            timestamp: Date.now()
+        });
+    }
+    
+    /**
+     * Handle viewport updates for persistence
+     */
+    async handleViewportUpdate(socket, data) {
+        const session = this.socketSessions.get(socket.id);
+        if (!session) return;
+        
+        // Save viewport state to database
+        try {
+            console.log(`💾 Saving viewport state for user ${session.userId} on canvas ${session.canvasId}:`, data);
+            this.db.saveUserViewportState(session.userId, session.canvasId, data);
+        } catch (error) {
+            console.error('Error saving viewport state:', error);
+        }
+    }
+    
+    /**
+     * Handle viewport updates for real-time following (no persistence)
+     */
+    async handleViewportFollowUpdate(socket, data) {
+        const session = this.socketSessions.get(socket.id);
+        if (!session) return;
+        
+        // Only broadcast, don't save to database
+        socket.to(`canvas_${session.canvasId}`).emit('user_viewport_update', {
+            userId: session.userId,
+            ...data
+        });
+    }
+    
+    /**
+     * Handle request for another user's viewport state
+     */
+    async handleRequestUserViewport(socket, { userId }) {
+        const session = this.socketSessions.get(socket.id);
+        if (!session) return;
+        
+        // First check if the user is currently online and get their live state
+        const targetUserSockets = this.userSockets.get(userId);
+        if (targetUserSockets && targetUserSockets.size > 0) {
+            // User is online, request their current state
+            const targetSocketId = Array.from(targetUserSockets)[0];
+            const targetSocket = this.io.sockets.sockets.get(targetSocketId);
+            
+            if (targetSocket) {
+                console.log(`📤 Requesting live viewport state from user ${userId}`);
+                // Ask the target user to broadcast their current viewport state
+                targetSocket.emit('request_viewport_broadcast');
+                return;
+            }
+        }
+        
+        // Fallback to database state if user is offline or not found
+        try {
+            const viewportState = this.db.getUserViewportState(userId, session.canvasId);
+            if (viewportState) {
+                console.log(`📤 Sending saved viewport state for user ${userId}:`, viewportState);
+                // Send the viewport state as a user_viewport_update event
+                socket.emit('user_viewport_update', {
+                    userId: userId,
+                    ...viewportState
+                });
+            } else {
+                console.log(`❌ No viewport state found for user ${userId} on canvas ${session.canvasId}`);
+            }
+        } catch (error) {
+            console.error('Error fetching user viewport state:', error);
+        }
+    }
+    
+    /**
+     * Handle start following notification
+     */
+    async handleStartFollowing(socket, { targetUserId }) {
+        const session = this.socketSessions.get(socket.id);
+        if (!session) return;
+        
+        // Notify the target user that someone started following them
+        const targetSockets = this.userSockets.get(targetUserId);
+        if (targetSockets) {
+            targetSockets.forEach(targetSocketId => {
+                const targetSocket = this.io.sockets.sockets.get(targetSocketId);
+                if (targetSocket) {
+                    targetSocket.emit('user_started_following_you', {
+                        userId: session.userId,
+                        username: session.username
+                    });
+                }
+            });
+        }
+    }
+    
+    /**
+     * Handle stop following notification
+     */
+    async handleStopFollowing(socket, { targetUserId }) {
+        const session = this.socketSessions.get(socket.id);
+        if (!session) return;
+        
+        // Notify the target user that someone stopped following them
+        const targetSockets = this.userSockets.get(targetUserId);
+        if (targetSockets) {
+            targetSockets.forEach(targetSocketId => {
+                const targetSocket = this.io.sockets.sockets.get(targetSocketId);
+                if (targetSocket) {
+                    targetSocket.emit('user_stopped_following_you', {
+                        userId: session.userId,
+                        username: session.username
+                    });
+                }
+            });
+        }
     }
     
     /**
@@ -641,6 +904,13 @@ class CollaborationManager {
         
         const session = this.socketSessions.get(socket.id);
         
+        console.log('🔍 All socket sessions:', Array.from(this.socketSessions.entries()).map(([sid, sess]) => ({
+            socketId: sid,
+            userId: sess.userId,
+            canvasId: sess.canvasId,
+            username: sess.username
+        })));
+        
         console.log(`🎯 Execute operation request:`, {
             operationId,
             type,
@@ -648,11 +918,13 @@ class CollaborationManager {
             undoDataKeys: undoData ? Object.keys(undoData) : null,
             userId: session?.userId,
             canvasId: session?.canvasId,
-            socketId: socket.id
+            socketId: socket.id,
+            hasSession: !!session
         });
         
         if (!session) {
             console.error('❌ Operation rejected: No session for socket', socket.id);
+            console.error('❌ Available socket IDs:', Array.from(this.socketSessions.keys()));
             socket.emit('operation_rejected', {
                 operationId,
                 error: 'Not authenticated'

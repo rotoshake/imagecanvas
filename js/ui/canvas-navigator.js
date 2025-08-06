@@ -8,6 +8,7 @@ class CanvasNavigator {
         this.isOpen = false;
         this.canvases = [];
         this.currentCanvasId = null;
+        this.activeUsersPerCanvas = new Map(); // canvasId -> array of users
         
         // Generate a unique user ID for this session
         // This will be consistent across tabs in the same browser session
@@ -317,6 +318,46 @@ class CanvasNavigator {
                 gap: 4px;
             }
             
+            .canvas-item-right {
+                display: flex;
+                align-items: center;
+                gap: 8px;
+            }
+            
+            .canvas-active-users {
+                display: flex;
+                align-items: center;
+                gap: -4px; /* Overlap indicators slightly */
+            }
+            
+            .user-indicator {
+                width: 20px;
+                height: 20px;
+                border-radius: 50%;
+                background: #333;
+                border: 2px solid;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                font-size: 10px;
+                font-weight: bold;
+                color: #fff;
+                position: relative;
+                z-index: 1;
+                transition: transform 0.1s ease;
+            }
+            
+            .user-indicator:hover {
+                transform: scale(1.1);
+                z-index: 2;
+                cursor: pointer;
+            }
+            
+            .user-indicator.following {
+                box-shadow: 0 0 0 3px rgba(68, 170, 255, 0.5);
+                background: rgba(68, 170, 255, 0.2);
+            }
+            
             .canvas-title {
                 font-size: 12px;
                 font-weight: 300;
@@ -523,6 +564,8 @@ class CanvasNavigator {
         // New canvas button
         this.panel.querySelector('.new-canvas-btn').addEventListener('click', () => this.createNewCanvas());
         
+        // Network events will be set up later when network layer is available
+        
         // Refresh button
         const refreshBtn = this.panel.querySelector('.refresh-btn');
         if (refreshBtn) {
@@ -681,9 +724,22 @@ class CanvasNavigator {
             const canvasId = parseInt(item.dataset.canvasId);
             
             item.addEventListener('click', (e) => {
-                if (!e.target.closest('.canvas-actions') && !e.target.closest('.canvas-title-input')) {
+                if (!e.target.closest('.canvas-actions') && 
+                    !e.target.closest('.canvas-title-input') &&
+                    !e.target.closest('.user-indicator')) {
                     this.loadCanvas(canvasId);
                 }
+            });
+            
+            // Add click handlers for user indicators
+            item.querySelectorAll('.user-indicator').forEach(indicator => {
+                indicator.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    const userId = indicator.dataset.userId;
+                    if (window.app?.userFollowManager) {
+                        window.app.userFollowManager.toggleFollowing(userId);
+                    }
+                });
             });
             
             // Double-click on title to rename
@@ -723,11 +779,21 @@ class CanvasNavigator {
         const lastModified = new Date(canvas.last_modified).toLocaleDateString();
         const collaboratorCount = canvas.collaborator_count || 0;
         
+        // Get active users for this canvas (excluding current user)
+        const activeUsers = this.activeUsersPerCanvas.get(canvas.id) || [];
+        // Use numeric user ID from network layer for comparison
+        const currentNumericUserId = this.app?.networkLayer?.numericUserId;
+        const otherUsers = activeUsers.filter(user => user.userId !== currentNumericUserId);
+        const userIndicators = otherUsers.map(user => this.renderUserIndicator(user)).join('');
+        
         return `
             <div class="canvas-item ${isActive ? 'active' : ''}" data-canvas-id="${canvas.id}">
                 <div class="canvas-item-header">
                     <h4 class="canvas-title" data-canvas-id="${canvas.id}" data-original-name="${this.escapeHtml(canvas.name || 'Untitled Canvas')}">${this.escapeHtml(canvas.name || 'Untitled Canvas')}</h4>
-                    <div class="canvas-actions"><button class="canvas-action-btn duplicate" title="Duplicate">📋</button><button class="canvas-action-btn delete" title="Delete">🗑️</button></div>
+                    <div class="canvas-item-right">
+                        ${otherUsers.length > 0 ? `<div class="canvas-active-users">${userIndicators}</div>` : ''}
+                        <div class="canvas-actions"><button class="canvas-action-btn duplicate" title="Duplicate">📋</button><button class="canvas-action-btn delete" title="Delete">🗑️</button></div>
+                    </div>
                 </div>
                 <!-- <div class="canvas-meta">
                     <span>Modified: ${lastModified}</span>
@@ -735,6 +801,21 @@ class CanvasNavigator {
                 </div> -->
             </div>
         `;
+    }
+    
+    renderUserIndicator(user) {
+        const initial = user.username ? user.username.charAt(0).toUpperCase() : '?';
+        const displayName = user.displayName || user.username || 'Guest';
+        const isFollowing = this.followingUserId === user.userId;
+        return `<div class="user-indicator ${isFollowing ? 'following' : ''}" 
+                     style="border-color: ${user.color}" 
+                     title="${this.escapeHtml(displayName)} - Click to follow"
+                     data-user-id="${user.userId}">${initial}</div>`;
+    }
+    
+    updateFollowingState(followingUserId) {
+        this.followingUserId = followingUserId;
+        this.renderCanvasList();
     }
     
     async createNewCanvas() {
@@ -1113,10 +1194,12 @@ class CanvasNavigator {
                 }
                 
                 // Now try to join the canvas
-                this.app.networkLayer.joinCanvas(canvasId);
+                const joined = await this.app.networkLayer.joinCanvas(canvasId);
                 
-                // Wait a moment to see if join was successful
-                await new Promise(resolve => setTimeout(resolve, 1000));
+                if (!joined) {
+                    console.error('Failed to join canvas via network');
+                    return false;
+                }
                 
                 // Check if the undo manager has the canvas ID set (indicates successful join)
                 if (this.app.undoManager && this.app.undoManager.canvasId === canvasId) {
@@ -1139,6 +1222,34 @@ class CanvasNavigator {
         }
         
         return false;
+    }
+    
+    setupNetworkListeners() {
+        if (!this.networkLayer) return;
+        
+        this.networkLayer.on('active_users', (users) => {
+            this.updateActiveUsersForCurrentCanvas(users);
+        });
+        
+        this.networkLayer.on('user_joined', (user) => {
+            this.updateActiveUsersForCurrentCanvas();
+        });
+        
+        this.networkLayer.on('user_left', (user) => {
+            this.updateActiveUsersForCurrentCanvas();
+        });
+    }
+    
+    updateActiveUsersForCurrentCanvas(users) {
+        if (!this.currentCanvasId) return;
+        
+        // If users are provided, update the map
+        if (users) {
+            this.activeUsersPerCanvas.set(this.currentCanvasId, users);
+        }
+        
+        // Re-render the canvas list to update user indicators
+        this.renderCanvasList();
     }
     
     escapeHtml(unsafe) {

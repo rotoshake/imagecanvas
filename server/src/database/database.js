@@ -108,7 +108,63 @@ class BetterDatabase {
         
         this.db.exec(schema);
         
+        this.runMigrations();
         this.initializeDefaultData();
+    }
+    
+    runMigrations() {
+        // Check if color column exists in users table
+        const hasColorColumn = this.db.prepare(`
+            SELECT COUNT(*) as count FROM pragma_table_info('users') WHERE name='color'
+        `).get().count > 0;
+        
+        if (!hasColorColumn) {
+            console.log('Running migration: Adding color column to users table');
+            this.db.exec(`
+                ALTER TABLE users ADD COLUMN color TEXT;
+            `);
+            
+            // Assign colors to existing users
+            const users = this.db.prepare('SELECT id FROM users').all();
+            const colors = [
+                '#FF6B6B', '#4ECDC4', '#45B7D1', '#96CEB4', '#FECA57',
+                '#DDA0DD', '#98D8C8', '#F7DC6F', '#BB8FCE', '#85C1E2',
+                '#F8B739', '#6C5CE7', '#A29BFE', '#FD79A8', '#FDCB6E'
+            ];
+            
+            users.forEach((user, index) => {
+                const color = colors[index % colors.length];
+                this.db.prepare('UPDATE users SET color = ? WHERE id = ?').run(color, user.id);
+            });
+        }
+        
+        // Check if user_viewport_states table exists
+        const hasViewportTable = this.db.prepare(`
+            SELECT COUNT(*) as count FROM sqlite_master 
+            WHERE type='table' AND name='user_viewport_states'
+        `).get().count > 0;
+        
+        if (!hasViewportTable) {
+            console.log('Running migration: Creating user_viewport_states table');
+            this.db.exec(`
+                CREATE TABLE user_viewport_states (
+                    user_id INTEGER NOT NULL,
+                    canvas_id INTEGER NOT NULL,
+                    scale REAL NOT NULL DEFAULT 1.0,
+                    offset_x REAL NOT NULL DEFAULT 0,
+                    offset_y REAL NOT NULL DEFAULT 0,
+                    is_gallery_view BOOLEAN NOT NULL DEFAULT 0,
+                    last_updated DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    PRIMARY KEY (user_id, canvas_id),
+                    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+                    FOREIGN KEY (canvas_id) REFERENCES canvases(id) ON DELETE CASCADE
+                );
+                
+                -- Index for cleanup queries
+                CREATE INDEX idx_viewport_states_updated 
+                    ON user_viewport_states(last_updated);
+            `);
+        }
     }
     
     initializeDefaultData() {
@@ -138,10 +194,21 @@ class BetterDatabase {
     
     // User management
     async createUser(username, displayName = null) {
+        // Get count of existing users to determine color index
+        const userCount = this.db.prepare('SELECT COUNT(*) as count FROM users').get().count;
+        
+        const colors = [
+            '#FF6B6B', '#4ECDC4', '#45B7D1', '#96CEB4', '#FECA57',
+            '#DDA0DD', '#98D8C8', '#F7DC6F', '#BB8FCE', '#85C1E2',
+            '#F8B739', '#6C5CE7', '#A29BFE', '#FD79A8', '#FDCB6E'
+        ];
+        
+        const color = colors[userCount % colors.length];
+        
         const stmt = this.db.prepare(
-            'INSERT INTO users (username, display_name) VALUES (?, ?)'
+            'INSERT INTO users (username, display_name, color) VALUES (?, ?, ?)'
         );
-        const result = stmt.run(username, displayName || username);
+        const result = stmt.run(username, displayName || username, color);
         return result.lastInsertRowid;
     }
     
@@ -313,6 +380,70 @@ class BetterDatabase {
     async getDatabaseSize() {
         const stats = await fs.stat(this.dbPath);
         return stats.size;
+    }
+    
+    // User viewport state methods
+    saveUserViewportState(userId, canvasId, viewportData) {
+        const stmt = this.db.prepare(`
+            INSERT OR REPLACE INTO user_viewport_states 
+            (user_id, canvas_id, scale, offset_x, offset_y, is_gallery_view, last_updated)
+            VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+        `);
+        
+        return stmt.run(
+            userId,
+            canvasId,
+            viewportData.scale || 1.0,
+            viewportData.offset ? viewportData.offset[0] : 0,
+            viewportData.offset ? viewportData.offset[1] : 0,
+            viewportData.isGalleryView ? 1 : 0
+        );
+    }
+    
+    getUserViewportState(userId, canvasId) {
+        const stmt = this.db.prepare(`
+            SELECT scale, offset_x, offset_y, is_gallery_view 
+            FROM user_viewport_states 
+            WHERE user_id = ? AND canvas_id = ?
+        `);
+        
+        const row = stmt.get(userId, canvasId);
+        if (!row) return null;
+        
+        return {
+            scale: row.scale,
+            offset: [row.offset_x, row.offset_y],
+            isGalleryView: row.is_gallery_view === 1
+        };
+    }
+    
+    // Clean up old viewport states (older than 30 days for guests, 90 days for users)
+    cleanupOldViewportStates() {
+        // First, clean up guest user viewport states older than 30 days
+        const cleanupGuests = this.db.prepare(`
+            DELETE FROM user_viewport_states 
+            WHERE user_id IN (
+                SELECT id FROM users WHERE username LIKE 'guest_%'
+            ) 
+            AND last_updated < datetime('now', '-30 days')
+        `);
+        
+        const guestResult = cleanupGuests.run();
+        
+        // Then, clean up all viewport states older than 90 days
+        const cleanupAll = this.db.prepare(`
+            DELETE FROM user_viewport_states 
+            WHERE last_updated < datetime('now', '-90 days')
+        `);
+        
+        const allResult = cleanupAll.run();
+        
+        console.log(`🧹 Cleaned up ${guestResult.changes} guest viewport states and ${allResult.changes} old viewport states`);
+        
+        return {
+            guestStatesRemoved: guestResult.changes,
+            oldStatesRemoved: allResult.changes
+        };
     }
     
     // Raw SQL methods for compatibility

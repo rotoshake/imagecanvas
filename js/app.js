@@ -52,6 +52,22 @@ class ImageCanvasApp {
             this.userProfileSystem = new UserProfileSystem();
             await this.userProfileSystem.init();
             
+            // Set current user on app for collaborative features
+            this.currentUser = this.userProfileSystem.getUserInfo();
+            
+            // Update current user when it changes
+            this.userProfileSystem.on('userChanged', (userData) => {
+                // UserProfileSystem passes the full userData object in the event
+                // Get the proper user info for collaboration
+                const userInfo = this.userProfileSystem.getUserInfo();
+                this.currentUser = userInfo;
+                
+                // Update network layer's current user
+                if (this.networkLayer) {
+                    this.networkLayer.setUser(userData); // Use setUser method
+                }
+            });
+            
             // Initialize user profile panel
             this.userProfilePanel = new UserProfilePanel();
             
@@ -976,6 +992,45 @@ async function initApp() {
         // Now initialize Canvas Navigator (guaranteed to have network layer)
         app.canvasNavigator = new CanvasNavigator(app);
         window.canvasNavigator = app.canvasNavigator;
+        
+        // Set up network listeners after collaborative architecture is initialized
+        setTimeout(() => {
+            if (app.canvasNavigator && app.networkLayer) {
+                app.canvasNavigator.setupNetworkListeners();
+            }
+            
+            // Ensure NetworkLayer has the current user
+            if (app.networkLayer && app.currentUser && !app.networkLayer.currentUser) {
+                console.log('🔧 Setting NetworkLayer current user:', app.currentUser);
+                app.networkLayer.setUser(app.currentUser);
+            }
+            
+            // Initialize other users selection manager
+            if (window.OtherUsersSelectionManager && app.networkLayer) {
+                app.otherUsersSelectionManager = new OtherUsersSelectionManager(app);
+                
+                // Hook up to selection changes
+                app.graphCanvas.selection.addCallback((selectedNodes) => {
+                    console.log('📌 Selection changed, broadcasting:', selectedNodes);
+                    app.otherUsersSelectionManager.broadcastSelectionChange(selectedNodes);
+                });
+            }
+            
+            // Initialize other users mouse manager
+            if (window.OtherUsersMouseManager && app.networkLayer) {
+                app.otherUsersMouseManager = new OtherUsersMouseManager(app);
+            }
+            
+            // Initialize chat panel
+            if (window.ChatPanel) {
+                app.chatPanel = new ChatPanel(app);
+            }
+            
+            // Initialize user follow manager
+            if (window.UserFollowManager && app.networkLayer) {
+                app.userFollowManager = new UserFollowManager(app);
+            }
+        }, 1000);
         
         // Initialize Image Upload Coordinator
         if (window.ImageUploadCoordinator) {
