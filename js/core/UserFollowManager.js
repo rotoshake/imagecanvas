@@ -444,6 +444,49 @@ class UserFollowManager {
             return;
         }
         
+        // Check if user is in a different canvas and switch to it first
+        const targetUserCanvas = this.getUserCanvas(parseInt(userId));
+        const currentCanvas = this.app.networkLayer?.currentCanvas?.id;
+        
+        if (targetUserCanvas && targetUserCanvas !== currentCanvas) {
+            console.log(`🔄 Target user is in canvas ${targetUserCanvas}, switching from ${currentCanvas}`);
+            
+            // Show notification that we're switching canvases
+            if (window.unifiedNotifications) {
+                const username = this.getUsername(userId);
+                window.unifiedNotifications.show({
+                    type: 'info',
+                    message: `Switching to ${username}'s canvas...`,
+                    duration: 2000
+                });
+            }
+            
+            // Switch to target user's canvas first, then start following
+            if (this.app.canvasNavigator) {
+                this.app.canvasNavigator.switchToCanvas(targetUserCanvas).then(() => {
+                    // Canvas switched successfully, now start following
+                    this.continueFollowing(userId);
+                }).catch(error => {
+                    console.error('Failed to switch canvas for following:', error);
+                    if (window.unifiedNotifications) {
+                        window.unifiedNotifications.show({
+                            type: 'error',
+                            message: 'Failed to switch canvas',
+                            duration: 3000
+                        });
+                    }
+                });
+            } else {
+                console.error('CanvasNavigator not available for canvas switching');
+            }
+            return;
+        }
+        
+        // User is in same canvas (or no canvas info), proceed with following
+        this.continueFollowing(userId);
+    }
+    
+    continueFollowing(userId) {
         // Always convert to number for consistency
         this.followingUserId = parseInt(userId);
         this.isFollowing = true;
@@ -520,10 +563,33 @@ class UserFollowManager {
     }
     
     getUsername(userId) {
-        // Try to find username from active users
-        const activeUsers = this.app.canvasNavigator?.activeUsersPerCanvas.get(this.app.currentCanvas?.id);
-        const user = activeUsers?.find(u => u.userId === userId);
-        return user?.displayName || user?.username || 'User';
+        // Try to find username from active users across all canvases
+        if (this.app.canvasNavigator) {
+            const allUsers = this.app.canvasNavigator.activeUsersPerCanvas;
+            for (const [canvasId, users] of allUsers.entries()) {
+                const user = users.find(u => parseInt(u.userId) === parseInt(userId));
+                if (user) {
+                    return user.displayName || user.username;
+                }
+            }
+        }
+        
+        return `User ${userId}`;
+    }
+    
+    getUserCanvas(userId) {
+        // Find which canvas a user is currently in
+        if (this.app.canvasNavigator) {
+            const allUsers = this.app.canvasNavigator.activeUsersPerCanvas;
+            for (const [canvasId, users] of allUsers.entries()) {
+                const user = users.find(u => parseInt(u.userId) === parseInt(userId));
+                if (user) {
+                    return canvasId;
+                }
+            }
+        }
+        
+        return null; // User not found or not in any canvas
     }
     
     updateFollowingUI() {

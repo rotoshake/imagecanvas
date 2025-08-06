@@ -604,8 +604,45 @@ class CollaborationManager {
     }
     
     async handleLeaveCanvas(socket, { canvasId }) {
-        // Similar to disconnect but initiated by user
-        this.handleDisconnect(socket);
+        const session = this.socketSessions.get(socket.id);
+        if (!session || session.canvasId !== parseInt(canvasId)) {
+            socket.emit('canvas_left', { canvasId });
+            return;
+        }
+        
+        console.log(`🚪 ${session.username} leaving canvas ${canvasId}`);
+        
+        // Leave the socket room
+        socket.leave(`canvas_${canvasId}`);
+        
+        // Remove from canvas room tracking
+        const room = this.canvasRooms.get(parseInt(canvasId));
+        if (room) {
+            room.sockets.delete(socket.id);
+            
+            // Notify other users in the canvas that user left
+            socket.to(`canvas_${canvasId}`).emit('user_left', {
+                userId: session.userId,
+                username: session.username,
+                displayName: session.displayName,
+                color: session.color || '#999999'
+            });
+            
+            // Update active users for the canvas
+            const activeUsers = await this.getActiveUsersInCanvas(canvasId);
+            this.io.to(`canvas_${canvasId}`).emit('active_users', activeUsers);
+            
+            // Send global user presence update
+            setTimeout(async () => {
+                const globalUsersByCanvas = await this.getAllActiveUsersWithLocation();
+                this.io.emit('global_user_presence', Object.fromEntries(globalUsersByCanvas));
+            }, 100);
+        }
+        
+        // Update session to clear current canvas
+        session.canvasId = null;
+        
+        // Confirm canvas left
         socket.emit('canvas_left', { canvasId });
     }
     
