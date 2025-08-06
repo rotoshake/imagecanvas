@@ -732,10 +732,7 @@ class GroupNode extends BaseNode {
         // Use base padding
         let topPadding = this.padding;
         
-        // Check if node center is within group bounds (excluding title bar and top padding)
-        const nodeCenterX = node.pos[0] + node.size[0] / 2;
-        const nodeCenterY = node.pos[1] + node.size[1] / 2;
-        
+        // Calculate group content area (excluding title bar and top padding)
         const groupContentArea = {
             left: this.pos[0],
             top: this.pos[1] + titleBarHeight + topPadding,
@@ -743,12 +740,36 @@ class GroupNode extends BaseNode {
             bottom: this.pos[1] + this.size[1]
         };
         
-        return (
-            nodeCenterX >= groupContentArea.left &&
-            nodeCenterX <= groupContentArea.right &&
-            nodeCenterY >= groupContentArea.top &&
-            nodeCenterY <= groupContentArea.bottom
-        );
+        // Calculate node bounds
+        const nodeLeft = node.pos[0];
+        const nodeTop = node.pos[1];
+        const nodeRight = node.pos[0] + node.size[0];
+        const nodeBottom = node.pos[1] + node.size[1];
+        
+        // Calculate overlap area
+        const overlapLeft = Math.max(nodeLeft, groupContentArea.left);
+        const overlapTop = Math.max(nodeTop, groupContentArea.top);
+        const overlapRight = Math.min(nodeRight, groupContentArea.right);
+        const overlapBottom = Math.min(nodeBottom, groupContentArea.bottom);
+        
+        // Check if there's any overlap
+        if (overlapLeft >= overlapRight || overlapTop >= overlapBottom) {
+            return false; // No overlap
+        }
+        
+        // Calculate overlap area
+        const overlapWidth = overlapRight - overlapLeft;
+        const overlapHeight = overlapBottom - overlapTop;
+        const overlapArea = overlapWidth * overlapHeight;
+        
+        // Calculate node area
+        const nodeArea = node.size[0] * node.size[1];
+        
+        // Require at least 70% of the node to be inside the group
+        const overlapPercentage = overlapArea / nodeArea;
+        const requiredOverlap = 0.7;
+        
+        return overlapPercentage >= requiredOverlap;
     }
     
     /**

@@ -400,15 +400,11 @@ class StateManager {
                 }
                 
                 // Cache the loaded media for future use
-                if (node.img && node.img.complete) {
-                    // Convert image to data URL and cache it
-                    const canvas = document.createElement('canvas');
-                    canvas.width = node.img.width;
-                    canvas.height = node.img.height;
-                    const ctx = canvas.getContext('2d');
-                    ctx.drawImage(node.img, 0, 0);
-                    const dataUrl = canvas.toDataURL('image/png');
-                    window.imageCache.set(node.properties.hash, dataUrl);
+                // Note: Canvas2D image loading is disabled, this may be obsolete
+                if (node.img && node.img.complete && node.properties.hash) {
+                    // Store the image source directly instead of converting to dataURL
+                    // The cache can handle URLs, blobs, or image elements
+                    window.imageCache.set(node.properties.hash, node.properties.src);
                 }
             } catch (error) {
                 console.error('Failed to load media from server:', error);

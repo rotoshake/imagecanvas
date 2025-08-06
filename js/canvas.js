@@ -2351,7 +2351,8 @@ Mode: ${this.fpsTestMode}`;
             }
         }
         
-        // If we found the node under mouse, check if it's over a group
+        // Check if any dragged node is over a group
+        // First, try the node under mouse for more intuitive behavior
         if (nodeUnderMouse) {
             for (const group of groups) {
                 // Skip collapsed groups
@@ -2365,8 +2366,62 @@ Mode: ${this.fpsTestMode}`;
             }
         }
         
-        // If we found a target group, ALL dragged nodes will be added to it
-        const nodesOverGroup = targetGroup ? new Set(draggedNodes) : new Set();
+        // If no group found via mouse position, check all dragged nodes
+        // This ensures we detect when moving nodes within their current group
+        if (!targetGroup) {
+            const draggedFromGroup = this.interactionState.dragging.draggedFromGroup;
+            
+            for (const node of draggedNodes) {
+                // First, check if the node is still within its current parent group
+                // This gives priority to keeping nodes in their existing groups
+                if (draggedFromGroup && !draggedFromGroup.isCollapsed && 
+                    draggedFromGroup.childNodes.has(node.id) &&
+                    draggedFromGroup.shouldContainNode && 
+                    draggedFromGroup.shouldContainNode(node)) {
+                    targetGroup = draggedFromGroup;
+                    break;
+                }
+                
+                // If not in its original group, check other groups
+                for (const group of groups) {
+                    // Skip collapsed groups
+                    if (group.isCollapsed) continue;
+                    
+                    // Skip the original group (already checked above)
+                    if (draggedFromGroup && group.id === draggedFromGroup.id) continue;
+                    
+                    // Check if this node is over this group
+                    if (group.shouldContainNode && group.shouldContainNode(node)) {
+                        targetGroup = group;
+                        break; // Use first matching group
+                    }
+                }
+                if (targetGroup) break;
+            }
+        }
+        
+        // If we found a target group, check which dragged nodes should actually be added to it
+        const nodesOverGroup = new Set();
+        if (targetGroup) {
+            // Build a set of all child nodes of groups being dragged
+            const childNodesOfDraggedGroups = new Set();
+            for (const node of draggedNodes) {
+                if (node.type === 'container/group' && node.childNodes) {
+                    for (const childId of node.childNodes) {
+                        childNodesOfDraggedGroups.add(childId);
+                    }
+                }
+            }
+            
+            // Only consider nodes that aren't children of groups being dragged
+            for (const node of draggedNodes) {
+                if (!childNodesOfDraggedGroups.has(node.id) && 
+                    targetGroup.shouldContainNode && 
+                    targetGroup.shouldContainNode(node)) {
+                    nodesOverGroup.add(node);
+                }
+            }
+        }
         
         // Handle group changes with debouncing
         if (targetGroup !== previousGroup) {
@@ -2415,12 +2470,17 @@ Mode: ${this.fpsTestMode}`;
             }
         }
         
-        // Reset the original group brightness if nodes are being dragged away
+        // Handle brightness for the original group
         if (this.interactionState.dragging.draggedFromGroup && 
-            this.interactionState.dragging.draggedFromGroup !== targetGroup &&
             this.interactionState.dragging.draggedFromGroup.setBrightness) {
-            console.log(`💡 Resetting original group ${this.interactionState.dragging.draggedFromGroup.id} to 1.0`);
-            this.interactionState.dragging.draggedFromGroup.setBrightness(1.0);
+            
+            if (this.interactionState.dragging.draggedFromGroup === targetGroup) {
+                // Nodes are still in their original group - show moderate brightness
+                this.interactionState.dragging.draggedFromGroup.setBrightness(1.2);
+            } else {
+                // Nodes are being dragged away from their original group - reset brightness
+                this.interactionState.dragging.draggedFromGroup.setBrightness(1.0);
+            }
         }
     }
     
@@ -2487,7 +2547,10 @@ Mode: ${this.fpsTestMode}`;
                 const draggedFromGroup = this.interactionState.dragging.draggedFromGroup;
                 
                 // Add nodes to group if dropped on one
-                if (potentialGroup && nodesOverGroup.size > 0) {
+                // But skip if we're dragging any groups (to prevent accidental transfers)
+                const isDraggingGroups = Array.from(nodesOverGroup).some(n => n.type === 'container/group');
+                
+                if (potentialGroup && nodesOverGroup.size > 0 && !isDraggingGroups) {
                     // Collect nodes to add and existing nodes that moved
                     const nodesToAdd = [];
                     const existingNodesMoved = [];
@@ -2560,25 +2623,32 @@ Mode: ${this.fpsTestMode}`;
                     }
                 }
                 
-                // Remove nodes from group if dragged out
-                if (draggedFromGroup && !potentialGroup) {
+                // Remove nodes from group ONLY if they're actually outside the group
+                if (draggedFromGroup) {
                     const draggedNodes = this.selection.getSelectedNodes();
-                    const removePromises = [];
-                    for (const node of draggedNodes) {
-                        if (draggedFromGroup.childNodes.has(node.id)) {
-                            // Remove node from group
-                            if (window.app?.operationPipeline) {
-                                const command = new window.NodeCommands.GroupNodeCommand({
-                                    action: 'group_remove_node',
-                                    groupId: draggedFromGroup.id,
-                                    nodeId: node.id
-                                });
-                                removePromises.push(window.app.operationPipeline.executeCommand(command));
+                    const isDraggingGroupsForRemoval = draggedNodes.some(n => n.type === 'container/group');
+                    
+                    if (!isDraggingGroupsForRemoval) {
+                        const removePromises = [];
+                        for (const node of draggedNodes) {
+                            if (draggedFromGroup.childNodes.has(node.id)) {
+                                // Simple check: is the node still inside its group?
+                                const stillInGroup = draggedFromGroup.shouldContainNode && draggedFromGroup.shouldContainNode(node);
+                                
+                                if (!stillInGroup) {
+                                    // Node is outside its group bounds - remove it
+                                    if (window.app?.operationPipeline) {
+                                        const command = new window.NodeCommands.GroupNodeCommand({
+                                            action: 'group_remove_node',
+                                            groupId: draggedFromGroup.id,
+                                            nodeId: node.id
+                                        });
+                                        removePromises.push(window.app.operationPipeline.executeCommand(command));
+                                    }
+                                }
                             }
                         }
                     }
-                    
-                    // Don't update bounds when removing nodes - groups never shrink
                 }
                 
                 // Reset brightness for all groups

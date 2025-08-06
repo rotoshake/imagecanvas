@@ -103,16 +103,26 @@ class ImageCanvasServer {
     }
     
     setupMiddleware() {
-        // Rate limiting
+        // CORS must be first to ensure headers are always sent
+        this.app.use(cors({
+            origin: this.corsOrigins,
+            credentials: true,
+            methods: ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
+            allowedHeaders: ["Content-Type", "Authorization"]
+        }));
+        
+        // Rate limiting - higher limits for development
         const rateLimiter = new RateLimiterMemory({
-            points: 100, // Number of requests
+            points: 500, // Number of requests (increased for thumbnail loading)
             duration: 60, // Per 60 seconds
-            blockDuration: 60, // Block for 1 minute
+            blockDuration: 10, // Block for 10 seconds (reduced for development)
         });
         
         this.app.use(async (req, res, next) => {
             try {
-                await rateLimiter.consume(req.ip);
+                // Use req.ip || req.connection.remoteAddress as fallback
+                const identifier = req.ip || req.connection.remoteAddress || 'unknown';
+                await rateLimiter.consume(identifier);
                 next();
             } catch (rejRes) {
                 res.status(429).send('Too Many Requests');
@@ -124,14 +134,8 @@ class ImageCanvasServer {
             contentSecurityPolicy: false // Allow inline scripts for development
         }));
         
-        // Compression and CORS
+        // Compression
         this.app.use(compression());
-        this.app.use(cors({
-            origin: this.corsOrigins,
-            credentials: true,
-            methods: ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
-            allowedHeaders: ["Content-Type", "Authorization"]
-        }));
         
         // Body parsing
         this.app.use(express.json({ limit: '500mb' }));

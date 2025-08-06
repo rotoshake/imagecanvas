@@ -258,16 +258,21 @@ class ColorBalanceWheel {
         ctx.arc(this.centerX, this.centerY, this.wheelRadius, 0, Math.PI * 2);
         ctx.clip();
         
-        // Draw using radial segments with proper YUV to RGB conversion
-        const segments = 360;
+        // Use fewer segments to avoid moiré patterns on Windows
+        // 60 segments provides smooth appearance without artifacts
+        const segments = 60;
+        
+        // Pre-calculate segment angles for smoother rendering
+        const segmentAngle = (2 * Math.PI) / segments;
+        
         for (let i = 0; i < segments; i++) {
-            const startAngle = (i / segments) * 2 * Math.PI;
-            const endAngle = ((i + 1) / segments) * 2 * Math.PI;
+            const startAngle = i * segmentAngle;
+            const endAngle = (i + 1) * segmentAngle;
+            const midAngle = startAngle + segmentAngle / 2;
             
             // Convert canvas angle to vectorscope angle
-            // Canvas: 0° = right, counterclockwise, Y down
-            // Vectorscope: 0° = top, clockwise
-            let vectorscopeAngle = (90 - startAngle * 180 / Math.PI) % 360;
+            // Use middle of segment for color calculation to reduce edge artifacts
+            let vectorscopeAngle = (90 - midAngle * 180 / Math.PI) % 360;
             if (vectorscopeAngle < 0) vectorscopeAngle += 360;
             
             // Create gradient for this segment
@@ -290,16 +295,35 @@ class ColorBalanceWheel {
             }
             gradient.addColorStop(0, `rgb(${centerR * 255}, ${centerG * 255}, ${centerB * 255})`);
             
-            // Edge color using YUV to RGB conversion
-            // All wheels use the same edge colors (Y=0.5 for midtone colors)
-            const Y = 0.5;
+            // Add intermediate stop for smoother gradients
+            const intermediateRadius = 0.7;
             
-            // Convert vectorscope angle to U,V coordinates
-            // U is horizontal (blue-yellow), V is vertical (red-cyan)
-            // Need to flip V to correct vertical mirroring
+            // Calculate intermediate color
             const angleRad = vectorscopeAngle * Math.PI / 180;
-            const U = Math.sin(angleRad) * 0.5; // Max U = ±0.5
-            const V = -Math.cos(angleRad) * 0.5; // Max V = ±0.5, flipped
+            const U_intermediate = Math.sin(angleRad) * 0.5 * intermediateRadius;
+            const V_intermediate = -Math.cos(angleRad) * 0.5 * intermediateRadius;
+            
+            const Y_intermediate = 0.5;
+            let R_intermediate = Y_intermediate + 1.14 * V_intermediate;
+            let G_intermediate = Y_intermediate - 0.395 * U_intermediate - 0.581 * V_intermediate;
+            let B_intermediate = Y_intermediate + 2.032 * U_intermediate;
+            
+            // Mix with center color based on range
+            const mixFactor = 0.7;
+            R_intermediate = centerR * (1 - mixFactor) + R_intermediate * mixFactor;
+            G_intermediate = centerG * (1 - mixFactor) + G_intermediate * mixFactor;
+            B_intermediate = centerB * (1 - mixFactor) + B_intermediate * mixFactor;
+            
+            R_intermediate = Math.max(0, Math.min(1, R_intermediate));
+            G_intermediate = Math.max(0, Math.min(1, G_intermediate));
+            B_intermediate = Math.max(0, Math.min(1, B_intermediate));
+            
+            gradient.addColorStop(0.7, `rgb(${R_intermediate * 255}, ${G_intermediate * 255}, ${B_intermediate * 255})`);
+            
+            // Edge color using YUV to RGB conversion
+            const Y = 0.5;
+            const U = Math.sin(angleRad) * 0.5;
+            const V = -Math.cos(angleRad) * 0.5;
             
             // YUV to RGB conversion (ITU-R BT.601)
             let R = Y + 1.14 * V;
@@ -313,10 +337,11 @@ class ColorBalanceWheel {
             
             gradient.addColorStop(1, `rgb(${R * 255}, ${G * 255}, ${B * 255})`);
             
-            // Draw segment
+            // Draw segment with slight overlap to prevent gaps
             ctx.beginPath();
             ctx.moveTo(this.centerX, this.centerY);
-            ctx.arc(this.centerX, this.centerY, this.wheelRadius, startAngle, endAngle);
+            // Add tiny overlap to prevent rendering gaps between segments
+            ctx.arc(this.centerX, this.centerY, this.wheelRadius, startAngle - 0.001, endAngle + 0.001);
             ctx.closePath();
             ctx.fillStyle = gradient;
             ctx.fill();

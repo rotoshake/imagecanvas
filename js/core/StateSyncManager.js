@@ -804,11 +804,33 @@ class StateSyncManager {
             // Clear current graph
             this.app.graph.clear();
             
-            // Rebuild from server state
-            for (const nodeData of state.nodes || []) {
-                const node = await this.createNodeFromData(nodeData);
-                if (node) {
-                    this.app.graph.add(node);
+            // Process nodes in batches to avoid blocking
+            const nodes = state.nodes || [];
+            const batchSize = 10; // Process 10 nodes at a time
+            
+            for (let i = 0; i < nodes.length; i += batchSize) {
+                const batch = nodes.slice(i, i + batchSize);
+                
+                // Process batch in parallel
+                const createdNodes = await Promise.all(
+                    batch.map(nodeData => this.createNodeFromData(nodeData))
+                );
+                
+                // Add to graph
+                for (const node of createdNodes) {
+                    if (node) {
+                        this.app.graph.add(node);
+                    }
+                }
+                
+                // Force a render to show progress
+                if (this.app.graphCanvas) {
+                    this.app.graphCanvas.dirty_canvas = true;
+                }
+                
+                // Yield to browser to avoid blocking
+                if (i + batchSize < nodes.length) {
+                    await new Promise(resolve => setTimeout(resolve, 0));
                 }
             }
             
@@ -817,17 +839,12 @@ class StateSyncManager {
             
             // Clear pending operations (they're invalid now)
             this.pendingOperations.clear();
-            
-            // Force canvas redraw to show loading states (only set once)
-            if (this.app.graphCanvas) {
-                this.app.graphCanvas.dirty_canvas = true;
-            }
 
             // Only show sync notification for manual syncs (not when loading canvases)
             if (isManualSync && window.unifiedNotifications) {
                 window.unifiedNotifications.success('Sync complete', {
                     id: 'manual-sync',
-                    detail: `${state.nodes?.length || 0} nodes synced`,
+                    detail: `${nodes.length} nodes synced`,
                     duration: 2000
                 });
             }
@@ -893,10 +910,10 @@ class StateSyncManager {
             node.loadingState = 'loading';
             node.loadingProgress = 0;
             
-            // For reference-based nodes, we don't pass src directly
-            // The node will resolve it from hash/serverUrl
+            // Always use normal loading - the WebGL renderer already has
+            // sophisticated LOD logic that will request the optimal size
             node.setImage(
-                nodeData.properties.serverUrl || null, // Pass serverUrl if available
+                nodeData.properties.serverUrl || null,
                 nodeData.properties.filename,
                 nodeData.properties.hash
             );

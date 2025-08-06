@@ -246,13 +246,19 @@ class DragDropManager {
                                 // Draw tiny preview
                                 ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
                                 
-                                // Store preview data
-                                previewMap.set(file, {
-                                    url: canvas.toDataURL('image/jpeg', 0.6), // Low quality for size
-                                    width: img.width,
-                                    height: img.height,
-                                    aspectRatio: aspectRatio
-                                });
+                                // Convert to blob asynchronously for better performance
+                                canvas.toBlob(blob => {
+                                    if (blob) {
+                                        const url = URL.createObjectURL(blob);
+                                        previewMap.set(file, {
+                                            url: url,
+                                            width: img.width,
+                                            height: img.height,
+                                            aspectRatio: aspectRatio,
+                                            isObjectURL: true // Mark for cleanup
+                                        });
+                                    }
+                                }, 'image/jpeg', 0.6);
                                 
                                 // Clean up immediately
                                 URL.revokeObjectURL(blobUrl);
@@ -1791,11 +1797,16 @@ class DragDropManager {
                     // Draw video frame
                     ctx.drawImage(video, 0, 0, width, height);
                     
-                    // Convert to data URL
-                    const preview = canvas.toDataURL('image/webp', 0.8);
-                    
-                    URL.revokeObjectURL(objectURL);
-                    resolve(preview);
+                    // Convert to blob asynchronously for better performance
+                    canvas.toBlob(blob => {
+                        URL.revokeObjectURL(objectURL);
+                        if (blob) {
+                            const previewUrl = URL.createObjectURL(blob);
+                            resolve(previewUrl);
+                        } else {
+                            resolve(null);
+                        }
+                    }, 'image/webp', 0.8);
                 } catch (error) {
                     console.error('Failed to extract video preview:', error);
                     URL.revokeObjectURL(objectURL);

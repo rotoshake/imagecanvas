@@ -355,9 +355,9 @@ class ImageDimensionReader {
                     // Regular Canvas method
                     canvas.toBlob(resolve, format, quality);
                 } else {
-                    // Fallback: dataURL to blob
-                    const dataURL = canvas.toDataURL(format, quality);
-                    fetch(dataURL).then(res => res.blob()).then(resolve).catch(reject);
+                    // toBlob should be universally supported in modern browsers
+                    // If it's not available, we should fail rather than use slow fallback
+                    reject(new Error('canvas.toBlob not supported'));
                 }
             } catch (error) {
                 reject(error);

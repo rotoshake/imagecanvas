@@ -60,6 +60,10 @@ class TextureLODManager {
         this.recentTextureProtectionTime = 5000; // Protect for 5 seconds
         this.recentTextureCleanupInterval = 10000; // Cleanup old entries every 10 seconds
         
+        // Track recently evicted textures to prevent re-requesting
+        this.recentlyEvictedTextures = new Map(); // key -> timestamp
+        this.evictionCooldownTime = 3000; // Don't re-request for 3 seconds after eviction
+        
         // Start cleanup timer for recently loaded textures
         this._startRecentTextureCleanup();
         
@@ -265,8 +269,21 @@ class TextureLODManager {
         // Process uploads in parallel but respect frame budget
         const uploads = [];
         
-        // Reduce budget during any kind of animation or interaction
-        const budgetMs = this.canvas?.isInteracting ? 0.5 : this.uploadBudgetMs;
+        // Detect if we're in bulk loading phase (many pending uploads)
+        const isBulkLoading = this.uploadQueue.length > 10;
+        
+        // Adjust budget based on context:
+        // - During interaction: minimal budget (0.5ms)
+        // - During bulk loading: aggressive budget (16ms = full frame)
+        // - Normal operation: standard budget (1ms)
+        let budgetMs;
+        if (this.canvas?.isInteracting) {
+            budgetMs = 0.5;
+        } else if (isBulkLoading) {
+            budgetMs = 16; // Use full frame during initial load
+        } else {
+            budgetMs = this.uploadBudgetMs;
+        }
         
         while (this.uploadQueue.length > 0 && 
                performance.now() - startTime < budgetMs) {
@@ -290,9 +307,10 @@ class TextureLODManager {
             uploads.push(this._uploadTexture(upload));
             uploaded++;
             
-            // Limit concurrent uploads to prevent too many ImageBitmap creations
-            // Reduce to 1 upload at a time to minimize blocking
-            if (uploads.length >= 1) {
+            // Limit concurrent uploads based on context
+            // During bulk loading, allow more concurrent uploads
+            const maxConcurrent = isBulkLoading ? 5 : 1;
+            if (uploads.length >= maxConcurrent) {
                 break;
             }
         }
@@ -314,6 +332,63 @@ class TextureLODManager {
         const gl = this.gl;
         
         try {
+            // Check if texture is oversized BEFORE uploading
+            // Never reject 64px textures as they are the smallest available
+            if (screenSize && lodSize && lodSize > 64) {
+                // Calculate the optimal LOD for this screen size
+                const optimalLOD = this.getOptimalLOD(screenSize);
+                
+                // If optimalLOD is null (full resolution), don't reject any texture
+                if (optimalLOD !== null) {
+                    // Allow up to 2x the optimal LOD to account for quality multiplier
+                    const maxAcceptable = Math.max(optimalLOD * 2, 64); // Never go below 64px
+                    
+                    if (lodSize > maxAcceptable) {
+                        console.warn(`🚫 Rejecting oversized ${lodSize}px texture for ${Math.round(screenSize)}px screen space (optimal: ${optimalLOD}px, max: ${maxAcceptable}px)`);
+                        this.activeUploads.delete(queueKey);
+                        return; // Don't upload at all
+                    }
+                }
+            }
+            
+            // Pre-check memory requirements and evict if necessary
+            const preWidth = source.width || source.naturalWidth || 1024;
+            const preHeight = source.height || source.naturalHeight || 1024;
+            const estimatedMemory = preWidth * preHeight * 4 * 1.33; // 1.33 for mipmaps
+            
+            // Emergency memory relief if we're already over limit
+            if (this.totalMemory >= this.maxTextureMemory) {
+                console.warn(`🚨 Emergency memory relief: ${(this.totalMemory / 1024 / 1024).toFixed(1)}MB >= ${(this.maxTextureMemory / 1024 / 1024).toFixed(1)}MB limit`);
+                // Need to free at least the new texture size plus 10% headroom
+                const emergencyTarget = this.maxTextureMemory * 0.7;
+                const toFree = this.totalMemory - emergencyTarget + estimatedMemory;
+                this._emergencyMemoryRelief(toFree);
+                
+                // If still over limit after emergency relief, skip this upload
+                if (this.totalMemory + estimatedMemory > this.maxTextureMemory) {
+                    console.warn(`⏭️ Skipping texture upload - insufficient memory after emergency relief`);
+                    this.activeUploads.delete(queueKey);
+                    return;
+                }
+            }
+            
+            // If in focus mode and visible, do smart eviction BEFORE upload
+            if (isVisible && this._isInFocusMode()) {
+                const focusedHashes = this._getFocusedImageHashes();
+                if (focusedHashes.has(hash)) {
+                    // This is the focused image - make room for it if needed
+                    if (this.totalMemory + estimatedMemory > this.maxTextureMemory * 0.85) {
+                        console.log(`🎯 Focus mode: Making room for focused image ${hash.substring(0, 8)}`);
+                        this._smartFocusEviction(hash, estimatedMemory);
+                    }
+                }
+            }
+            // Regular pre-emptive memory management for non-focused images
+            else if (this.totalMemory + estimatedMemory > this.maxTextureMemory * 0.85) {
+                console.log(`📊 Pre-emptive memory management: need ${(estimatedMemory / 1024 / 1024).toFixed(1)}MB, current ${(this.totalMemory / 1024 / 1024).toFixed(1)}MB / ${(this.maxTextureMemory / 1024 / 1024).toFixed(1)}MB`);
+                this._enforceMemoryLimit(estimatedMemory);
+            }
+            
             // Ensure source is decoded before upload
             let decodedSource = source;
             
@@ -401,13 +476,18 @@ class TextureLODManager {
                 console.log(`⚠️ Large texture: ${width}x${height} = ${(memorySize / 1024 / 1024).toFixed(1)}MB for ${hash.substring(0, 8)}`);
             }
             
-            // Check if this is a full-res texture and enforce limit
-            if (lodSize === null) {
-                this._enforceFullResLimit();
-            }
+            // Skip post-upload enforcement for focused images (we already made room)
+            const skipEnforcement = this._isInFocusMode() && this._getFocusedImageHashes().has(hash);
             
-            // Check memory limits and evict if necessary
-            this._enforceMemoryLimit(memorySize);
+            if (!skipEnforcement) {
+                // Check if this is a full-res texture and enforce limit
+                if (lodSize === null) {
+                    this._enforceFullResLimit();
+                }
+                
+                // Check memory limits and evict if necessary
+                this._enforceMemoryLimit(memorySize);
+            }
             
             // Store in cache
             if (!this.textureCache.has(hash)) {
@@ -427,28 +507,6 @@ class TextureLODManager {
             this.totalMemory += memorySize;
             this.stats.textureLoads++;
             
-            // Check if texture is oversized for its screen space and reject it
-            // Never reject 64px textures as they are the smallest available
-            if (screenSize && lodSize && lodSize > 64) {
-                // Calculate the optimal LOD for this screen size
-                const optimalLOD = this.getOptimalLOD(screenSize);
-                // Allow up to 2x the optimal LOD to account for quality multiplier
-                const maxAcceptable = Math.max(optimalLOD * 2, 64); // Never go below 64px
-                
-                if (lodSize > maxAcceptable) {
-                    console.warn(`🚫 Rejecting oversized ${lodSize}px texture for ${Math.round(screenSize)}px screen space (optimal: ${optimalLOD}px, max: ${maxAcceptable}px)`);
-                    // Delete the texture we just created
-                    gl.deleteTexture(texture);
-                    // Remove from cache if it was added
-                    const nodeCache = this.textureCache.get(hash);
-                    if (nodeCache) {
-                        nodeCache.delete(lodSize);
-                    }
-                    this.totalMemory -= memorySize;
-                    return; // Don't complete the upload
-                }
-            }
-            
             // Mark as accessed
             this._markAccessed(hash, lodSize);
             
@@ -456,11 +514,11 @@ class TextureLODManager {
             const key = `${hash}_${lodSize}`;
             this.recentlyLoadedTextures.set(key, Date.now());
             
-            // If we're in focus mode (very few visible images), be more aggressive about loading
-            if (isVisible && this._isInFocusMode()) {
-                console.log(`🔍 Focus mode detected - aggressively loading ${lodSize || 'FULL'}px for ${hash.substring(0, 8)}`);
-                // In focus mode, immediately try to free memory for this texture
-                this._aggressivelyFreeMemoryForFocusedImage(hash);
+            // Skip additional evictions for focused images - we already made room
+            const focusedHashes = this._isInFocusMode() ? this._getFocusedImageHashes() : new Set();
+            if (!focusedHashes.has(hash)) {
+                // Only do post-upload enforcement for non-focused images
+                // (focused images already had space made for them)
             }
             
             // Clean up ImageBitmap if we created one
@@ -511,13 +569,18 @@ class TextureLODManager {
             // Calculate memory usage
             const memorySize = source.width * source.height * 4 * 1.33;
             
-            // Check if this is a full-res texture and enforce limit
-            if (lodSize === null) {
-                this._enforceFullResLimit();
-            }
+            // Skip post-upload enforcement for focused images (we already made room)
+            const skipEnforcement = this._isInFocusMode() && this._getFocusedImageHashes().has(hash);
             
-            // Check memory limits and evict if necessary
-            this._enforceMemoryLimit(memorySize);
+            if (!skipEnforcement) {
+                // Check if this is a full-res texture and enforce limit
+                if (lodSize === null) {
+                    this._enforceFullResLimit();
+                }
+                
+                // Check memory limits and evict if necessary
+                this._enforceMemoryLimit(memorySize);
+            }
             
             // Store in cache
             if (!this.textureCache.has(hash)) {
@@ -547,12 +610,6 @@ class TextureLODManager {
             // Mark as recently loaded to prevent thrashing
             const key = `${hash}_${lodSize}`;
             this.recentlyLoadedTextures.set(key, Date.now());
-            
-            // If we're in focus mode, be more aggressive about loading
-            if (isVisible && this._isInFocusMode()) {
-                console.log(`🔍 Focus mode detected - aggressively loading ${lodSize || 'FULL'}px for ${hash.substring(0, 8)}`);
-                this._aggressivelyFreeMemoryForFocusedImage(hash);
-            }
             
         } catch (error) {
             console.error('Failed to upload texture immediately:', error);
@@ -592,8 +649,8 @@ class TextureLODManager {
      * @private
      */
     _enforceFullResLimit() {
-        // Only enforce if we're using more than 50% of memory
-        if (this.totalMemory < this.maxTextureMemory * 0.5) {
+        // Only enforce if we're using more than 70% of memory (raised from 50%)
+        if (this.totalMemory < this.maxTextureMemory * 0.7) {
             return; // Plenty of memory available, no need to limit
         }
         
@@ -726,6 +783,15 @@ class TextureLODManager {
             }
         }
         
+        // Get focused image hashes if in focus mode
+        let focusedHashes = new Set();
+        if (this._isInFocusMode()) {
+            focusedHashes = this._getFocusedImageHashes();
+            if (focusedHashes.size > 0) {
+                console.log(`🎯 Protecting focused images from eviction: ${Array.from(focusedHashes).map(h => h.substring(0, 8)).join(', ')}`);
+            }
+        }
+        
         // If still need space, use regular LRU eviction
         let skippedCount = 0;
         const maxSkips = this.accessOrder.length; // Prevent infinite loop
@@ -735,6 +801,14 @@ class TextureLODManager {
             // Get least recently used
             const lru = this.accessOrder.shift();
             if (!lru) break;
+            
+            // Protect focused images from eviction
+            if (focusedHashes.has(lru.hash)) {
+                // Put it back at the end of the queue (most recently used position)
+                this.accessOrder.push(lru);
+                skippedCount++;
+                continue;
+            }
             
             // Check if this texture is actively being rendered
             const activeKey = `${lru.hash}_${lru.lodSize}`;
@@ -748,7 +822,9 @@ class TextureLODManager {
             // Check if this texture was recently loaded (prevent thrashing)
             const recentKey = `${lru.hash}_${lru.lodSize}`;
             const loadTime = this.recentlyLoadedTextures.get(recentKey);
-            if (loadTime && Date.now() - loadTime < this.recentTextureProtectionTime) {
+            // Use longer protection time in focus mode (30s vs 5s)
+            const protectionTime = this._isInFocusMode() ? 30000 : this.recentTextureProtectionTime;
+            if (loadTime && Date.now() - loadTime < protectionTime) {
                 // Get the texture data to check screen size it was loaded for
                 const nodeCache = this.textureCache.get(lru.hash);
                 const textureData = nodeCache ? nodeCache.get(lru.lodSize) : null;
@@ -1074,72 +1150,228 @@ class TextureLODManager {
     }
     
     /**
-     * Check if we're in focus mode (only 1-2 images visible)
+     * Check if we're in focus mode (only 1-2 images visible or single image dominates viewport)
      * @private
      * @returns {boolean}
      */
     _isInFocusMode() {
         if (!this.canvas || !this.canvas.viewport) return false;
         
-        const visibleNodes = this.canvas.viewport.getVisibleNodes?.(
+        const viewport = this.canvas.viewport;
+        const visibleNodes = viewport.getVisibleNodes?.(
             this.canvas.graph?.nodes || [],
             200 // margin
         );
         
         if (!visibleNodes) return false;
         
-        // Count visible image nodes
-        const visibleImageCount = visibleNodes.filter(node => 
+        // Filter to only image nodes
+        const visibleImages = visibleNodes.filter(node => 
             node.type === 'image' && node.properties?.hash
-        ).length;
+        );
         
         // Focus mode if 2 or fewer images visible
-        return visibleImageCount > 0 && visibleImageCount <= 2;
-    }
-    
-    /**
-     * Aggressively free memory for focused image by evicting everything else
-     * @private
-     * @param {string} focusedHash - Hash of the focused image
-     */
-    _aggressivelyFreeMemoryForFocusedImage(focusedHash) {
-        console.log(`🎯 Aggressively freeing memory for focused image: ${focusedHash.substring(0, 8)}`);
+        if (visibleImages.length > 0 && visibleImages.length <= 2) {
+            return true;
+        }
         
-        const texturesEvicted = [];
-        
-        // Go through all textures and evict everything except the focused hash
-        for (const [hash, nodeCache] of this.textureCache) {
-            if (hash === focusedHash) continue; // Skip the focused image
-            
-            for (const [lodSize, textureData] of nodeCache) {
-                // Only keep small preview textures (128px and below) for other images
-                if (lodSize === null || lodSize > 128) {
-                    // Delete texture
-                    this.gl.deleteTexture(textureData.texture);
-                    this.totalMemory -= textureData.memorySize;
-                    nodeCache.delete(lodSize);
-                    
-                    // Remove from access order
-                    const index = this.accessOrder.findIndex(
-                        item => item.hash === hash && item.lodSize === lodSize
-                    );
-                    if (index !== -1) {
-                        this.accessOrder.splice(index, 1);
-                    }
-                    
-                    texturesEvicted.push(`${hash.substring(0, 8)}_${lodSize || 'FULL'}`);
-                }
-            }
-            
-            // Remove hash entry if no more textures
-            if (nodeCache.size === 0) {
-                this.textureCache.delete(hash);
+        // Also check if single image takes up > 50% of viewport
+        const viewportArea = viewport.width * viewport.height;
+        for (const node of visibleImages) {
+            const nodeScreenArea = node.size[0] * node.size[1] * viewport.scale * viewport.scale;
+            if (nodeScreenArea / viewportArea > 0.5) {
+                return true; // Single image dominates viewport
             }
         }
         
-        if (texturesEvicted.length > 0) {
-            console.log(`🧹 Focus mode: Evicted ${texturesEvicted.length} textures to make room for focused image`);
-            console.log(`📊 Memory after focus eviction: ${(this.totalMemory / 1024 / 1024).toFixed(1)}MB / ${(this.maxTextureMemory / 1024 / 1024).toFixed(1)}MB`);
+        return false;
+    }
+    
+    /**
+     * Get hashes of focused images (images in focus mode)
+     * @private
+     * @returns {Set<string>}
+     */
+    _getFocusedImageHashes() {
+        const focusedHashes = new Set();
+        
+        if (!this.canvas || !this.canvas.viewport) return focusedHashes;
+        
+        const viewport = this.canvas.viewport;
+        const visibleNodes = viewport.getVisibleNodes?.(
+            this.canvas.graph?.nodes || [],
+            200 // margin
+        );
+        
+        if (!visibleNodes) return focusedHashes;
+        
+        const visibleImages = visibleNodes.filter(node => 
+            node.type === 'image' && node.properties?.hash
+        );
+        
+        // If in focus mode (1-2 images), add them all
+        if (visibleImages.length > 0 && visibleImages.length <= 2) {
+            visibleImages.forEach(node => focusedHashes.add(node.properties.hash));
+            return focusedHashes;
+        }
+        
+        // Otherwise, add any image that dominates the viewport
+        const viewportArea = viewport.width * viewport.height;
+        for (const node of visibleImages) {
+            const nodeScreenArea = node.size[0] * node.size[1] * viewport.scale * viewport.scale;
+            if (nodeScreenArea / viewportArea > 0.5) {
+                focusedHashes.add(node.properties.hash);
+            }
+        }
+        
+        return focusedHashes;
+    }
+    
+    /**
+     * Emergency memory relief - aggressively free memory when at or over limit
+     * @private
+     * @param {number} bytesToFree - Amount of memory to free
+     */
+    _emergencyMemoryRelief(bytesToFree) {
+        console.warn(`🚨 Emergency eviction: need to free ${(bytesToFree / 1024 / 1024).toFixed(1)}MB`);
+        
+        let freedMemory = 0;
+        const evicted = [];
+        
+        // In emergency, evict everything we can (except actively rendered)
+        // Start with largest textures first
+        const allTextures = [];
+        for (const [hash, nodeCache] of this.textureCache) {
+            for (const [lodSize, textureData] of nodeCache) {
+                // Skip actively rendered textures
+                const activeKey = `${hash}_${lodSize}`;
+                if (this.activelyRenderedTextures.has(activeKey)) continue;
+                
+                allTextures.push({
+                    hash,
+                    lodSize,
+                    texture: textureData.texture,
+                    memorySize: textureData.memorySize,
+                    size: lodSize || 10000 // Sort full-res as largest
+                });
+            }
+        }
+        
+        // Sort by size descending (evict largest first in emergency)
+        allTextures.sort((a, b) => b.size - a.size);
+        
+        // Evict until we free enough
+        for (const tex of allTextures) {
+            if (freedMemory >= bytesToFree) break;
+            
+            // Delete texture
+            this.gl.deleteTexture(tex.texture);
+            this.totalMemory -= tex.memorySize;
+            freedMemory += tex.memorySize;
+            
+            // Remove from cache
+            const nodeCache = this.textureCache.get(tex.hash);
+            if (nodeCache) {
+                nodeCache.delete(tex.lodSize);
+                if (nodeCache.size === 0) {
+                    this.textureCache.delete(tex.hash);
+                }
+            }
+            
+            // Remove from access order
+            const index = this.accessOrder.findIndex(
+                item => item.hash === tex.hash && item.lodSize === tex.lodSize
+            );
+            if (index !== -1) {
+                this.accessOrder.splice(index, 1);
+            }
+            
+            evicted.push(`${tex.hash.substring(0, 8)}_${tex.lodSize || 'FULL'}`);
+            
+            // Track eviction to prevent immediate re-request
+            const evictKey = `${tex.hash}_${tex.lodSize}`;
+            this.recentlyEvictedTextures.set(evictKey, Date.now());
+        }
+        
+        console.warn(`🚨 Emergency eviction complete: freed ${(freedMemory / 1024 / 1024).toFixed(1)}MB by evicting ${evicted.length} textures`);
+        console.log(`📊 Memory after emergency: ${(this.totalMemory / 1024 / 1024).toFixed(1)}MB / ${(this.maxTextureMemory / 1024 / 1024).toFixed(1)}MB`);
+    }
+    
+    /**
+     * Smart eviction for focused images - only evict what's necessary
+     * @private
+     * @param {string} focusedHash - Hash of the focused image
+     * @param {number} requiredMemory - Memory needed for the new texture
+     */
+    _smartFocusEviction(focusedHash, requiredMemory) {
+        const targetMemory = this.maxTextureMemory * 0.75; // Target 75% usage after eviction
+        const memoryToFree = Math.max(0, this.totalMemory + requiredMemory - targetMemory);
+        
+        if (memoryToFree <= 0) return; // No eviction needed
+        
+        console.log(`🎯 Smart focus eviction: need to free ${(memoryToFree / 1024 / 1024).toFixed(1)}MB for ${focusedHash.substring(0, 8)}`);
+        
+        // Get all focused image hashes
+        const focusedHashes = this._getFocusedImageHashes();
+        
+        // Build list of eviction candidates (non-focused textures)
+        const candidates = [];
+        for (const [hash, nodeCache] of this.textureCache) {
+            if (focusedHashes.has(hash)) continue; // Skip all focused images
+            
+            for (const [lodSize, textureData] of nodeCache) {
+                candidates.push({
+                    hash,
+                    lodSize,
+                    texture: textureData.texture,
+                    memorySize: textureData.memorySize,
+                    lastUsed: textureData.lastUsed,
+                    priority: lodSize === null ? 1 : (lodSize > 512 ? 2 : 3) // Prioritize evicting full-res and large textures
+                });
+            }
+        }
+        
+        // Sort by priority (lower = evict first) and then by last used
+        candidates.sort((a, b) => {
+            if (a.priority !== b.priority) return a.priority - b.priority;
+            return a.lastUsed - b.lastUsed; // Older first
+        });
+        
+        // Evict until we have enough space
+        let freedMemory = 0;
+        const evicted = [];
+        
+        for (const candidate of candidates) {
+            if (freedMemory >= memoryToFree) break;
+            
+            // Delete texture
+            this.gl.deleteTexture(candidate.texture);
+            this.totalMemory -= candidate.memorySize;
+            freedMemory += candidate.memorySize;
+            
+            // Remove from cache
+            const nodeCache = this.textureCache.get(candidate.hash);
+            if (nodeCache) {
+                nodeCache.delete(candidate.lodSize);
+                if (nodeCache.size === 0) {
+                    this.textureCache.delete(candidate.hash);
+                }
+            }
+            
+            // Remove from access order
+            const index = this.accessOrder.findIndex(
+                item => item.hash === candidate.hash && item.lodSize === candidate.lodSize
+            );
+            if (index !== -1) {
+                this.accessOrder.splice(index, 1);
+            }
+            
+            evicted.push(`${candidate.hash.substring(0, 8)}_${candidate.lodSize || 'FULL'}`);
+        }
+        
+        if (evicted.length > 0) {
+            console.log(`🧹 Smart eviction: freed ${(freedMemory / 1024 / 1024).toFixed(1)}MB by evicting ${evicted.length} textures`);
+            console.log(`📊 Memory after eviction: ${(this.totalMemory / 1024 / 1024).toFixed(1)}MB / ${(this.maxTextureMemory / 1024 / 1024).toFixed(1)}MB`);
         }
     }
     

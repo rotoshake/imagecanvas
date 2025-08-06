@@ -238,24 +238,22 @@ class IndexedDBThumbnailStore {
     }
     
     /**
-     * Convert canvas to blob - using dataURL as intermediate to ensure alpha preservation
+     * Convert canvas to blob - using native toBlob for performance
      */
     _canvasToBlob(canvas) {
         return new Promise((resolve, reject) => {
-            try {
-                // Use toDataURL to ensure alpha is preserved
-                const dataURL = canvas.toDataURL('image/png');
-                
-                // Convert dataURL to blob
-                fetch(dataURL)
-                    .then(res => res.blob())
-                    .then(blob => {
+            // Use native toBlob which is async and much faster than toDataURL
+            canvas.toBlob(
+                blob => {
+                    if (blob) {
                         resolve(blob);
-                    })
-                    .catch(reject);
-            } catch (error) {
-                reject(error);
-            }
+                    } else {
+                        reject(new Error('Failed to convert canvas to blob'));
+                    }
+                },
+                'image/png', // PNG preserves alpha channel
+                1.0 // Maximum quality
+            );
         });
     }
     

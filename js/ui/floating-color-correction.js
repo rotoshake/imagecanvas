@@ -859,19 +859,33 @@ rgb(255, 50, 50) 100%);
                 }
             }
             
-            // Update bypass toggle states
+            // Update bypass toggle states and section visual states
             const toneCurveBypass = contentEl.querySelector('[data-type="tone-curve"]');
             const colorAdjustmentsBypass = contentEl.querySelector('[data-type="color-adjustments"]');
             const colorBalanceBypass = contentEl.querySelector('[data-type="color-balance"]');
+            const curveSection = contentEl.querySelector('.curve-section');
+            const colorAdjustmentsSection = contentEl.querySelector('.color-adjustments-section');
+            const colorBalanceSection = contentEl.querySelector('.color-balance-section');
             
             if (toneCurveBypass) {
                 toneCurveBypass.classList.toggle('active', this.currentNode.toneCurveBypassed);
             }
+            if (curveSection) {
+                curveSection.classList.toggle('bypassed', this.currentNode.toneCurveBypassed);
+            }
+            
             if (colorAdjustmentsBypass) {
                 colorAdjustmentsBypass.classList.toggle('active', this.currentNode.colorAdjustmentsBypassed);
             }
+            if (colorAdjustmentsSection) {
+                colorAdjustmentsSection.classList.toggle('bypassed', this.currentNode.colorAdjustmentsBypassed);
+            }
+            
             if (colorBalanceBypass) {
                 colorBalanceBypass.classList.toggle('active', this.currentNode.colorBalanceBypassed);
+            }
+            if (colorBalanceSection) {
+                colorBalanceSection.classList.toggle('bypassed', this.currentNode.colorBalanceBypassed);
             }
             
             // Update adjustment sliders
@@ -887,7 +901,7 @@ rgb(255, 50, 50) 100%);
     
     renderContent(container) {
         container.innerHTML = `
-            <div class="curve-section">
+            <div class="curve-section ${this.currentNode.toneCurveBypassed ? 'bypassed' : ''}">
                 <div class="section-header">
                     <div class="section-title">Tone Curve</div>
                     <div class="bypass-toggle ${this.currentNode.toneCurveBypassed ? 'active' : ''}" data-type="tone-curve" title="Bypass tone curve"></div>
@@ -898,13 +912,13 @@ rgb(255, 50, 50) 100%);
                     <!-- <button class="curve-preset-btn" title="Presets">Presets</button> -->
                 </div>
             </div>
-            <div class="color-balance-section">
+            <div class="color-balance-section ${this.currentNode.colorBalanceBypassed ? 'bypassed' : ''}">
                 <div class="section-header">
                     <button class="curve-preset-btn color-balance-btn" title="Color Balance">Color Balance</button>
                     <div class="bypass-toggle ${this.currentNode.colorBalanceBypassed ? 'active' : ''}" data-type="color-balance" title="Bypass color balance"></div>
                 </div>
             </div>
-            <div class="color-adjustments-section">
+            <div class="color-adjustments-section ${this.currentNode.colorAdjustmentsBypassed ? 'bypassed' : ''}">
                 <div class="section-header">
                     <div class="section-title">Color Adjustments</div>
                     <div class="bypass-toggle ${this.currentNode.colorAdjustmentsBypassed ? 'active' : ''}" data-type="color-adjustments" title="Bypass color adjustments"></div>
@@ -922,14 +936,6 @@ rgb(255, 50, 50) 100%);
                 this.splineCurveEditor.loadCurve(this.currentNode.toneCurve);
             } else {
                 this.splineCurveEditor.reset();
-            }
-        }
-        
-        // Apply bypass state
-        if (this.currentNode.toneCurveBypassed) {
-            const curveSection = container.querySelector('.curve-section');
-            if (curveSection) {
-                curveSection.classList.add('bypassed');
             }
         }
         
@@ -1295,8 +1301,10 @@ rgb(255, 50, 50) 100%);
         // Update locally immediately
         this.currentNode.colorBalanceBypassed = bypassed;
         
-        // Update visual state
+        // Update visual state in main panel
         const bypassToggle = this.panel.querySelector('[data-type="color-balance"]');
+        const colorBalanceSection = this.panel.querySelector('.color-balance-section');
+        
         if (bypassToggle) {
             if (bypassed) {
                 bypassToggle.classList.add('active');
@@ -1305,8 +1313,16 @@ rgb(255, 50, 50) 100%);
             }
         }
         
-        // Update color balance panel to reflect bypass state
-        if (this.colorBalancePanel && this.colorBalanceVisible) {
+        if (colorBalanceSection) {
+            if (bypassed) {
+                colorBalanceSection.classList.add('bypassed');
+            } else {
+                colorBalanceSection.classList.remove('bypassed');
+            }
+        }
+        
+        // Update color balance panel to reflect bypass state (always update if panel exists)
+        if (this.colorBalancePanel) {
             this.updateColorBalancePanel();
         }
         
@@ -1431,6 +1447,15 @@ rgb(255, 50, 50) 100%);
         requestAnimationFrame(() => {
             this.colorBalancePanel.classList.add('visible');
         });
+        
+        // Apply bypassed state if needed
+        if (this.currentNode.colorBalanceBypassed) {
+            const content = this.colorBalancePanel.querySelector('.color-balance-content');
+            if (content) {
+                content.style.opacity = '0.5';
+                content.style.pointerEvents = 'none';
+            }
+        }
         
         // Save state
         this.saveColorBalanceState();
@@ -1673,8 +1698,8 @@ rgb(255, 50, 50) 100%);
     updateColorBalancePanel() {
         if (!this.colorBalancePanel) return;
         
-        // Handle no selection case OR bypass case - disable wheels but keep panel visible
-        if (!this.currentNode || this.currentNode.colorBalanceBypassed) {
+        // Handle no selection case - disable wheels but keep panel visible
+        if (!this.currentNode) {
             if (this.shadowsWheel && this.midtonesWheel && this.highlightsWheel) {
                 // Reset wheels to neutral position
                 this.shadowsWheel.setValue(0, 0, 0.5);
@@ -1694,13 +1719,6 @@ rgb(255, 50, 50) 100%);
                 }
             }
             return;
-        }
-        
-        // Re-enable interaction when node is selected and not bypassed
-        const content = this.colorBalancePanel.querySelector('.color-balance-content');
-        if (content) {
-            content.style.opacity = '1';
-            content.style.pointerEvents = 'auto';
         }
         
         // Initialize or get existing color balance data
@@ -1724,6 +1742,18 @@ rgb(255, 50, 50) 100%);
             this.updateYRGBDisplay('midtones', cb.midtones);
             this.updateYRGBDisplay('highlights', cb.highlights);
         }
+        
+        // Handle bypass state - disable/enable interaction based on bypass
+        const content = this.colorBalancePanel.querySelector('.color-balance-content');
+        if (content) {
+            if (this.currentNode.colorBalanceBypassed) {
+                content.style.opacity = '0.5';
+                content.style.pointerEvents = 'none';
+            } else {
+                content.style.opacity = '1';
+                content.style.pointerEvents = 'auto';
+            }
+        }
     }
     
     initializeColorBalanceWheels() {
@@ -1739,6 +1769,15 @@ rgb(255, 50, 50) 100%);
                 midtones: { x: 0, y: 0, luminance: 0.5 },
                 highlights: { x: 0, y: 0, luminance: 0.5 }
             };
+        }
+        
+        // Check if bypassed and apply disabled state
+        if (this.currentNode.colorBalanceBypassed) {
+            const content = this.colorBalancePanel.querySelector('.color-balance-content');
+            if (content) {
+                content.style.opacity = '0.5';
+                content.style.pointerEvents = 'none';
+            }
         }
         
         // Create wheel instances

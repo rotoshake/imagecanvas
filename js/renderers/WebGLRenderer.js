@@ -1211,13 +1211,25 @@ class WebGLRenderer {
         this._hasCleared = true;
         this._willDrawWebGL = false;
         
-        // Schedule texture uploads using requestIdleCallback for better performance
+        // Schedule texture uploads
         if (this.lodManager && !this._processingUploads) {
             this._processingUploads = true;
             
-            // Use requestIdleCallback if available, otherwise fall back to setTimeout
+            // During initial load (first 2 seconds), process uploads immediately
+            // to reduce perceived lag
+            const isInitialLoad = this.framesSinceInit < 120; // First 2 seconds at 60fps
+            
             const scheduleUpload = () => {
-                if ('requestIdleCallback' in window) {
+                if (isInitialLoad) {
+                    // During initial load, process uploads immediately without waiting for idle
+                    this.lodManager.processUploads().then(uploaded => {
+                        this.stats.texturesUploaded = uploaded;
+                        this._processingUploads = false;
+                        if (uploaded > 0 && this.canvas && !this.canvas.dirty_canvas) {
+                            this.canvas.dirty_canvas = true;
+                        }
+                    });
+                } else if ('requestIdleCallback' in window) {
                     requestIdleCallback((deadline) => {
                         // Only process uploads if we have idle time
                         if (deadline.timeRemaining() > 2) {
@@ -2854,10 +2866,6 @@ class WebGLRenderer {
         const vp = this.canvas.viewport;
         const scale = vp.scale;
         
-        // FIRST PRIORITY: Ensure preview textures (256px) are loaded for a WIDE area
-        // This ensures smooth zoom-out animations
-        this._ensurePreviewTextures();
-        
         // Get visible nodes with a small margin
         const visibleNodes = vp.getVisibleNodes(
             this.canvas.graph.nodes,
@@ -2880,6 +2888,52 @@ class WebGLRenderer {
         
         if (visibleImageCount === 0) return;
         
+        // Check if we're in focus mode (1-2 images visible)
+        const isInFocusMode = visibleImageCount <= 2 && totalScreenSize / visibleImageCount > 500;
+        
+        if (isInFocusMode) {
+            // FOCUS MODE: Very limited preloading
+            console.log(`🎯 Focus mode: ${visibleImageCount} image(s) visible, limiting preloads`);
+            
+            // Only ensure small thumbnails for zoom-out
+            this._ensureMinimalPreviews();
+            
+            // Get immediately adjacent nodes only (for navigation)
+            const nearbyNodes = vp.getVisibleNodes(
+                this.canvas.graph.nodes,
+                150 // Very small margin for adjacent images
+            );
+            
+            // Only preload adjacent images, not everything in sight
+            let preloadCount = 0;
+            const maxPreloads = 2; // Only adjacent images
+            
+            for (const node of nearbyNodes) {
+                if (node.type !== 'media/image' || !node.properties?.hash) continue;
+                if (visibleNodes.includes(node)) continue;
+                
+                const hash = node.properties.hash;
+                const nodeCache = this.lodManager.textureCache.get(hash);
+                
+                // Only load small preview for adjacent images
+                if (!nodeCache || !nodeCache.has(256)) {
+                    const screenWidth = node.size[0] * scale;
+                    const screenHeight = node.size[1] * scale;
+                    
+                    // Request at preview resolution with low priority
+                    this._requestTexture(node, Math.min(screenWidth, 256), Math.min(screenHeight, 256), 5);
+                    preloadCount++;
+                    if (preloadCount >= maxPreloads) break;
+                }
+            }
+            
+            return; // Skip normal preloading logic
+        }
+        
+        // NORMAL MODE: Standard preloading for multi-image views
+        // Ensure preview textures (256px) are loaded for a WIDE area
+        this._ensurePreviewTextures();
+        
         // Determine the optimal LOD for this zoom level
         const avgScreenSize = totalScreenSize / visibleImageCount;
         const optimalLOD = this.lodManager.getOptimalLOD(avgScreenSize, avgScreenSize);
@@ -2887,11 +2941,6 @@ class WebGLRenderer {
         // Only log preloading for large operations
         if (visibleImageCount > 50) {
             console.log(`🔮 Preloading: ${visibleImageCount} visible, avg screen size ${Math.round(avgScreenSize)}px → optimal LOD: ${optimalLOD || 'FULL'}`);
-        }
-        
-        // Check if we're zoomed out on many small images
-        if (visibleImageCount > 20 && avgScreenSize < 100) {
-            // console.warn(`⚠️ Many small images visible: ${visibleImageCount} at ~${Math.round(avgScreenSize)}px each`);
         }
         
         // Get nodes in a wider area for preloading
@@ -2988,6 +3037,48 @@ class WebGLRenderer {
         // Only log significant preview operations
         if (previewRequestCount > 20) {
             console.log(`🖼️ Ensuring ${previewRequestCount} preview textures are loaded`);
+        }
+    }
+    
+    /**
+     * Load minimal previews when in focus mode (single image view)
+     * Only loads 64px thumbnails in a moderate area for zoom-out
+     * @private
+     */
+    _ensureMinimalPreviews() {
+        if (!this.canvas || !this.lodManager) return;
+        
+        const vp = this.canvas.viewport;
+        
+        // Smaller area when focused on single image
+        const nearbyNodes = vp.getVisibleNodes(
+            this.canvas.graph.nodes,
+            500 // Much smaller margin in focus mode
+        );
+        
+        let previewRequestCount = 0;
+        const maxPreviewRequests = 10; // Fewer requests in focus mode
+        
+        for (const node of nearbyNodes) {
+            if (node.type !== 'media/image' || !node.properties?.hash) continue;
+            
+            const hash = node.properties.hash;
+            const nodeCache = this.lodManager.textureCache.get(hash);
+            
+            // Only ensure we have tiny 64px thumbnails for zoom-out
+            const hasMinimalPreview = nodeCache && nodeCache.has(64);
+            
+            if (!hasMinimalPreview) {
+                // Request minimal 64px thumbnail with low priority
+                this._requestTexture(node, 64, 64, 3);
+                previewRequestCount++;
+                
+                if (previewRequestCount >= maxPreviewRequests) break;
+            }
+        }
+        
+        if (previewRequestCount > 0) {
+            console.log(`📌 Focus mode: Loading ${previewRequestCount} minimal thumbnails for zoom-out`);
         }
     }
     
