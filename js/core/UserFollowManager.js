@@ -463,7 +463,7 @@ class UserFollowManager {
             
             // Switch to target user's canvas first, then start following
             if (this.app.canvasNavigator) {
-                this.app.canvasNavigator.switchToCanvas(targetUserCanvas).then(() => {
+                this.app.canvasNavigator.loadCanvas(targetUserCanvas).then(() => {
                     // Canvas switched successfully, now start following
                     this.continueFollowing(userId);
                 }).catch(error => {

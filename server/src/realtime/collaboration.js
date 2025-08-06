@@ -195,6 +195,21 @@ class CollaborationManager {
                 return;
             }
             
+            // Clean up any existing session for this socket (in case of reconnection)
+            const existingSession = this.socketSessions.get(socket.id);
+            if (existingSession) {
+                console.log(`🔄 Cleaning up existing session for socket ${socket.id}`);
+                // Remove from old canvas room if it exists
+                if (existingSession.canvasId) {
+                    const oldRoom = this.canvasRooms.get(existingSession.canvasId);
+                    if (oldRoom) {
+                        oldRoom.sockets.delete(socket.id);
+                    }
+                    // Leave old socket room
+                    socket.leave(`canvas_${existingSession.canvasId}`);
+                }
+            }
+            
             // Create session for this specific socket/tab
             const session = {
                 socketId: socket.id,

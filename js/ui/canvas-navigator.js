@@ -902,12 +902,12 @@ class CanvasNavigator {
             }
             
             // Disconnect from current canvas first
-            if (this.networkLayer && this.networkLayer.isConnected && this.networkLayer.currentProject) {
+            if (this.networkLayer && this.networkLayer.isConnected && this.networkLayer.currentCanvas) {
                 
                 // NetworkLayer handles its own cleanup
                 
                 // Leave the current canvas room and wait for confirmation
-                if (this.networkLayer.currentProject.id) {
+                if (this.networkLayer.currentCanvas.id) {
                     await this.leaveCanvasAndWait(this.networkLayer.currentCanvas.id);
                 }
                 
