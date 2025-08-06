@@ -1860,7 +1860,17 @@ Mode: ${this.fpsTestMode}`;
                     if (!this.interactionState.resizing.initialFontSize) {
                         this.interactionState.resizing.initialFontSize = node.properties.fontSize;
                     }
-                    node.properties.fontSize = Math.max(6, Math.min(200, Math.round(initialFontSize * scaleFactor)));
+                    const newFontSize = Math.max(6, Math.min(200, Math.round(initialFontSize * scaleFactor)));
+                    
+                    // Only update and broadcast if font size actually changed
+                    if (node.properties.fontSize !== newFontSize) {
+                        node.properties.fontSize = newFontSize;
+                        
+                        // Broadcast font size change for collaboration
+                        if (this.broadcastNodePropertyUpdate) {
+                            this.broadcastNodePropertyUpdate(node.id, 'fontSize', newFontSize);
+                        }
+                    }
                 }
                 
                 // Recalculate position for aspect-constrained resize if rotated

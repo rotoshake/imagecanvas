@@ -1238,6 +1238,11 @@ class CanvasNavigator {
         this.networkLayer.on('user_left', (user) => {
             this.updateActiveUsersForCurrentCanvas();
         });
+        
+        // Listen for global user presence updates
+        this.networkLayer.on('global_user_presence', (usersByCanvas) => {
+            this.updateGlobalUserPresence(usersByCanvas);
+        });
     }
     
     updateActiveUsersForCurrentCanvas(users) {
@@ -1249,6 +1254,24 @@ class CanvasNavigator {
         }
         
         // Re-render the canvas list to update user indicators
+        this.renderCanvasList();
+    }
+    
+    /**
+     * Update user presence across all canvases from global presence data
+     */
+    updateGlobalUserPresence(usersByCanvas) {
+        console.log('🌍 Received global user presence update:', usersByCanvas);
+        
+        // Clear existing data
+        this.activeUsersPerCanvas.clear();
+        
+        // Update with new data
+        for (const [canvasId, users] of Object.entries(usersByCanvas)) {
+            this.activeUsersPerCanvas.set(parseInt(canvasId), users);
+        }
+        
+        // Re-render the canvas list to show updated user indicators
         this.renderCanvasList();
     }
     

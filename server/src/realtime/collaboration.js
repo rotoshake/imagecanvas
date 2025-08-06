@@ -282,6 +282,10 @@ class CollaborationManager {
             // Send updated user list to all (including the joining user)
             this.io.to(`canvas_${canvas.id}`).emit('active_users', activeUsers);
             
+            // Send global user presence update to all clients
+            const globalUsersByCanvas = await this.getAllActiveUsersWithLocation();
+            this.io.emit('global_user_presence', Object.fromEntries(globalUsersByCanvas));
+            
             // Request state from another tab (prefer same user's tab if available)
             if (room.sockets.size > 1) {
                 const otherSockets = Array.from(room.sockets).filter(sid => sid !== socket.id);
@@ -305,6 +309,12 @@ class CollaborationManager {
                 undoState,
                 canvasId: canvas.id
             });
+            
+            // Send initial global user presence to the new user
+            setTimeout(async () => {
+                const globalUsersByCanvas = await this.getAllActiveUsersWithLocation();
+                socket.emit('global_user_presence', Object.fromEntries(globalUsersByCanvas));
+            }, 200); // Small delay to ensure user is fully joined
             
         } catch (error) {
             console.error('Error in handleJoinCanvas:', error);
@@ -468,6 +478,50 @@ class CollaborationManager {
         
         return Array.from(users.values());
     }
+
+    /**
+     * Get users across all canvases with their current canvas location
+     */
+    async getAllActiveUsersWithLocation() {
+        const usersByCanvas = new Map(); // canvasId -> users array
+        
+        // Collect all active users grouped by canvas
+        for (const [socketId, session] of this.socketSessions.entries()) {
+            const canvasId = session.canvasId;
+            
+            if (!usersByCanvas.has(canvasId)) {
+                usersByCanvas.set(canvasId, new Map()); // userId -> user info
+            }
+            
+            const canvasUsers = usersByCanvas.get(canvasId);
+            
+            if (!canvasUsers.has(session.userId)) {
+                // Fetch user color from database
+                const userInfo = await this.db.getUser(session.userId);
+                canvasUsers.set(session.userId, {
+                    userId: session.userId,
+                    username: session.username,
+                    displayName: session.displayName,
+                    color: userInfo?.color || '#999999',
+                    tabs: [],
+                    canvasId: canvasId
+                });
+            }
+            
+            canvasUsers.get(session.userId).tabs.push({
+                socketId: socketId,
+                tabId: session.tabId
+            });
+        }
+        
+        // Convert to final format: canvasId -> users array
+        const result = new Map();
+        for (const [canvasId, usersMap] of usersByCanvas.entries()) {
+            result.set(canvasId, Array.from(usersMap.values()));
+        }
+        
+        return result;
+    }
     
     async handleDisconnect(socket) {
         const session = this.socketSessions.get(socket.id);
@@ -519,6 +573,12 @@ class CollaborationManager {
             this.getActiveUsersInCanvas(session.canvasId).then(users => {
                 this.io.to(`canvas_${session.canvasId}`).emit('active_users', users);
             });
+            
+            // Send global user presence update to all clients
+            setTimeout(async () => {
+                const globalUsersByCanvas = await this.getAllActiveUsersWithLocation();
+                this.io.emit('global_user_presence', Object.fromEntries(globalUsersByCanvas));
+            }, 100); // Small delay to ensure disconnect is processed
             
             // Clean up empty rooms
             if (room.sockets.size === 0) {

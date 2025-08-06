@@ -359,6 +359,15 @@ class NetworkLayer {
             this.emitLocal('user_selection_update', data);
         });
         
+        // Global user presence updates for canvas navigator
+        this.socket.on('global_user_presence', (usersByCanvas) => {
+            this.emitLocal('global_user_presence', usersByCanvas);
+            // Also update canvas navigator directly if available
+            if (this.app.canvasNavigator) {
+                this.app.canvasNavigator.updateGlobalUserPresence(usersByCanvas);
+            }
+        });
+        
         // Heartbeat events
         this.socket.on('pong', (timestamp) => {
             this.handlePong(timestamp);
