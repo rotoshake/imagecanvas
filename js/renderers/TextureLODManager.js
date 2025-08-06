@@ -1007,10 +1007,10 @@ class TextureLODManager {
             }
         }
         
-        if (evicted.length > 0) {
-            console.log(`🧹 Evicted ${evicted.length} oversized textures:`, 
-                evicted.map(e => `${e.size}px for ${e.screenSize}px screen (optimal: ${e.optimal}px)`).join(', '));
-        }
+        // if (evicted.length > 0) {
+        //     console.log(`🧹 Evicted ${evicted.length} oversized textures:`, 
+        //         evicted.map(e => `${e.size}px for ${e.screenSize}px screen (optimal: ${e.optimal}px)`).join(', '));
+        // }
         
         return evicted.length;
     }

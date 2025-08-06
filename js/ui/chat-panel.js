@@ -10,6 +10,7 @@ class ChatPanel {
         this.chatBubbles = new Map(); // userId -> bubble element
         this.bubbleTimeouts = new Map(); // userId -> timeoutId
         this.bubbleLifetime = 5000; // 5 seconds
+        this.isPinMode = false; // Track if Option/Alt is held
         
         this.createUI();
         this.setupEventListeners();
@@ -326,13 +327,28 @@ class ChatPanel {
         this.closeBtn.addEventListener('click', () => this.close());
         
         // Send button
-        this.sendBtn.addEventListener('click', () => this.sendMessage());
+        this.sendBtn.addEventListener('click', () => {
+            if (this.isPinMode) {
+                this.pinMessage();
+            } else {
+                this.sendMessage();
+            }
+        });
         
         // Enter key in input
         this.input.addEventListener('keydown', (e) => {
+            // Check for Option/Alt key to enable pin mode
+            if (e.altKey && !this.isPinMode) {
+                this.enablePinMode();
+            }
+            
             if (e.key === 'Enter' && !e.shiftKey) {
                 e.preventDefault();
-                this.sendMessage();
+                if (this.isPinMode) {
+                    this.pinMessage();
+                } else {
+                    this.sendMessage();
+                }
             }
             
             // Prevent backtick from closing panel while typing
@@ -354,7 +370,24 @@ class ChatPanel {
         
         // Also prevent keyup events from propagating
         this.input.addEventListener('keyup', (e) => {
+            // Check if Option/Alt was released to disable pin mode
+            if (!e.altKey && this.isPinMode) {
+                this.disablePinMode();
+            }
             e.stopPropagation();
+        });
+        
+        // Global keydown/keyup to track Option/Alt even when input isn't focused
+        document.addEventListener('keydown', (e) => {
+            if (this.isOpen && e.altKey && !this.isPinMode) {
+                this.enablePinMode();
+            }
+        });
+        
+        document.addEventListener('keyup', (e) => {
+            if (this.isOpen && !e.altKey && this.isPinMode) {
+                this.disablePinMode();
+            }
         });
         
         // Disable keyboard shortcuts when input is focused
@@ -594,6 +627,85 @@ class ChatPanel {
         const div = document.createElement('div');
         div.textContent = unsafe;
         return div.innerHTML;
+    }
+    
+    enablePinMode() {
+        this.isPinMode = true;
+        this.sendBtn.textContent = 'Pin';
+        this.sendBtn.style.background = '#f4a';
+        this.input.placeholder = 'Type a note to pin on canvas...';
+    }
+    
+    disablePinMode() {
+        this.isPinMode = false;
+        this.sendBtn.textContent = 'Send';
+        this.sendBtn.style.background = '#4af';
+        this.input.placeholder = 'Type a message...';
+    }
+    
+    pinMessage() {
+        const message = this.input.value.trim();
+        if (!message) return;
+        
+        // Clear input
+        this.input.value = '';
+        
+        // Get current mouse position
+        let mouseX, mouseY;
+        if (this.app.graphCanvas && this.app.graphCanvas.mouseState) {
+            // Use graph coordinates for positioning the node
+            mouseX = this.app.graphCanvas.mouseState.graph[0];
+            mouseY = this.app.graphCanvas.mouseState.graph[1];
+        } else {
+            // Fallback to center of viewport
+            const viewport = this.app.graphCanvas?.viewport;
+            if (viewport) {
+                const center = viewport.getCenter();
+                mouseX = center[0];
+                mouseY = center[1];
+            } else {
+                mouseX = 0;
+                mouseY = 0;
+            }
+        }
+        
+        // Create pinned note node directly (simpler approach that works)
+        if (typeof NodeFactory !== 'undefined') {
+            const node = NodeFactory.createNode('ui/pinned-note');
+            if (node) {
+                // Set node properties
+                node.setText(message);
+                
+                // Set user info if available
+                if (this.app.currentUser) {
+                    const username = this.app.currentUser.displayName || this.app.currentUser.username || 'Anonymous';
+                    const color = this.app.currentUser.color || '#4af';
+                    node.setUserInfo(username, color);
+                }
+                
+                // Position the node (offset slightly from mouse to show the tail pointing to where it was created)
+                node.pos = [mouseX - 50, mouseY - node.size[1] - 30];
+                
+                // Add to graph
+                if (this.app.graph) {
+                    this.app.graph.add(node);
+                    
+                    // Select the new node
+                    if (this.app.graphCanvas?.selection) {
+                        this.app.graphCanvas.selection.clear();
+                        this.app.graphCanvas.selection.selectNode(node);
+                    }
+                    
+                    // Mark canvas as dirty
+                    if (this.app.graphCanvas) {
+                        this.app.graphCanvas.dirty_canvas = true;
+                    }
+                }
+            }
+        }
+        
+        // Exit pin mode after creating note
+        this.disablePinMode();
     }
 }
 

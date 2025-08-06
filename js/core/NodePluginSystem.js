@@ -242,6 +242,28 @@ class NodePluginSystem {
             },
             category: 'container'
         });
+        
+        // Pinned Note nodes
+        this.registerNodeType('ui/pinned-note', {
+            factory: (properties) => {
+                const node = new PinnedNoteNode();
+                if (properties) {
+                    Object.assign(node.properties, properties);
+                }
+                return node;
+            },
+            validator: (node) => {
+                return node instanceof PinnedNoteNode;
+            },
+            commands: ['node_move', 'node_resize', 'node_delete', 'node_duplicate', 'node_property_update'],
+            properties: {
+                text: '',
+                username: '',
+                borderColor: '#4af',
+                description: 'Pinned chat note'
+            },
+            category: 'ui'
+        });
 
     }
     

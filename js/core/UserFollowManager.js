@@ -45,11 +45,10 @@ class UserFollowManager {
             
             // Add to followers set
             this.followersSet.add(followerId);
-            console.log('👥 User started following you:', data.username, 'Total followers:', this.followersSet.size);
+            console.log('👥 User started following you:', data.username);
             
             // Check for circular following
             if (this.followingUserId === followerId) {
-                console.log('🔄 Preventing circular following - stopping follow of user:', followerId);
                 this.stopFollowing();
                 
                 // Show notification
@@ -74,7 +73,7 @@ class UserFollowManager {
             
             // Remove from followers set
             this.followersSet.delete(followerId);
-            console.log('👤 User stopped following you:', data.username, 'Total followers:', this.followersSet.size);
+            console.log('👤 User stopped following you:', data.username);
             
             // Mark canvas dirty to update cursor visibility
             if (this.app.graphCanvas) {
@@ -255,8 +254,6 @@ class UserFollowManager {
             canvasHeight: canvas.canvas.height
         };
         
-        // Only emit for following, not for persistence
-        console.log('📤 Broadcasting viewport for following:', viewportData);
         this.app.networkLayer.emit('viewport_follow_update', viewportData);
     }
     
@@ -286,18 +283,6 @@ class UserFollowManager {
     
     handleViewportUpdate(data) {
         const { userId, scale, offset, isGalleryView, galleryNodeId } = data;
-        console.log('📥 Received viewport update:', { 
-            userId, 
-            userIdType: typeof userId,
-            scale, 
-            offset, 
-            isGalleryView 
-        });
-        console.log('   Following state:', { 
-            isFollowing: this.isFollowing, 
-            followingUserId: this.followingUserId,
-            followingUserIdType: typeof this.followingUserId
-        });
         
         // Only apply if we're following this user
         // Compare both as numbers to handle type mismatches
@@ -305,8 +290,6 @@ class UserFollowManager {
         const followingIdNum = typeof this.followingUserId === 'string' ? parseInt(this.followingUserId) : this.followingUserId;
         
         if (!this.isFollowing || followingIdNum !== userIdNum) {
-            console.log('   Not following this user, ignoring viewport update');
-            console.log('   Comparison:', followingIdNum, '!==', userIdNum);
             return;
         }
         
@@ -322,9 +305,6 @@ class UserFollowManager {
         // Temporarily disable broadcasting while applying remote changes
         const wasFollowing = this.isFollowing;
         this.isFollowing = true;
-        
-        // Apply scale and offset
-        console.log('   Applying viewport:', { scale, offset });
         
         const viewport = canvas.viewport;
         if (!viewport) {
@@ -345,15 +325,8 @@ class UserFollowManager {
         // Apply gallery view state
         if (canvas.galleryViewManager) {
             const isCurrentlyGallery = canvas.galleryViewManager.active || false;
-            console.log('   Gallery view state:', { 
-                isGalleryView, 
-                isCurrentlyGallery,
-                galleryViewManager: !!canvas.galleryViewManager,
-                hasActive: 'active' in canvas.galleryViewManager
-            });
             
             if (isGalleryView && !isCurrentlyGallery) {
-                console.log('   Entering gallery view to follow user with node:', galleryNodeId);
                 // Temporarily disable navigation detection
                 const wasNavigating = this.isUserNavigating;
                 this.isUserNavigating = false;
@@ -379,7 +352,6 @@ class UserFollowManager {
                 
                 this.isUserNavigating = wasNavigating;
             } else if (!isGalleryView && isCurrentlyGallery) {
-                console.log('   Exiting gallery view to follow user');
                 // Temporarily disable navigation detection
                 const wasNavigating = this.isUserNavigating;
                 this.isUserNavigating = false;
@@ -395,8 +367,6 @@ class UserFollowManager {
                 // Both in gallery view - check if viewing same node
                 const currentNode = canvas.galleryViewManager.getCurrentNode();
                 if (currentNode && currentNode.id !== galleryNodeId) {
-                    console.log('   Switching to different gallery node:', galleryNodeId);
-                    
                     // Find the target node
                     const targetNode = this.app.graph.getNodeById(galleryNodeId);
                     if (targetNode) {
@@ -417,8 +387,6 @@ class UserFollowManager {
                     }
                 }
             }
-        } else {
-            console.log('   No gallery view manager found');
         }
         
         this.isFollowing = wasFollowing;
@@ -490,7 +458,7 @@ class UserFollowManager {
         // Always convert to number for consistency
         this.followingUserId = parseInt(userId);
         this.isFollowing = true;
-        console.log('✅ Started following user:', this.followingUserId, '(type:', typeof this.followingUserId, ')');
+        console.log('✅ Started following user:', this.followingUserId);
         
         // Show notification
         if (window.unifiedNotifications) {
@@ -514,7 +482,6 @@ class UserFollowManager {
         
         // Request current viewport state from the server
         if (this.app.networkLayer && this.app.networkLayer.isConnected) {
-            console.log('📡 Requesting current viewport state for user:', this.followingUserId);
             this.app.networkLayer.emit('request_user_viewport', {
                 userId: this.followingUserId
             });
@@ -552,8 +519,6 @@ class UserFollowManager {
     toggleFollowing(userId) {
         // Always convert to number for comparison
         const userIdNum = parseInt(userId);
-        console.log('🔄 Toggle following for user:', userId, '(as number:', userIdNum, ')');
-        console.log('   Currently following:', this.followingUserId);
         
         if (this.followingUserId === userIdNum) {
             this.stopFollowing();

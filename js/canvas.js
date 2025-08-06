@@ -1222,6 +1222,8 @@ Mode: ${this.fpsTestMode}`;
             // Fallback to default behaviors
             if (node.type === 'media/text') {
                 this.startTextEditing(node, e);
+            } else if (node.type === 'ui/pinned-note') {
+                this.startPinnedNoteEditing(node, e);
             }
             // Title editing is now handled before node detection
         }
@@ -4491,6 +4493,141 @@ Mode: ${this.fpsTestMode}`;
         this.dirty_canvas = true;
     }
     
+    startPinnedNoteEditing(node, e) {
+        if (this._editingTextInput) {
+            this.finishTextEditing();
+        }
+
+        // Mark node as editing
+        node.startEditing();
+        
+        // Create inline textarea overlay
+        const textarea = document.createElement('textarea');
+        textarea.name = `pinned-note-edit-${node.id}`;
+        textarea.id = `pinned-note-edit-${node.id}`;
+        textarea.value = node.properties.text || '';
+        textarea.style.position = 'fixed';
+        textarea.style.zIndex = '10000';
+        textarea.style.resize = 'none';
+        textarea.style.border = `2px solid ${node.properties.borderColor || '#4af'}`;
+        textarea.style.outline = 'none';
+        textarea.style.background = 'rgba(0, 0, 0, 0.9)';
+        textarea.style.color = node.properties.textColor || '#fff';
+        textarea.style.fontFamily = node.properties.fontFamily || 'Univers, sans-serif';
+        textarea.style.fontSize = `${node.properties.fontSize * this.viewport.scale}px`;
+        textarea.style.padding = `${node.properties.padding * this.viewport.scale}px`;
+        textarea.style.overflow = 'hidden';
+        textarea.style.whiteSpace = 'pre-wrap';
+        textarea.style.wordWrap = 'break-word';
+        textarea.style.boxSizing = 'border-box';
+        textarea.style.borderRadius = '8px';
+
+        // Position the textarea to match the node
+        this.positionPinnedNoteEditingOverlay(textarea, node);
+
+        // Event handlers
+        textarea.addEventListener('blur', () => this.finishPinnedNoteEditing());
+        textarea.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape') {
+                this.cancelPinnedNoteEditing();
+            } else if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
+                this.finishPinnedNoteEditing();
+            }
+            e.stopPropagation();
+        });
+
+        // Update text in real-time
+        textarea.addEventListener('input', () => {
+            node.properties.text = textarea.value;
+            this.dirty_canvas = true;
+            this.updatePinnedNoteEditingOverlaySize(textarea, node);
+            
+            // Broadcast text changes in real-time for collaboration
+            if (window.app && window.app.operationPipeline) {
+                window.app.operationPipeline.execute('node_property_update', {
+                    nodeId: node.id,
+                    property: 'text',
+                    value: textarea.value
+                }).catch(error => {
+                    console.error('Failed to sync pinned note text:', error);
+                });
+            }
+        });
+
+        // Add to DOM and focus
+        document.body.appendChild(textarea);
+        textarea.focus();
+        textarea.select();
+
+        // Store references
+        this._editingTextInput = textarea;
+        this._editingTextNode = node;
+    }
+
+    positionPinnedNoteEditingOverlay(textarea, node) {
+        const [screenX, screenY] = this.viewport.convertGraphToOffset(node.pos[0], node.pos[1]);
+        const rect = this.canvas.getBoundingClientRect();
+        
+        textarea.style.left = `${rect.left + screenX}px`;
+        textarea.style.top = `${rect.top + screenY}px`;
+        textarea.style.width = `${node.size[0] * this.viewport.scale}px`;
+        textarea.style.height = `${node.size[1] * this.viewport.scale}px`;
+    }
+
+    updatePinnedNoteEditingOverlaySize(textarea, node) {
+        textarea.style.width = `${node.size[0] * this.viewport.scale}px`;
+        textarea.style.height = `${node.size[1] * this.viewport.scale}px`;
+        textarea.style.fontSize = `${node.properties.fontSize * this.viewport.scale}px`;
+        textarea.style.padding = `${node.properties.padding * this.viewport.scale}px`;
+    }
+
+    finishPinnedNoteEditing() {
+        if (!this._editingTextInput || !this._editingTextNode) return;
+
+        const node = this._editingTextNode;
+        const textarea = this._editingTextInput;
+        
+        // Update node text
+        node.properties.text = textarea.value;
+        node.stopEditing();
+        
+        // Sync final text change
+        if (window.app && window.app.operationPipeline) {
+            window.app.operationPipeline.execute('node_property_update', {
+                nodeId: node.id,
+                property: 'text',
+                value: textarea.value
+            }).catch(error => {
+                console.error('Failed to sync final pinned note text:', error);
+            });
+        }
+
+        // Cleanup
+        document.body.removeChild(textarea);
+        this._editingTextInput = null;
+        this._editingTextNode = null;
+        
+        this.pushUndoState();
+        this.dirty_canvas = true;
+    }
+
+    cancelPinnedNoteEditing() {
+        if (!this._editingTextInput || !this._editingTextNode) return;
+
+        const node = this._editingTextNode;
+        const textarea = this._editingTextInput;
+        
+        // Restore original text (no changes)
+        node.stopEditing();
+        
+        // Cleanup
+        document.body.removeChild(textarea);
+        this._editingTextInput = null;
+        this._editingTextNode = null;
+        
+        this.dirty_canvas = true;
+    }
+    
     finishTitleEditing() {
         if (!this._editingTitleInput || !this._editingTitleNode) return;
 
@@ -5389,10 +5526,10 @@ Mode: ${this.fpsTestMode}`;
             window.app.otherUsersMouseManager.draw(ctx);
         }
         
-        // Draw text nodes on overlay layer (so they appear on top of images)
+        // Draw text nodes and pinned notes on overlay layer (so they appear on top of images)
         if (this.graph && this.graph.nodes) {
             for (const node of this.graph.nodes) {
-                if (node.type === 'media/text' && node.onDrawOverlay) {
+                if ((node.type === 'media/text' || node.type === 'ui/pinned-note') && node.onDrawOverlay) {
                     ctx.save();
                     
                     // Set up coordinate system like other overlay elements
