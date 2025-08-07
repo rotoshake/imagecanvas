@@ -21,7 +21,7 @@ class TextureLODManager {
         ];
         
         // Configuration
-        this.maxTextureMemory = options.maxMemory || 1024 * 1024 * 1024; // 1GB default - increased for better high-res support
+        this.maxTextureMemory = options.maxMemory || 1536 * 1024 * 1024; // 1.5GB default for better high-res support
         this.maxTextures = options.maxTextures || 500;
         this.uploadBudgetMs = options.uploadBudget || 1; // 1ms per frame (was 2ms) - more conservative
         this.canvas = options.canvas; // Canvas reference for viewport state checks
@@ -38,8 +38,16 @@ class TextureLODManager {
         this.activeUploads = new Set();
         
         // Decode throttling to prevent lag on page reload
-        this.maxConcurrentDecodes = 2; // Limit concurrent createImageBitmap calls
+        this.maxConcurrentDecodes = 4; // Increased for better initial load performance
         this.activeDecodes = 0;
+        
+        // Track initial page load for performance optimization
+        this.pageLoadTime = Date.now();
+        this.isInitialLoad = true;
+        setTimeout(() => { 
+            this.isInitialLoad = false;
+            this.maxConcurrentDecodes = 2; // Reduce after initial load
+        }, 3000); // 3 second initial load period
         this.decodeQueue = [];
         this.decodedCache = new WeakMap(); // Track already decoded images
         
@@ -95,62 +103,91 @@ class TextureLODManager {
     }
     
     /**
-     * Get the best texture for a given image node based on screen size
+     * Get the current texture size being used for a hash
      * @param {string} hash - Image hash
-     * @param {number} screenWidth - Screen width in pixels
-     * @param {number} screenHeight - Screen height in pixels
+     * @returns {number|null} Current texture size, or null if none/full-res
+     */
+    getCurrentTextureSize(hash) {
+        const nodeCache = this.textureCache.get(hash);
+        if (!nodeCache || nodeCache.size === 0) {
+            return null;
+        }
+        
+        // Find the most recently accessed texture for this hash
+        let mostRecentSize = null;
+        let mostRecentTime = 0;
+        
+        for (const [lodSize, textureData] of nodeCache) {
+            if (textureData.lastUsed > mostRecentTime) {
+                mostRecentTime = textureData.lastUsed;
+                mostRecentSize = lodSize;
+            }
+        }
+        
+        return mostRecentSize;
+    }
+    
+    /**
+     * Get the best texture for a given image node based on screen size
+     * SIMPLIFIED VERSION - just pick the right texture
+     * @param {string} hash - Image hash
+     * @param {number} screenWidth - Screen width in pixels (already includes DPR)
+     * @param {number} screenHeight - Screen height in pixels (already includes DPR)
      * @returns {WebGLTexture|null} Best available texture
      */
     getBestTexture(hash, screenWidth, screenHeight) {
-        const targetSize = Math.max(screenWidth, screenHeight);
         const nodeCache = this.textureCache.get(hash);
-        
-        if (!nodeCache) {
+        if (!nodeCache || nodeCache.size === 0) {
             this.stats.cacheMisses++;
             return null;
         }
         
+        // Simple: what size do we need on screen?
+        const targetSize = Math.max(screenWidth, screenHeight);
         
-        // Find best available texture - smallest that meets requirements
+        // Available texture sizes: 64, 128, 256, 512, 1024, 2048, null (full)
+        // Pick the smallest one that's >= targetSize
         let bestTexture = null;
         let bestSize = Infinity;
-        let fallbackTexture = null;
-        let fallbackSize = 0;
+        let bestDiff = Infinity;
         
-        // Iterate through all available textures
         for (const [lodSize, textureData] of nodeCache) {
-            const currentSize = lodSize || Infinity; // null means full resolution
+            const textureSize = lodSize || 10000; // Treat full res as 10000 for comparison
             
-            if (currentSize >= targetSize) {
-                // This texture is large enough - check if it's better than current best
-                if (currentSize < bestSize) {
+            // Is this texture big enough?
+            if (textureSize >= targetSize) {
+                // Yes - is it closer to our target than what we have?
+                const diff = textureSize - targetSize;
+                if (diff < bestDiff) {
                     bestTexture = textureData.texture;
-                    bestSize = currentSize;
-                }
-            } else {
-                // This texture is too small, but keep track of largest available
-                if (currentSize > fallbackSize) {
-                    fallbackTexture = textureData.texture;
-                    fallbackSize = currentSize;
+                    bestSize = lodSize;
+                    bestDiff = diff;
                 }
             }
         }
         
-        // Use best match or fallback to largest available
-        let selectedTexture = bestTexture || fallbackTexture;
-        let selectedSize = bestTexture ? bestSize : fallbackSize;
+        // If we didn't find anything big enough, use the largest available
+        if (!bestTexture) {
+            let largestSize = 0;
+            for (const [lodSize, textureData] of nodeCache) {
+                const textureSize = lodSize || 10000;
+                if (textureSize > largestSize) {
+                    largestSize = textureSize;
+                    bestTexture = textureData.texture;
+                    bestSize = lodSize;
+                }
+            }
+        }
         
-        if (selectedTexture) {
-            const actualLodSize = selectedSize === Infinity ? null : selectedSize;
-            this._markAccessed(hash, actualLodSize);
+        if (bestTexture) {
+            this._markAccessed(hash, bestSize);
             this.stats.cacheHits++;
-            
-            // Removed verbose texture size warnings
+            console.log(`📊 Using ${bestSize || 'FULL'}px texture for ${hash.substring(0, 8)} (target: ${Math.round(targetSize)}px)`);
         } else {
             this.stats.cacheMisses++;
         }
         
-        return selectedTexture;
+        return bestTexture;
     }
     
     /**
@@ -196,14 +233,17 @@ class TextureLODManager {
      * @param {number} screenSize - Screen space size the texture is being requested for
      */
     requestTexture(hash, lodSize, priority, source, isVisible = false, screenSize = null) {
-        // Debug: Log requests for small images (disabled for performance)
-        // if (lodSize && lodSize > 64 && priority >= 0) {
-        //     console.log(`📥 Requesting ${lodSize}px texture for ${hash.substring(0, 8)} (priority: ${priority})`);
-        // }
+        // Debug: Log requests for full res
+        if (lodSize === null) {
+            console.log(`📥 Requesting FULL RES texture for ${hash.substring(0, 8)} (priority: ${priority})`);
+        }
         
         // Check if already loaded
         const nodeCache = this.textureCache.get(hash);
         if (nodeCache && nodeCache.has(lodSize)) {
+            if (lodSize === null) {
+                console.log(`✅ Full res already loaded for ${hash.substring(0, 8)}`);
+            }
             return; // Already have this texture
         }
         
@@ -275,20 +315,23 @@ class TextureLODManager {
         // Process uploads in parallel but respect frame budget
         const uploads = [];
         
-        // Detect if we're in bulk loading phase (many pending uploads)
-        const isBulkLoading = this.uploadQueue.length > 10;
+        // Detect if we're in bulk loading phase (many pending uploads or initial load)
+        const isBulkLoading = this.uploadQueue.length > 5 || this.isInitialLoad;
         
         // Adjust budget based on context:
+        // - Initial load: aggressive budget (8ms)
+        // - Bulk loading: moderate budget (4ms)
         // - During interaction: minimal budget (0.5ms)
-        // - During bulk loading: aggressive budget (16ms = full frame)
-        // - Normal operation: standard budget (1ms)
+        // - Normal operation: standard budget (2ms)
         let budgetMs;
         if (this.canvas?.isInteracting) {
             budgetMs = 0.5;
+        } else if (this.isInitialLoad) {
+            budgetMs = 8; // Aggressive during initial page load
         } else if (isBulkLoading) {
-            budgetMs = 16; // Use full frame during initial load
+            budgetMs = 4; // Moderate for bulk operations
         } else {
-            budgetMs = this.uploadBudgetMs;
+            budgetMs = 2; // Slightly higher for normal operation
         }
         
         while (this.uploadQueue.length > 0 && 
@@ -314,8 +357,8 @@ class TextureLODManager {
             uploaded++;
             
             // Limit concurrent uploads based on context
-            // During bulk loading, allow more concurrent uploads
-            const maxConcurrent = isBulkLoading ? 5 : 1;
+            // During initial load, allow even more concurrent uploads
+            const maxConcurrent = this.isInitialLoad ? 8 : (isBulkLoading ? 5 : 2);
             if (uploads.length >= maxConcurrent) {
                 break;
             }
@@ -342,7 +385,9 @@ class TextureLODManager {
             // Never reject 64px textures as they are the smallest available
             if (screenSize && lodSize && lodSize > 64) {
                 // Calculate the optimal LOD for this screen size
-                const optimalLOD = this.getOptimalLOD(screenSize);
+                const screenWidth = screenSize;
+                const screenHeight = screenSize;
+                const optimalLOD = this.getOptimalLOD(screenWidth, screenHeight);
                 
                 // If optimalLOD is null (full resolution), don't reject any texture
                 if (optimalLOD !== null) {
@@ -390,7 +435,8 @@ class TextureLODManager {
                 }
             }
             // Regular pre-emptive memory management for non-focused images
-            else if (this.totalMemory + estimatedMemory > this.maxTextureMemory * 0.85) {
+            // Only trigger at 92% to reduce thrashing (was 85%)
+            else if (this.totalMemory + estimatedMemory > this.maxTextureMemory * 0.92) {
                 console.log(`📊 Pre-emptive memory management: need ${(estimatedMemory / 1024 / 1024).toFixed(1)}MB, current ${(this.totalMemory / 1024 / 1024).toFixed(1)}MB / ${(this.maxTextureMemory / 1024 / 1024).toFixed(1)}MB`);
                 this._enforceMemoryLimit(estimatedMemory);
             }
@@ -459,9 +505,20 @@ class TextureLODManager {
             gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
             gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
             
-            // Generate mipmaps for quality downsampling
-            gl.generateMipmap(gl.TEXTURE_2D);
-            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR);
+            // Get texture dimensions
+            const width = decodedSource.width || source.width;
+            const height = decodedSource.height || source.height;
+            
+            // Only generate mipmaps for large textures (>256px)
+            // Small thumbnails don't need them and mipmap generation is expensive
+            if (width > 256 || height > 256) {
+                // Large textures benefit from mipmaps for quality downsampling
+                gl.generateMipmap(gl.TEXTURE_2D);
+                gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR);
+            } else {
+                // Small textures (thumbnails) don't need mipmaps
+                gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+            }
             gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
             
             // Apply anisotropic filtering if available
@@ -472,8 +529,6 @@ class TextureLODManager {
             }
             
             // Calculate memory usage (rough estimate)
-            const width = decodedSource.width || source.width;
-            const height = decodedSource.height || source.height;
             const memorySize = width * height * 4 * 1.33; // 1.33 for mipmaps
             
             // Log large textures
@@ -559,9 +614,19 @@ class TextureLODManager {
             gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
             gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
             
-            // Generate mipmaps for quality downsampling
-            gl.generateMipmap(gl.TEXTURE_2D);
-            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR);
+            // Only generate mipmaps for large textures (>256px)
+            // Small thumbnails don't need them and mipmap generation is expensive
+            const width = source.width;
+            const height = source.height;
+            
+            if (width > 256 || height > 256) {
+                // Large textures benefit from mipmaps for quality downsampling
+                gl.generateMipmap(gl.TEXTURE_2D);
+                gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR);
+            } else {
+                // Small textures (thumbnails) don't need mipmaps
+                gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+            }
             gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
             
             // Apply anisotropic filtering if available
@@ -605,9 +670,9 @@ class TextureLODManager {
             this.totalMemory += memorySize;
             this.stats.textureLoads++;
             
-            // if (lodSize === null || lodSize > 1024) {
-            //     console.log(`📤 Uploaded ${lodSize || 'FULL'}px texture for ${hash.substring(0, 8)} - ${source.width}x${source.height} = ${(memorySize / 1024 / 1024).toFixed(1)}MB (total: ${(this.totalMemory / 1024 / 1024).toFixed(1)}MB / ${(this.maxTextureMemory / 1024 / 1024).toFixed(1)}MB)`);
-            // }
+            if (lodSize === null || lodSize > 1024) {
+                console.log(`📤 Uploaded ${lodSize || 'FULL'}px texture for ${hash.substring(0, 8)} - ${source.width}x${source.height} = ${(memorySize / 1024 / 1024).toFixed(1)}MB (total: ${(this.totalMemory / 1024 / 1024).toFixed(1)}MB / ${(this.maxTextureMemory / 1024 / 1024).toFixed(1)}MB)`);
+            }
             
             // Mark as accessed
             this._markAccessed(hash, lodSize);
@@ -854,6 +919,23 @@ class TextureLODManager {
             const zoomLevel = this.canvas?.viewport?.scale || 1;
             let protectSize = 256; // Default protection threshold
             
+            // IMPORTANT: Protect full resolution textures when zoomed in
+            // This prevents the flashing between full res and low res
+            if (lru.lodSize === null && zoomLevel > 0.5 && !aggressiveMode) {
+                // When zoomed in, protect full resolution textures that were recently used
+                const nodeCache = this.textureCache.get(lru.hash);
+                const textureData = nodeCache?.get(lru.lodSize);
+                const wasRecentlyUsed = textureData && (Date.now() - textureData.lastUsed < 10000); // 10 second protection
+                
+                if (wasRecentlyUsed || visibleHashes.has(lru.hash)) {
+                    // Protect this full res texture from eviction
+                    this.accessOrder.push(lru);
+                    skippedCount++;
+                    console.log(`🛡️ Protecting full res texture for ${lru.hash.substring(0, 8)} (zoom: ${zoomLevel.toFixed(2)})`);
+                    continue;
+                }
+            }
+            
             if (zoomLevel < 0.3 && !aggressiveMode) {
                 // When zoomed out far, only protect 64px textures for visible nodes
                 protectSize = 64;
@@ -911,48 +993,30 @@ class TextureLODManager {
     
     /**
      * Get optimal LOD size for given screen dimensions
-     * @param {number} screenWidth - Screen width in pixels
-     * @param {number} screenHeight - Screen height in pixels
+     * SIMPLIFIED VERSION - just pick the right size
+     * @param {number} screenWidth - Screen width in pixels (already includes DPR)
+     * @param {number} screenHeight - Screen height in pixels (already includes DPR)
      * @returns {number|null} Optimal LOD size
      */
     getOptimalLOD(screenWidth, screenHeight) {
-        // Note: screenWidth/screenHeight should already include DPR multiplier
         const targetSize = Math.max(screenWidth, screenHeight);
         
-        // Quality multiplier - we want slightly higher res than screen size for quality
-        // For very small sizes (thumbnails), use lower multiplier to save memory
-        let qualityMultiplier = this.qualityMultiplier || 1.2;
-        if (targetSize < 100) {
-            qualityMultiplier = 1.0; // No upscaling for tiny thumbnails
-        } else if (targetSize < 200) {
-            qualityMultiplier = 1.1; // Minimal upscaling for small images
-        }
+        // Simple thresholds - pick the texture size that covers our needs
+        // with a small buffer (1.2x) to avoid constant switching
+        const sizeWithBuffer = targetSize * 1.2;
         
-        const desiredSize = targetSize * qualityMultiplier;
+        console.log(`🎯 Need texture for ${Math.round(targetSize)}px screen size`);
         
-        // Debug LOD selection - commented out to reduce spam
-        // if (this.canvas?.viewport?.scale < 0.3) {
-        //     console.log(`🎯 LOD selection: targetSize=${Math.round(targetSize)}px (with DPR), desired=${Math.round(desiredSize)}px, qualityMult=${qualityMultiplier}`);
-        // }
+        // Pick the right texture size
+        if (sizeWithBuffer <= 64) return 64;
+        if (sizeWithBuffer <= 128) return 128;
+        if (sizeWithBuffer <= 256) return 256;
+        if (sizeWithBuffer <= 512) return 512;
+        if (sizeWithBuffer <= 1024) return 1024;
+        if (sizeWithBuffer <= 2048) return 2048;
         
-        // Select appropriate LOD based on effective screen size (already includes DPR)
-        // Smoother transitions with ~1.5x steps to reduce jarring quality jumps
-        if (desiredSize <= 80) {
-            return 64;
-        } else if (desiredSize <= 160) {
-            return 128;
-        } else if (desiredSize <= 320) {
-            return 256;
-        } else if (desiredSize <= 640) {
-            return 512;
-        } else if (desiredSize <= 1280) {
-            return 1024;
-        } else if (desiredSize <= 3000) {
-            return 2048;
-        } else {
-            // For very large sizes, use full resolution
-            return null;
-        }
+        // Need full res
+        return null;
     }
     
     /**
@@ -969,9 +1033,10 @@ class TextureLODManager {
             // Calculate current screen space size
             const screenWidth = node.size[0] * (this.canvas?.viewport?.scale || 1);
             const screenHeight = node.size[1] * (this.canvas?.viewport?.scale || 1);
-            const screenSize = Math.max(screenWidth, screenHeight);
-            const effectiveScreenSize = screenSize * (this.canvas?.viewport?.dpr || 1);
-            const optimalLOD = this.getOptimalLOD(effectiveScreenSize);
+            const dpr = this.canvas?.viewport?.dpr || 1;
+            const effectiveScreenWidth = screenWidth * dpr;
+            const effectiveScreenHeight = screenHeight * dpr;
+            const optimalLOD = this.getOptimalLOD(effectiveScreenWidth, effectiveScreenHeight);
             // Allow up to 2x the optimal LOD before considering it oversized
             const maxReasonableSize = optimalLOD * 2;
             
@@ -995,8 +1060,8 @@ class TextureLODManager {
                     evicted.push({
                         hash: node.properties.hash,
                         size: lodSize,
-                        screenSize: Math.round(screenSize),
-                        optimal: this.getOptimalLOD(screenSize * (this.canvas?.viewport?.dpr || 1))
+                        screenSize: Math.round(Math.max(screenWidth, screenHeight)),
+                        optimal: this.getOptimalLOD(effectiveScreenWidth, effectiveScreenHeight)
                     });
                 }
             }
@@ -1588,7 +1653,9 @@ class TextureLODManager {
         }
         
         // Wait for decode slot - this prevents too many concurrent decodes
-        while (this.activeDecodes >= this.maxConcurrentDecodes) {
+        // Use dynamic limit based on initial load state
+        const currentMaxDecodes = this.isInitialLoad ? 6 : this.maxConcurrentDecodes;
+        while (this.activeDecodes >= currentMaxDecodes) {
             await new Promise(resolve => setTimeout(resolve, 10));
         }
         

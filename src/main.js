@@ -24,6 +24,10 @@ import '../js/config/keyboard-shortcuts-integration.js';
 import '../js/renderers/Canvas2DRenderer.js';
 import '../js/renderers/TextureLODManager.js';
 import '../js/renderers/TextureAtlasManager.js';
+// New unified texture system (experimental)
+import '../js/renderers/UnifiedTextureManager.js';
+import '../js/renderers/TextureProgressiveLoader.js';
+import '../js/renderers/TextureSystemIntegration.js';
 import '../js/renderers/WebGLRenderer.js';
 import '../js/graph.js';
 import '../js/canvas.js';
