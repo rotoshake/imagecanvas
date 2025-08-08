@@ -420,7 +420,7 @@ class GalleryViewManager {
     sortMediaNodes() {
         const mediaTypes = ['media/image', 'media/video'];
         
-        // Get all media nodes
+        // Get all media nodes (excluding text nodes)
         const allMediaNodes = this.app.graph.nodes
             .filter(n => mediaTypes.includes(n.type));
         
@@ -920,6 +920,11 @@ class GalleryViewManager {
      */
     shouldHideNode(node) {
         if (!this.active) return false;
+        
+        // Always hide text nodes in gallery view
+        if (node.type === 'media/text') {
+            return true;
+        }
         
         // During transition, show both nodes involved
         if (this.transitionState.active) {
